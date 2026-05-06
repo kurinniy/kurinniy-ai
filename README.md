@@ -45,17 +45,29 @@ Optional:
 - `APP_TIMEZONE`: for example `Europe/Moscow`.
 - `TELEGRAM_POLLING_TIMEOUT_SECONDS`: defaults to `30`.
 
+For a copy-paste starting point, use [.env.example](/Users/kurinniy/Documents/Projects/ai-me/.env.example).
+
 ## Run The Bot
 
 ```bash
 PYTHONPATH=src python3 -m ai_me.main
 ```
 
+## First Bot Boot
+
+1. Start the bot without `ALLOWED_TELEGRAM_USER_IDS`.
+2. Send `/whoami` to the bot from your Telegram account.
+3. Copy the returned `user_id` into `ALLOWED_TELEGRAM_USER_IDS`.
+4. Redeploy or restart the service.
+
+This keeps the first boot simple and lets you lock the bot down immediately after you identify your Telegram account.
+
 ## Current Capabilities
 
 - Set health goals for a date from Telegram.
 - Log meals, water intake, sleep, weight, and activity from Telegram.
 - Build a daily health summary from raw events.
+- Expose `user_id` and `chat_id` through `/whoami` for first-run setup.
 - Generate idempotent decisions for common cases:
   - low water intake late in the day;
   - low protein intake after lunch;
@@ -66,6 +78,8 @@ PYTHONPATH=src python3 -m ai_me.main
 ## Railway Notes
 
 This repo includes a `Dockerfile`, so Railway can build and run the Telegram worker as a long-lived service. The app does not need a public inbound URL while it uses Telegram long polling.
+
+At startup the bot proactively clears any existing Telegram webhook before entering long polling mode, which makes migration from a webhook setup less error-prone.
 
 ## Next Step
 

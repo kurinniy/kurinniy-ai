@@ -29,6 +29,7 @@ class TelegramHealthBot:
         self.timezone = ZoneInfo(settings.timezone_name)
 
     def run_forever(self) -> None:
+        self._ensure_polling_mode()
         print("Telegram long polling started", file=sys.stderr)
         offset = None
         while True:
@@ -58,11 +59,16 @@ class TelegramHealthBot:
             self._send_message(chat_id, "This bot is restricted to approved Telegram users.")
             return
 
-        response = self._route_command(text.strip())
+        response = self._route_command(text=text.strip(), chat_id=chat_id, user_id=user_id)
         if response:
             self._send_message(chat_id, response)
 
-    def _route_command(self, text: str) -> str:
+    def _route_command(
+        self,
+        text: str,
+        chat_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+    ) -> str:
         try:
             parts = shlex.split(text)
         except ValueError as exc:
@@ -77,6 +83,8 @@ class TelegramHealthBot:
                 return self._help_text()
             if command == "/help":
                 return self._help_text()
+            if command == "/whoami":
+                return self._handle_whoami(chat_id=chat_id, user_id=user_id)
             if command == "/water":
                 return self._handle_water(args)
             if command == "/meal":
@@ -96,6 +104,18 @@ class TelegramHealthBot:
         except ValueError as exc:
             return "Invalid command arguments: %s" % exc
         return "Unknown command.\n\n%s" % self._help_text()
+
+    def _handle_whoami(self, chat_id: Optional[int], user_id: Optional[int]) -> str:
+        lines = [
+            "Telegram identity",
+            "user_id=%s" % (user_id if user_id is not None else "unknown"),
+            "chat_id=%s" % (chat_id if chat_id is not None else "unknown"),
+        ]
+        if self.settings.allowed_user_ids:
+            lines.append("allowlist=enabled")
+        else:
+            lines.append("allowlist=disabled")
+        return "\n".join(lines)
 
     def _handle_water(self, args: List[str]) -> str:
         if len(args) != 1:
@@ -252,6 +272,7 @@ class TelegramHealthBot:
     def _help_text(self) -> str:
         return (
             "Commands:\n"
+            "/whoami\n"
             "/water <ml>\n"
             '/meal <calories> <protein_g> <title>  Example: /meal 650 45 "Chicken rice bowl"\n'
             "/weight <kg>\n"
@@ -287,6 +308,17 @@ class TelegramHealthBot:
                 "text": text,
             },
         )
+
+    def _ensure_polling_mode(self) -> None:
+        try:
+            self._telegram_api(
+                "deleteWebhook",
+                {
+                    "drop_pending_updates": "false",
+                },
+            )
+        except Exception as exc:  # pragma: no cover
+            print("Webhook cleanup failed: %s" % exc, file=sys.stderr)
 
     def _telegram_api(self, method: str, params: Dict[str, object]):
         encoded = parse.urlencode(params).encode()
