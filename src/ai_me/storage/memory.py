@@ -2,6 +2,7 @@ from datetime import date
 from typing import Dict, Iterable, List, Optional
 
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
+from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -17,6 +18,7 @@ class InMemoryStore:
     def __init__(self) -> None:
         self._goals: Dict[date, DailyHealthGoals] = {}
         self._meals: List[MealEntry] = []
+        self._meal_drafts: Dict[str, MealPhotoDraft] = {}
         self._water_entries: List[WaterEntry] = []
         self._sleep_entries: List[SleepEntry] = []
         self._weight_entries: List[WeightEntry] = []
@@ -35,6 +37,36 @@ class InMemoryStore:
 
     def add_meal(self, entry: MealEntry) -> None:
         self._meals.append(entry)
+
+    def create_meal_draft(self, draft: MealPhotoDraft) -> None:
+        self._meal_drafts[draft.draft_id] = draft
+
+    def get_meal_draft(self, draft_id: str) -> Optional[MealPhotoDraft]:
+        return self._meal_drafts.get(draft_id)
+
+    def list_meal_drafts(self, status: MealDraftStatus) -> List[MealPhotoDraft]:
+        drafts = [draft for draft in self._meal_drafts.values() if draft.status == status]
+        return sorted(drafts, key=lambda item: item.created_at)
+
+    def update_meal_draft_status(self, draft_id: str, status: MealDraftStatus) -> None:
+        current = self._meal_drafts[draft_id]
+        self._meal_drafts[draft_id] = MealPhotoDraft(
+            draft_id=current.draft_id,
+            created_at=current.created_at,
+            occurred_at=current.occurred_at,
+            title=current.title,
+            summary=current.summary,
+            calories=current.calories,
+            protein_g=current.protein_g,
+            fat_g=current.fat_g,
+            carbs_g=current.carbs_g,
+            confidence=current.confidence,
+            photo_file_id=current.photo_file_id,
+            photo_unique_id=current.photo_unique_id,
+            status=status,
+            source=current.source,
+            items=current.items,
+        )
 
     def add_water(self, entry: WaterEntry) -> None:
         self._water_entries.append(entry)
@@ -64,6 +96,8 @@ class InMemoryStore:
             meals_count=len(meals),
             calories=sum(entry.calories for entry in meals),
             protein_g=round(sum(entry.protein_g for entry in meals), 2),
+            fat_g=round(sum(entry.fat_g for entry in meals), 2),
+            carbs_g=round(sum(entry.carbs_g for entry in meals), 2),
             water_ml=sum(entry.amount_ml for entry in water_entries),
             sleep_hours=round(sum(entry.duration_hours for entry in sleep_entries), 2),
             steps=sum(entry.steps for entry in activity_entries),

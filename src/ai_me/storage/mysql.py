@@ -3,6 +3,7 @@ from datetime import date, datetime, time
 from typing import Iterable, List, Optional
 
 from ai_me.domain.decision_log import DecisionKind, DecisionLogEntry, DecisionStatus
+from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -86,8 +87,8 @@ class MySQLStore:
     def add_meal(self, entry: MealEntry) -> None:
         self._execute(
             """
-            INSERT INTO meals (entry_id, occurred_at, title, calories, protein_g, notes)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO meals (entry_id, occurred_at, title, calories, protein_g, fat_g, carbs_g, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 entry.entry_id,
@@ -95,8 +96,80 @@ class MySQLStore:
                 entry.title,
                 entry.calories,
                 entry.protein_g,
+                entry.fat_g,
+                entry.carbs_g,
                 entry.notes,
             ),
+        )
+
+    def create_meal_draft(self, draft: MealPhotoDraft) -> None:
+        self._execute(
+            """
+            INSERT INTO meal_photo_drafts (
+                draft_id,
+                created_at,
+                occurred_at,
+                title,
+                summary,
+                calories,
+                protein_g,
+                fat_g,
+                carbs_g,
+                confidence,
+                photo_file_id,
+                photo_unique_id,
+                status,
+                source,
+                items_json
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                draft.draft_id,
+                draft.created_at,
+                draft.occurred_at,
+                draft.title,
+                draft.summary,
+                draft.calories,
+                draft.protein_g,
+                draft.fat_g,
+                draft.carbs_g,
+                draft.confidence,
+                draft.photo_file_id,
+                draft.photo_unique_id,
+                draft.status.value,
+                draft.source,
+                json.dumps([item.__dict__ for item in draft.items], sort_keys=True),
+            ),
+        )
+
+    def get_meal_draft(self, draft_id: str) -> Optional[MealPhotoDraft]:
+        row = self._fetchone(
+            "SELECT * FROM meal_photo_drafts WHERE draft_id = %s",
+            (draft_id,),
+        )
+        return self._to_meal_draft(row) if row else None
+
+    def list_meal_drafts(self, status: MealDraftStatus) -> List[MealPhotoDraft]:
+        rows = self._fetchall(
+            """
+            SELECT *
+            FROM meal_photo_drafts
+            WHERE status = %s
+            ORDER BY created_at ASC
+            """,
+            (status.value,),
+        )
+        return [self._to_meal_draft(row) for row in rows]
+
+    def update_meal_draft_status(self, draft_id: str, status: MealDraftStatus) -> None:
+        self._execute(
+            """
+            UPDATE meal_photo_drafts
+            SET status = %s
+            WHERE draft_id = %s
+            """,
+            (status.value, draft_id),
         )
 
     def add_water(self, entry: WaterEntry) -> None:
@@ -165,7 +238,9 @@ class MySQLStore:
             """
             SELECT COUNT(*) AS meals_count,
                    COALESCE(SUM(calories), 0) AS calories,
-                   COALESCE(SUM(protein_g), 0) AS protein_g
+                   COALESCE(SUM(protein_g), 0) AS protein_g,
+                   COALESCE(SUM(fat_g), 0) AS fat_g,
+                   COALESCE(SUM(carbs_g), 0) AS carbs_g
             FROM meals
             WHERE occurred_at BETWEEN %s AND %s
             """,
@@ -216,6 +291,8 @@ class MySQLStore:
             meals_count=meals["meals_count"],
             calories=meals["calories"],
             protein_g=round(float(meals["protein_g"]), 2),
+            fat_g=round(float(meals["fat_g"]), 2),
+            carbs_g=round(float(meals["carbs_g"]), 2),
             water_ml=water["water_ml"],
             sleep_hours=round(sleep_hours, 2),
             steps=activity["steps"],
@@ -307,8 +384,31 @@ class MySQLStore:
                 title VARCHAR(255) NOT NULL,
                 calories INT NOT NULL,
                 protein_g DOUBLE NOT NULL,
+                fat_g DOUBLE NOT NULL DEFAULT 0,
+                carbs_g DOUBLE NOT NULL DEFAULT 0,
                 notes TEXT NOT NULL,
                 INDEX idx_meals_occurred_at (occurred_at)
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS meal_photo_drafts (
+                draft_id VARCHAR(64) PRIMARY KEY,
+                created_at DATETIME(6) NOT NULL,
+                occurred_at DATETIME(6) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                summary TEXT NOT NULL,
+                calories INT NOT NULL,
+                protein_g DOUBLE NOT NULL,
+                fat_g DOUBLE NOT NULL,
+                carbs_g DOUBLE NOT NULL,
+                confidence DOUBLE NOT NULL,
+                photo_file_id VARCHAR(255) NOT NULL,
+                photo_unique_id VARCHAR(255) NOT NULL,
+                status VARCHAR(64) NOT NULL,
+                source VARCHAR(64) NOT NULL,
+                items_json LONGTEXT NOT NULL,
+                INDEX idx_meal_drafts_created_at (created_at),
+                INDEX idx_meal_drafts_status (status)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
             """,
             """
@@ -419,4 +519,35 @@ class MySQLStore:
             context_date=row["context_date"],
             status=DecisionStatus(row["status"]),
             payload=json.loads(row["payload"]),
+        )
+
+    @staticmethod
+    def _to_meal_draft(row: dict) -> MealPhotoDraft:
+        items = [
+            FoodItemEstimate(
+                title=item["title"],
+                portion_text=item["portion_text"],
+                calories=item["calories"],
+                protein_g=item["protein_g"],
+                fat_g=item["fat_g"],
+                carbs_g=item["carbs_g"],
+            )
+            for item in json.loads(row["items_json"])
+        ]
+        return MealPhotoDraft(
+            draft_id=row["draft_id"],
+            created_at=row["created_at"],
+            occurred_at=row["occurred_at"],
+            title=row["title"],
+            summary=row["summary"],
+            calories=row["calories"],
+            protein_g=float(row["protein_g"]),
+            fat_g=float(row["fat_g"]),
+            carbs_g=float(row["carbs_g"]),
+            confidence=float(row["confidence"]),
+            photo_file_id=row["photo_file_id"],
+            photo_unique_id=row["photo_unique_id"],
+            status=MealDraftStatus(row["status"]),
+            source=row["source"],
+            items=items,
         )

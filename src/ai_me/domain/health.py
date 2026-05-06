@@ -19,6 +19,8 @@ class MealEntry:
     title: str
     calories: int
     protein_g: float
+    fat_g: float = 0.0
+    carbs_g: float = 0.0
     notes: str = ""
 
 
@@ -67,6 +69,8 @@ class DailyHealthSummary:
     meals_count: int
     calories: int
     protein_g: float
+    fat_g: float
+    carbs_g: float
     water_ml: int
     sleep_hours: float
     steps: int

@@ -1,6 +1,7 @@
 import unittest
 from datetime import date, datetime
 
+from ai_me.domain.food import FoodItemEstimate, MealDraftStatus
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.health import (
     ActivityEntry,
@@ -11,13 +12,45 @@ from ai_me.domain.health import (
     WeightEntry,
 )
 from ai_me.services.health_service import HealthService
+from ai_me.services.food_analysis import MealAnalysis
 from ai_me.storage.memory import InMemoryStore
+
+
+class StubFoodPhotoAnalyzer:
+    def analyze_photo(self, image_bytes: bytes, mime_type: str, caption: str = "") -> MealAnalysis:
+        return MealAnalysis(
+            title="Chicken rice bowl",
+            summary="Likely a rice bowl with chicken and vegetables.",
+            calories=620,
+            protein_g=38,
+            fat_g=18,
+            carbs_g=71,
+            confidence=0.84,
+            items=[
+                FoodItemEstimate(
+                    title="Chicken",
+                    portion_text="150 g",
+                    calories=250,
+                    protein_g=31,
+                    fat_g=8,
+                    carbs_g=0,
+                ),
+                FoodItemEstimate(
+                    title="Rice",
+                    portion_text="220 g",
+                    calories=290,
+                    protein_g=5,
+                    fat_g=1,
+                    carbs_g=63,
+                ),
+            ],
+        )
 
 
 class HealthServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.store = InMemoryStore()
-        self.service = HealthService(self.store)
+        self.service = HealthService(self.store, food_photo_analyzer=StubFoodPhotoAnalyzer())
         self.target_date = date(2026, 5, 6)
         self.service.set_goals(
             DailyHealthGoals(
@@ -88,6 +121,8 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(summary.meals_count, 2)
         self.assertEqual(summary.calories, 1250)
         self.assertEqual(summary.protein_g, 80)
+        self.assertEqual(summary.fat_g, 0)
+        self.assertEqual(summary.carbs_g, 0)
         self.assertEqual(summary.water_ml, 800)
         self.assertEqual(summary.sleep_hours, 7.0)
         self.assertEqual(summary.steps, 6200)
@@ -168,6 +203,32 @@ class HealthServiceTest(unittest.TestCase):
         decisions = self.service.list_decisions(target_date=self.target_date)
         statuses = {decision.decision_id: decision.status for decision in decisions}
         self.assertEqual(statuses[decision_id], DecisionStatus.EXECUTED)
+
+    def test_meal_photo_draft_can_be_confirmed_into_meal_log(self) -> None:
+        draft = self.service.create_meal_draft_from_photo(
+            photo_file_id="telegram-photo-1",
+            photo_unique_id="unique-1",
+            image_bytes=b"fake-jpeg-data",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 19, 0),
+            caption="Dinner",
+        )
+
+        self.assertEqual(draft.status, MealDraftStatus.PENDING)
+        self.assertEqual(draft.calories, 620)
+        self.assertEqual(len(self.service.list_meal_drafts()), 1)
+
+        meal = self.service.confirm_meal_draft(draft.draft_id)
+        summary = self.service.get_daily_summary(self.target_date)
+        drafts = self.service.list_meal_drafts()
+
+        self.assertEqual(meal.title, "Chicken rice bowl")
+        self.assertEqual(summary.meals_count, 1)
+        self.assertEqual(summary.calories, 620)
+        self.assertEqual(summary.protein_g, 38)
+        self.assertEqual(summary.fat_g, 18)
+        self.assertEqual(summary.carbs_g, 71)
+        self.assertEqual(drafts, [])
 
 
 if __name__ == "__main__":

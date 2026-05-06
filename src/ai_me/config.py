@@ -86,6 +86,8 @@ class TelegramSettings:
 class AppSettings:
     database: DatabaseSettings
     telegram: TelegramSettings
+    food_vision_api_key: str = ""
+    food_vision_model: str = ""
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "AppSettings":
@@ -93,6 +95,8 @@ class AppSettings:
         return cls(
             database=DatabaseSettings.from_env(source),
             telegram=TelegramSettings.from_env(source),
+            food_vision_api_key=source.get("OPENAI_API_KEY", "").strip(),
+            food_vision_model=source.get("OPENAI_MODEL", "").strip(),
         )
 
 

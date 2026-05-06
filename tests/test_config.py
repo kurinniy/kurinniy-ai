@@ -25,11 +25,15 @@ class ConfigTest(unittest.TestCase):
                 "TELEGRAM_BOT_TOKEN": "123:abc",
                 "ALLOWED_TELEGRAM_USER_IDS": "11, 42",
                 "APP_TIMEZONE": "Europe/Moscow",
+                "OPENAI_API_KEY": "sk-test",
+                "OPENAI_MODEL": "gpt-test",
             }
         )
         self.assertEqual(settings.database.host, "mysql.railway.internal")
         self.assertEqual(settings.telegram.allowed_user_ids, frozenset({11, 42}))
         self.assertEqual(settings.telegram.timezone_name, "Europe/Moscow")
+        self.assertEqual(settings.food_vision_api_key, "sk-test")
+        self.assertEqual(settings.food_vision_model, "gpt-test")
 
     def test_telegram_settings_require_token(self) -> None:
         with self.assertRaises(ValueError):

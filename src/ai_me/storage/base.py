@@ -2,6 +2,7 @@ from datetime import date
 from typing import Iterable, List, Optional, Protocol
 
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
+from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -24,6 +25,18 @@ class HealthStore(Protocol):
         ...
 
     def add_meal(self, entry: MealEntry) -> None:
+        ...
+
+    def create_meal_draft(self, draft: MealPhotoDraft) -> None:
+        ...
+
+    def get_meal_draft(self, draft_id: str) -> Optional[MealPhotoDraft]:
+        ...
+
+    def list_meal_drafts(self, status: MealDraftStatus) -> List[MealPhotoDraft]:
+        ...
+
+    def update_meal_draft_status(self, draft_id: str, status: MealDraftStatus) -> None:
         ...
 
     def add_water(self, entry: WaterEntry) -> None:
