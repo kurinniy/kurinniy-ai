@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 class TelegramHealthBot:
     BUTTON_TO_COMMAND = {
         "Сводка за сегодня": "/summary",
+        "Финансы за месяц": "/finance_month",
         "Открытые решения": "/decisions",
+        "Импорт Т-Банк": "/import_tbank",
         "Черновики еды": "/drafts",
         "Кто я": "/whoami",
         "Помощь": "/help",
@@ -71,6 +73,7 @@ class TelegramHealthBot:
         text = message.get("text")
         caption = message.get("caption")
         photo = message.get("photo")
+        document = message.get("document")
         chat = message.get("chat", {})
         user = message.get("from", {})
         chat_id = chat.get("id")
@@ -91,6 +94,11 @@ class TelegramHealthBot:
                 photo=photo,
                 caption=caption if isinstance(caption, str) else "",
             )
+            return
+
+        if isinstance(document, dict):
+            logger.info("Received document message chat_id=%s user_id=%s", chat_id, user_id)
+            self._handle_document_message(chat_id=chat_id, document=document)
             return
 
         if isinstance(text, str):
@@ -209,6 +217,10 @@ class TelegramHealthBot:
                 return self._help_text()
             if command == "/menu":
                 return self._help_text()
+            if command == "/import_tbank":
+                return self._handle_import_tbank()
+            if command == "/finance_month":
+                return self._handle_finance_month(args)
             if command == "/whoami":
                 return self._handle_whoami(chat_id=chat_id, user_id=user_id)
             if command == "/confirm_meal":
@@ -255,6 +267,40 @@ class TelegramHealthBot:
         meal = self.service.confirm_meal_draft(args[0])
         decisions = self.service.evaluate_day(meal.occurred_at.date(), now=self._local_now())
         return "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions))
+
+    @staticmethod
+    def _handle_import_tbank() -> str:
+        return (
+            "Импорт операций Т-Банка\n"
+            "1. В личном кабинете на tbank.ru на компьютере открой вкладку «Операции».\n"
+            "2. Выбери период и нужные продукты.\n"
+            "3. Нажми «Поделиться» и выгрузи операции в CSV.\n"
+            "4. Отправь CSV-файл сюда одним сообщением.\n\n"
+            "После загрузки я импортирую операции и покажу результат."
+        )
+
+    def _handle_finance_month(self, args: List[str]) -> str:
+        if args:
+            year, month = args[0].split("-", 1)
+            month_start = date(int(year), int(month), 1)
+        else:
+            today = self._local_today()
+            month_start = date(today.year, today.month, 1)
+        summary = self.service.get_finance_monthly_summary(month_start)
+        lines = [
+            "Финансовая сводка за %s" % month_start.strftime("%m.%Y"),
+            "Операций: %s" % summary.transaction_count,
+            "Доходы: %.2f ₽" % summary.income_total,
+            "Расходы: %.2f ₽" % summary.expense_total,
+            "Чистый поток: %.2f ₽" % summary.net_total,
+        ]
+        if summary.top_expense_categories:
+            lines.append("Топ категорий расходов:")
+            for item in summary.top_expense_categories:
+                lines.append("- %s: %.2f ₽ (%s)" % (item.category, item.amount, item.transaction_count))
+        else:
+            lines.append("Расходов за этот месяц пока нет.")
+        return "\n".join(lines)
 
     def _handle_reject_meal(self, args: List[str]) -> str:
         if len(args) != 1:
@@ -454,6 +500,8 @@ class TelegramHealthBot:
             "/whoami\n"
             "Отправь фото еды, чтобы создать черновик приема пищи.\n"
             "/menu\n"
+            "/import_tbank\n"
+            "/finance_month [YYYY-MM]\n"
             "/confirm_meal <draft_id>\n"
             "/reject_meal <draft_id>\n"
             "/drafts\n"
@@ -614,6 +662,37 @@ class TelegramHealthBot:
         logger.info("Food photo analyzed successfully chat_id=%s draft_id=%s", chat_id, draft.draft_id)
         self._send_meal_draft(chat_id, draft)
 
+    def _handle_document_message(self, chat_id: int, document: Dict[str, object]) -> None:
+        file_id = document.get("file_id")
+        file_name = document.get("file_name")
+        mime_type = document.get("mime_type")
+        if not isinstance(file_id, str):
+            self._send_message(chat_id, "Не удалось получить файл из сообщения.")
+            return
+        if not self._is_supported_tbank_file(file_name=file_name, mime_type=mime_type):
+            self._send_message(
+                chat_id,
+                "Пока поддерживаю только CSV-файлы с операциями Т-Банка. Выгрузи операции в CSV и отправь файл сюда.",
+            )
+            return
+
+        try:
+            file_info = self._telegram_api("getFile", {"file_id": file_id})
+            file_path = file_info.get("file_path")
+            if not isinstance(file_path, str):
+                raise ValueError("Telegram не вернул путь к файлу")
+            file_bytes = self._download_telegram_file(file_path)
+            result = self.service.import_tbank_csv(
+                file_bytes=file_bytes,
+                source_file_name=file_name if isinstance(file_name, str) else "tbank.csv",
+            )
+        except Exception as exc:
+            logger.exception("T-Bank import failed chat_id=%s file_id=%s error=%s", chat_id, file_id, exc)
+            self._send_message(chat_id, "Не удалось импортировать файл Т-Банка: %s" % exc)
+            return
+
+        self._send_message(chat_id, self._format_tbank_import_result(result))
+
     def _ensure_polling_mode(self) -> None:
         try:
             self._telegram_api(
@@ -629,7 +708,9 @@ class TelegramHealthBot:
         commands = [
             {"command": "menu", "description": "Показать кнопки и список команд"},
             {"command": "summary", "description": "Сводка за сегодня"},
+            {"command": "finance_month", "description": "Финансовая сводка за месяц"},
             {"command": "decisions", "description": "Открытые решения"},
+            {"command": "import_tbank", "description": "Импорт CSV из Т-Банка"},
             {"command": "drafts", "description": "Черновики приема пищи"},
             {"command": "whoami", "description": "Мои Telegram ID"},
             {"command": "help", "description": "Справка по командам"},
@@ -658,13 +739,43 @@ class TelegramHealthBot:
             {
                 "resize_keyboard": True,
                 "keyboard": [
-                    [{"text": "Сводка за сегодня"}, {"text": "Открытые решения"}],
-                    [{"text": "Черновики еды"}, {"text": "Кто я"}],
+                    [{"text": "Сводка за сегодня"}, {"text": "Финансы за месяц"}],
+                    [{"text": "Открытые решения"}, {"text": "Импорт Т-Банк"}],
+                    [{"text": "Черновики еды"}],
+                    [{"text": "Кто я"}],
                     [{"text": "Помощь"}],
                 ],
             },
             ensure_ascii=False,
         )
+
+    @staticmethod
+    def _is_supported_tbank_file(file_name: object, mime_type: object) -> bool:
+        normalized_name = str(file_name).lower() if isinstance(file_name, str) else ""
+        normalized_type = str(mime_type).lower() if isinstance(mime_type, str) else ""
+        return (
+            normalized_name.endswith(".csv")
+            or normalized_type in {"text/csv", "application/csv", "application/vnd.ms-excel"}
+        )
+
+    @staticmethod
+    def _format_tbank_import_result(result) -> str:
+        lines = [
+            "Импорт операций Т-Банка завершен",
+            "Файл: %s" % result.source_file_name,
+            "Операций в файле: %s" % result.total_rows,
+            "Импортировано новых: %s" % result.imported_rows,
+            "Пропущено дублей: %s" % result.skipped_rows,
+        ]
+        if result.first_operation_at and result.last_operation_at:
+            lines.append(
+                "Период операций: %s — %s"
+                % (
+                    result.first_operation_at.strftime("%d.%m.%Y %H:%M"),
+                    result.last_operation_at.strftime("%d.%m.%Y %H:%M"),
+                )
+            )
+        return "\n".join(lines)
 
     def _telegram_api(self, method: str, params: Dict[str, object]):
         encoded = parse.urlencode(params).encode()

@@ -3,6 +3,7 @@ import json
 
 from datetime import date, datetime
 
+from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry
 from ai_me.config import TelegramSettings
@@ -13,6 +14,7 @@ from ai_me.telegram import TelegramHealthBot
 class DummyHealthService:
     def __init__(self) -> None:
         self.confirmed_draft_ids = []
+        self.last_import = None
 
     def log_water(self, entry) -> None:
         return None
@@ -109,6 +111,32 @@ class DummyHealthService:
     def reject_meal_draft(self, draft_id):
         return type("Draft", (), {"title": "Chicken rice bowl"})()
 
+    def import_tbank_csv(self, file_bytes: bytes, source_file_name: str):
+        self.last_import = (file_bytes, source_file_name)
+        return FinanceImportResult(
+            provider="tbank",
+            source_file_name=source_file_name,
+            total_rows=2,
+            imported_rows=2,
+            skipped_rows=0,
+            first_operation_at=datetime(2026, 5, 1, 9, 0),
+            last_operation_at=datetime(2026, 5, 2, 18, 30),
+        )
+
+    def get_finance_monthly_summary(self, month_start: date):
+        return FinanceMonthlySummary(
+            month_start=month_start,
+            month_end=date(2026, 6, 1),
+            transaction_count=4,
+            income_total=25000.0,
+            expense_total=3000.5,
+            net_total=21999.5,
+            top_expense_categories=[
+                FinanceCategoryTotal(category="Продукты", amount=2300.5, transaction_count=2),
+                FinanceCategoryTotal(category="Такси", amount=700.0, transaction_count=1),
+            ],
+        )
+
 
 class TelegramHealthBotTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -135,6 +163,20 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("/whoami", response)
         self.assertIn("Отправь фото еды", response)
         self.assertIn("/menu", response)
+        self.assertIn("/import_tbank", response)
+        self.assertIn("/finance_month", response)
+
+    def test_import_tbank_command_returns_instructions(self) -> None:
+        response = self.bot._route_command("/import_tbank")
+        self.assertIn("Импорт операций Т-Банка", response)
+        self.assertIn("CSV", response)
+
+    def test_finance_month_command_returns_monthly_summary(self) -> None:
+        response = self.bot._route_command("/finance_month 2026-05")
+        self.assertIn("Финансовая сводка за 05.2026", response)
+        self.assertIn("Доходы: 25000.00 ₽", response)
+        self.assertIn("Расходы: 3000.50 ₽", response)
+        self.assertIn("Продукты: 2300.50 ₽", response)
 
     def test_button_text_routes_to_summary_command(self) -> None:
         response = self.bot._route_command("Сводка за сегодня")
@@ -162,7 +204,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(messages[0][0], "sendMessage")
         markup = json.loads(messages[0][1]["reply_markup"])
         self.assertEqual(markup["keyboard"][0][0]["text"], "Сводка за сегодня")
-        self.assertEqual(markup["keyboard"][0][1]["text"], "Открытые решения")
+        self.assertEqual(markup["keyboard"][0][1]["text"], "Финансы за месяц")
+        self.assertEqual(markup["keyboard"][1][0]["text"], "Открытые решения")
+        self.assertEqual(markup["keyboard"][1][1]["text"], "Импорт Т-Банк")
 
     def test_sync_bot_commands_registers_menu_entries(self) -> None:
         calls = []
@@ -178,6 +222,45 @@ class TelegramHealthBotTest(unittest.TestCase):
         commands = json.loads(calls[0][1]["commands"])
         self.assertEqual(commands[0]["command"], "menu")
         self.assertEqual(commands[0]["description"], "Показать кнопки и список команд")
+        self.assertEqual(commands[2]["command"], "finance_month")
+        self.assertEqual(commands[4]["command"], "import_tbank")
+
+    def test_document_imports_tbank_csv(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            if method == "getFile":
+                return {"file_path": "docs/tbank.csv"}
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._download_telegram_file = lambda path: (
+            b"\xef\xbb\xbf\xd0\x94\xd0\xb0\xd1\x82\xd0\xb0 \xd0\xbe\xd0\xbf\xd0\xb5\xd1\x80\xd0\xb0\xd1\x86\xd0\xb8\xd0\xb8;"
+            b"\xd0\xa1\xd1\x83\xd0\xbc\xd0\xbc\xd0\xb0 \xd0\xbf\xd0\xbb\xd0\xb0\xd1\x82\xd0\xb5\xd0\xb6\xd0\xb0;"
+            b"\xd0\x9e\xd0\xbf\xd0\xb8\xd1\x81\xd0\xb0\xd0\xbd\xd0\xb8\xd0\xb5\n"
+            b"01.05.2026;-1500;\xd0\x9f\xd1\x80\xd0\xbe\xd0\xb4\xd1\x83\xd0\xba\xd1\x82\xd1\x8b\n"
+        )
+
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 777},
+                    "from": {"id": 42},
+                    "document": {
+                        "file_id": "file-1",
+                        "file_name": "tbank.csv",
+                        "mime_type": "text/csv",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(self.service.last_import[1], "tbank.csv")
+        self.assertEqual(calls[0][0], "getFile")
+        self.assertEqual(calls[1][0], "sendMessage")
+        self.assertIn("Импорт операций Т-Банка завершен", calls[1][1]["text"])
 
     def test_drafts_command_lists_pending_drafts(self) -> None:
         response = self.bot._route_command("/drafts")

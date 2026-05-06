@@ -4,6 +4,7 @@ from datetime import date, datetime, time
 from typing import Iterable, List, Optional
 
 from ai_me.domain.decision_log import DecisionKind, DecisionLogEntry, DecisionStatus
+from ai_me.domain.finance import FinanceCategoryTotal, FinanceMonthlySummary, FinanceTransaction
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
@@ -384,6 +385,100 @@ class MySQLStore:
             (status.value, decision_id),
         )
 
+    def upsert_finance_transactions(self, transactions: Iterable[FinanceTransaction]) -> int:
+        inserted = 0
+        for transaction in transactions:
+            rowcount = self._execute(
+                """
+                INSERT INTO finance_transactions (
+                    transaction_key,
+                    provider,
+                    occurred_at,
+                    amount,
+                    currency,
+                    title,
+                    category,
+                    mcc,
+                    status,
+                    account_name,
+                    source_file_name,
+                    raw_payload
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    transaction_key = transaction_key
+                """,
+                (
+                    transaction.transaction_key,
+                    transaction.provider,
+                    transaction.occurred_at,
+                    transaction.amount,
+                    transaction.currency,
+                    transaction.title,
+                    transaction.category,
+                    transaction.mcc,
+                    transaction.status,
+                    transaction.account_name,
+                    transaction.source_file_name,
+                    transaction.raw_payload,
+                ),
+            )
+            if rowcount == 1:
+                inserted += 1
+        return inserted
+
+    def build_finance_monthly_summary(self, month_start: date) -> FinanceMonthlySummary:
+        if month_start.month == 12:
+            next_month = date(month_start.year + 1, 1, 1)
+        else:
+            next_month = date(month_start.year, month_start.month + 1, 1)
+        period_start = datetime.combine(month_start, time.min)
+        period_end = datetime.combine(next_month, time.min)
+
+        totals = self._fetchone(
+            """
+            SELECT COUNT(*) AS transaction_count,
+                   COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS income_total,
+                   COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0) AS expense_total
+            FROM finance_transactions
+            WHERE occurred_at >= %s AND occurred_at < %s
+            """,
+            (period_start, period_end),
+        )
+        category_rows = self._fetchall(
+            """
+            SELECT COALESCE(NULLIF(category, ''), 'Без категории') AS category,
+                   ABS(SUM(amount)) AS expense_amount,
+                   COUNT(*) AS transaction_count
+            FROM finance_transactions
+            WHERE occurred_at >= %s AND occurred_at < %s
+              AND amount < 0
+            GROUP BY COALESCE(NULLIF(category, ''), 'Без категории')
+            ORDER BY expense_amount DESC
+            LIMIT 5
+            """,
+            (period_start, period_end),
+        )
+        top_categories = [
+            FinanceCategoryTotal(
+                category=row["category"],
+                amount=round(float(row["expense_amount"]), 2),
+                transaction_count=int(row["transaction_count"]),
+            )
+            for row in category_rows
+        ]
+        income_total = round(float(totals["income_total"]), 2)
+        expense_total = round(float(totals["expense_total"]), 2)
+        return FinanceMonthlySummary(
+            month_start=month_start,
+            month_end=next_month,
+            transaction_count=int(totals["transaction_count"]),
+            income_total=income_total,
+            expense_total=expense_total,
+            net_total=round(income_total - expense_total, 2),
+            top_expense_categories=top_categories,
+        )
+
     def _init_schema(self) -> None:
         statements = [
             """
@@ -481,6 +576,24 @@ class MySQLStore:
                 payload LONGTEXT NOT NULL,
                 INDEX idx_decision_context_date (context_date),
                 INDEX idx_decision_status (status)
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS finance_transactions (
+                transaction_key VARCHAR(64) PRIMARY KEY,
+                provider VARCHAR(32) NOT NULL,
+                occurred_at DATETIME(6) NOT NULL,
+                amount DOUBLE NOT NULL,
+                currency VARCHAR(16) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                category VARCHAR(255) NOT NULL,
+                mcc VARCHAR(32) NOT NULL,
+                status VARCHAR(64) NOT NULL,
+                account_name VARCHAR(255) NOT NULL,
+                source_file_name VARCHAR(255) NOT NULL,
+                raw_payload LONGTEXT NOT NULL,
+                INDEX idx_finance_occurred_at (occurred_at),
+                INDEX idx_finance_provider (provider)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
             """,
         ]

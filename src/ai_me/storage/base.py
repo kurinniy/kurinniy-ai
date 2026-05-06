@@ -2,6 +2,7 @@ from datetime import date
 from typing import Iterable, List, Optional, Protocol
 
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
+from ai_me.domain.finance import FinanceMonthlySummary, FinanceTransaction
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
@@ -68,4 +69,10 @@ class HealthStore(Protocol):
         ...
 
     def update_decision_status(self, decision_id: str, status: DecisionStatus) -> None:
+        ...
+
+    def upsert_finance_transactions(self, transactions: Iterable[FinanceTransaction]) -> int:
+        ...
+
+    def build_finance_monthly_summary(self, month_start: date) -> FinanceMonthlySummary:
         ...

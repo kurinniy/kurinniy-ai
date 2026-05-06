@@ -4,6 +4,7 @@ from typing import List, Optional
 from uuid import uuid4
 
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
+from ai_me.domain.finance import FinanceImportResult, FinanceMonthlySummary
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
@@ -16,6 +17,7 @@ from ai_me.domain.health import (
 )
 from ai_me.services.food_analysis import DisabledFoodPhotoAnalyzer, FoodPhotoAnalyzer
 from ai_me.services.rules import HealthDecisionEngine
+from ai_me.services.tbank_import import TBankCSVImporter
 from ai_me.storage.base import HealthStore
 
 
@@ -25,10 +27,12 @@ class HealthService:
         store: HealthStore,
         decision_engine: Optional[HealthDecisionEngine] = None,
         food_photo_analyzer: Optional[FoodPhotoAnalyzer] = None,
+        tbank_csv_importer: Optional[TBankCSVImporter] = None,
     ) -> None:
         self.store = store
         self.decision_engine = decision_engine or HealthDecisionEngine()
         self.food_photo_analyzer = food_photo_analyzer or DisabledFoodPhotoAnalyzer()
+        self.tbank_csv_importer = tbank_csv_importer or TBankCSVImporter()
 
     def set_goals(self, goals: DailyHealthGoals) -> None:
         self.store.set_health_goals(goals)
@@ -133,6 +137,23 @@ class HealthService:
 
     def update_decision_status(self, decision_id: str, status: DecisionStatus) -> None:
         self.store.update_decision_status(decision_id=decision_id, status=status)
+
+    def import_tbank_csv(self, file_bytes: bytes, source_file_name: str) -> FinanceImportResult:
+        transactions = self.tbank_csv_importer.parse(file_bytes=file_bytes, source_file_name=source_file_name)
+        imported_rows = self.store.upsert_finance_transactions(transactions)
+        occurred_dates = sorted(transaction.occurred_at for transaction in transactions)
+        return FinanceImportResult(
+            provider=TBankCSVImporter.PROVIDER,
+            source_file_name=source_file_name,
+            total_rows=len(transactions),
+            imported_rows=imported_rows,
+            skipped_rows=len(transactions) - imported_rows,
+            first_operation_at=occurred_dates[0] if occurred_dates else None,
+            last_operation_at=occurred_dates[-1] if occurred_dates else None,
+        )
+
+    def get_finance_monthly_summary(self, month_start: date) -> FinanceMonthlySummary:
+        return self.store.build_finance_monthly_summary(month_start)
 
     def _require_meal_draft(self, draft_id: str, expected_status: MealDraftStatus) -> MealPhotoDraft:
         draft = self.store.get_meal_draft(draft_id)
