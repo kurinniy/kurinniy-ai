@@ -102,8 +102,9 @@ class TelegramHealthBot:
             except ValueError as exc:
                 self._answer_callback_query(query_id, str(exc))
                 return
+            self._answer_callback_query(query_id, "Прием пищи сохранен.")
             if isinstance(message_id, int):
-                self._edit_message_text(
+                self._try_edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
                     text=(
@@ -113,7 +114,6 @@ class TelegramHealthBot:
                     )
                     % meal.title,
                 )
-            self._answer_callback_query(query_id, "Прием пищи сохранен.")
             decisions = self.service.evaluate_day(meal.occurred_at.date(), now=self._local_now())
             self._send_message(
                 chat_id,
@@ -128,8 +128,9 @@ class TelegramHealthBot:
             except ValueError as exc:
                 self._answer_callback_query(query_id, str(exc))
                 return
+            self._answer_callback_query(query_id, "Черновик отклонен.")
             if isinstance(message_id, int):
-                self._edit_message_text(
+                self._try_edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
                     text=(
@@ -139,7 +140,6 @@ class TelegramHealthBot:
                     )
                     % draft.title,
                 )
-            self._answer_callback_query(query_id, "Черновик отклонен.")
             self._send_message(chat_id, "Черновик приема пищи отклонен: %s." % draft.title)
             return
 
@@ -456,6 +456,12 @@ class TelegramHealthBot:
                 "text": text,
             },
         )
+
+    def _try_edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
+        try:
+            self._edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
+        except Exception as exc:  # pragma: no cover
+            print("Callback message edit failed: %s" % exc, file=sys.stderr)
 
     def _send_meal_draft(self, chat_id: int, draft: MealPhotoDraft) -> None:
         items_text = "\n".join(

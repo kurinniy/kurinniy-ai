@@ -163,10 +163,39 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         self.assertEqual(self.service.confirmed_draft_ids, ["draft-1"])
-        self.assertEqual(calls[0][0], "editMessageText")
-        self.assertIn("Прием пищи сохранен", calls[0][1]["text"])
-        self.assertEqual(calls[1][0], "answerCallbackQuery")
-        self.assertEqual(calls[1][1]["text"], "Прием пищи сохранен.")
+        self.assertEqual(calls[0][0], "answerCallbackQuery")
+        self.assertEqual(calls[0][1]["text"], "Прием пищи сохранен.")
+        self.assertEqual(calls[1][0], "editMessageText")
+        self.assertIn("Прием пищи сохранен", calls[1][1]["text"])
+        self.assertEqual(calls[2][0], "sendMessage")
+        self.assertIn("Прием пищи сохранен", calls[2][1]["text"])
+
+    def test_confirm_callback_still_answers_when_message_edit_fails(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            if method == "editMessageText":
+                raise RuntimeError("message can't be edited")
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "meal_confirm:draft-1",
+                "from": {"id": 42},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 777},
+                },
+            }
+        )
+
+        self.assertEqual(self.service.confirmed_draft_ids, ["draft-1"])
+        self.assertEqual(calls[0][0], "answerCallbackQuery")
+        self.assertEqual(calls[0][1]["text"], "Прием пищи сохранен.")
+        self.assertEqual(calls[1][0], "editMessageText")
         self.assertEqual(calls[2][0], "sendMessage")
         self.assertIn("Прием пищи сохранен", calls[2][1]["text"])
 
