@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import date, datetime, time
 from typing import Iterable, List, Optional
 
@@ -20,6 +21,9 @@ except ImportError:  # pragma: no cover
     mysql = None
 else:  # pragma: no cover
     mysql = mysql.connector
+
+
+logger = logging.getLogger(__name__)
 
 
 class MySQLStore:
@@ -489,6 +493,49 @@ class MySQLStore:
         finally:
             cursor.close()
             connection.close()
+        self._apply_schema_migrations()
+
+    def _apply_schema_migrations(self) -> None:
+        migrations = [
+            ("meals", "fat_g", "ALTER TABLE meals ADD COLUMN fat_g DOUBLE NOT NULL DEFAULT 0 AFTER protein_g"),
+            (
+                "meals",
+                "carbs_g",
+                "ALTER TABLE meals ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g",
+            ),
+            (
+                "meal_photo_drafts",
+                "fat_g",
+                "ALTER TABLE meal_photo_drafts ADD COLUMN fat_g DOUBLE NOT NULL DEFAULT 0 AFTER protein_g",
+            ),
+            (
+                "meal_photo_drafts",
+                "carbs_g",
+                "ALTER TABLE meal_photo_drafts ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g",
+            ),
+        ]
+        for table_name, column_name, statement in migrations:
+            self._ensure_column(table_name, column_name, statement)
+
+    def _ensure_column(self, table_name: str, column_name: str, alter_statement: str) -> None:
+        if self._column_exists(table_name, column_name):
+            return
+        logger.info("Applying MySQL schema migration: add %s.%s", table_name, column_name)
+        self._execute(alter_statement, ())
+
+    def _column_exists(self, table_name: str, column_name: str) -> bool:
+        row = self._fetchone(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = %s
+              AND table_name = %s
+              AND column_name = %s
+            LIMIT 1
+            """,
+            (self._connect_kwargs["database"], table_name, column_name),
+        )
+        return row is not None
 
     def _connect(self):
         connection = mysql.connect(**self._connect_kwargs)
