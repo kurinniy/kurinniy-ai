@@ -5,6 +5,7 @@ from datetime import date
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary
 from ai_me.config import TelegramSettings
+from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
 from ai_me.telegram import TelegramHealthBot
 
 
@@ -117,6 +118,23 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/confirm_meal draft-1")
         self.assertIn("Meal logged", response)
         self.assertEqual(self.service.confirmed_draft_ids, ["draft-1"])
+
+    def test_food_analysis_parser_handles_markdown_wrapped_json(self) -> None:
+        parsed = OpenAIFoodPhotoAnalyzer._parse_json_text(
+            """```json
+            {
+              "title": "Chicken rice bowl",
+              "summary": "Rice bowl",
+              "calories": 620,
+              "protein_g": 38,
+              "fat_g": 18,
+              "carbs_g": 71,
+              "confidence": 0.84,
+              "items": []
+            }
+            ```"""
+        )
+        self.assertEqual(parsed["title"], "Chicken rice bowl")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import base64
 import json
 from dataclasses import dataclass
-from typing import List, Optional, Protocol
+from typing import List, Protocol
 from urllib import request
 
 from ai_me.domain.food import FoodItemEstimate
@@ -65,6 +65,14 @@ class OpenAIFoodPhotoAnalyzer:
                     ],
                 }
             ],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "meal_analysis",
+                    "strict": True,
+                    "schema": self._response_schema(),
+                }
+            },
         }
         req = request.Request(
             "https://api.openai.com/v1/responses",
@@ -77,8 +85,7 @@ class OpenAIFoodPhotoAnalyzer:
         with request.urlopen(req, timeout=60) as response:
             body = json.loads(response.read().decode("utf-8"))
 
-        output_text = self._extract_output_text(body)
-        data = json.loads(output_text)
+        data = self._extract_output_json(body)
         return MealAnalysis(
             title=data["title"],
             summary=data["summary"],
@@ -101,12 +108,84 @@ class OpenAIFoodPhotoAnalyzer:
         )
 
     @staticmethod
-    def _extract_output_text(body: dict) -> str:
+    def _extract_output_json(body: dict) -> dict:
         for item in body.get("output", []):
             for content in item.get("content", []):
                 if content.get("type") == "output_text":
-                    return content["text"]
-        raise ValueError("OpenAI response did not contain output_text")
+                    return OpenAIFoodPhotoAnalyzer._parse_json_text(content["text"])
+                if content.get("type") == "refusal":
+                    raise ValueError("OpenAI refused to analyze this image")
+        raise ValueError("OpenAI response did not contain structured output")
+
+    @staticmethod
+    def _parse_json_text(text: str) -> dict:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                return json.loads(cleaned[start : end + 1])
+            raise
+
+    @staticmethod
+    def _response_schema() -> dict:
+        item_schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "title": {"type": "string"},
+                "portion_text": {"type": "string"},
+                "calories": {"type": "integer"},
+                "protein_g": {"type": "number"},
+                "fat_g": {"type": "number"},
+                "carbs_g": {"type": "number"},
+            },
+            "required": [
+                "title",
+                "portion_text",
+                "calories",
+                "protein_g",
+                "fat_g",
+                "carbs_g",
+            ],
+        }
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "title": {"type": "string"},
+                "summary": {"type": "string"},
+                "calories": {"type": "integer"},
+                "protein_g": {"type": "number"},
+                "fat_g": {"type": "number"},
+                "carbs_g": {"type": "number"},
+                "confidence": {"type": "number"},
+                "items": {
+                    "type": "array",
+                    "items": item_schema,
+                },
+            },
+            "required": [
+                "title",
+                "summary",
+                "calories",
+                "protein_g",
+                "fat_g",
+                "carbs_g",
+                "confidence",
+                "items",
+            ],
+        }
 
 
 class DisabledFoodPhotoAnalyzer:
@@ -119,4 +198,3 @@ class DisabledFoodPhotoAnalyzer:
         raise RuntimeError(
             "Food photo analysis is not configured. Set OPENAI_API_KEY and OPENAI_MODEL."
         )
-
