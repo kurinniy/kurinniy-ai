@@ -137,7 +137,7 @@ class HealthService:
     def _require_meal_draft(self, draft_id: str, expected_status: MealDraftStatus) -> MealPhotoDraft:
         draft = self.store.get_meal_draft(draft_id)
         if draft is None:
-            raise ValueError("Meal draft not found: %s" % draft_id)
+            raise ValueError("Черновик приема пищи не найден: %s" % draft_id)
         if draft.status != expected_status:
-            raise ValueError("Meal draft %s is not %s" % (draft_id, expected_status.value))
+            raise ValueError("Черновик приема пищи %s имеет статус %s" % (draft_id, draft.status.value))
         return draft

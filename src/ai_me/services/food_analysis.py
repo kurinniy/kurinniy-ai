@@ -115,8 +115,8 @@ class OpenAIFoodPhotoAnalyzer:
                 if content.get("type") == "output_text":
                     return OpenAIFoodPhotoAnalyzer._parse_json_text(content["text"])
                 if content.get("type") == "refusal":
-                    raise ValueError("OpenAI refused to analyze this image")
-        raise ValueError("OpenAI response did not contain structured output")
+                    raise ValueError("OpenAI отказался анализировать это изображение")
+        raise ValueError("OpenAI не вернул структурированный результат")
 
     @staticmethod
     def _parse_json_text(text: str) -> dict:
@@ -197,5 +197,5 @@ class DisabledFoodPhotoAnalyzer:
         caption: str = "",
     ) -> MealAnalysis:
         raise RuntimeError(
-            "Food photo analysis is not configured. Set OPENAI_API_KEY and OPENAI_MODEL."
+            "Анализ фото еды не настроен. Задайте OPENAI_API_KEY и OPENAI_MODEL."
         )

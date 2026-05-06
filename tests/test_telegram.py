@@ -123,23 +123,25 @@ class TelegramHealthBotTest(unittest.TestCase):
 
     def test_whoami_command_exposes_ids(self) -> None:
         response = self.bot._route_command("/whoami", chat_id=777, user_id=42)
+        self.assertIn("Данные Telegram", response)
         self.assertIn("user_id=42", response)
         self.assertIn("chat_id=777", response)
-        self.assertIn("allowlist=disabled", response)
+        self.assertIn("белый_список=выключен", response)
 
     def test_help_lists_whoami_command(self) -> None:
         response = self.bot._route_command("/help")
+        self.assertIn("Команды:", response)
         self.assertIn("/whoami", response)
-        self.assertIn("Send a food photo", response)
+        self.assertIn("Отправь фото еды", response)
 
     def test_drafts_command_lists_pending_drafts(self) -> None:
         response = self.bot._route_command("/drafts")
-        self.assertIn("Pending meal drafts", response)
+        self.assertIn("Ожидающие черновики приема пищи", response)
         self.assertIn("draft-1", response)
 
     def test_confirm_meal_command_confirms_draft(self) -> None:
         response = self.bot._route_command("/confirm_meal draft-1")
-        self.assertIn("Meal logged", response)
+        self.assertIn("Прием пищи сохранен", response)
         self.assertEqual(self.service.confirmed_draft_ids, ["draft-1"])
 
     def test_confirm_callback_edits_message_and_sends_confirmation(self) -> None:
@@ -235,8 +237,10 @@ class TelegramHealthBotTest(unittest.TestCase):
 
     def test_summary_includes_food_breakdown(self) -> None:
         response = self.bot._route_command("/summary 2026-05-06")
+        self.assertIn("Сводка за 2026-05-06", response)
+        self.assertIn("Приемы пищи: 1", response)
         self.assertIn("Еда:", response)
-        self.assertIn("Курица с рисом", response)
+        self.assertIn("12:00 | Курица с рисом", response)
         self.assertIn("Б 38.0 / Ж 18.0 / У 71.0", response)
 
 

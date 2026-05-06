@@ -72,7 +72,7 @@ class TelegramHealthBot:
 
         if self.settings.allowed_user_ids and user_id not in self.settings.allowed_user_ids:
             logger.warning("Rejected update from non-allowed user_id=%s chat_id=%s", user_id, chat_id)
-            self._send_message(chat_id, "This bot is restricted to approved Telegram users.")
+            self._send_message(chat_id, "Бот доступен только для разрешенных пользователей Telegram.")
             return
 
         if isinstance(photo, list) and photo:
@@ -112,7 +112,7 @@ class TelegramHealthBot:
         )
         if self.settings.allowed_user_ids and user_id not in self.settings.allowed_user_ids:
             logger.warning("Rejected callback from non-allowed user_id=%s", user_id)
-            self._answer_callback_query(query_id, "Access denied.")
+            self._answer_callback_query(query_id, "Доступ запрещен.")
             return
 
         if data.startswith("meal_confirm:"):
@@ -170,7 +170,7 @@ class TelegramHealthBot:
             return
 
         logger.warning("Unknown callback action query_id=%s data=%s", query_id, data)
-        self._answer_callback_query(query_id, "Unknown action.")
+        self._answer_callback_query(query_id, "Неизвестное действие.")
 
     def _route_command(
         self,
@@ -181,7 +181,7 @@ class TelegramHealthBot:
         try:
             parts = shlex.split(text)
         except ValueError as exc:
-            return "Command parsing failed: %s" % exc
+            return "Не удалось разобрать команду: %s" % exc
         if not parts:
             return ""
 
@@ -217,49 +217,49 @@ class TelegramHealthBot:
             if command == "/decisions":
                 return self._handle_decisions(args)
         except ValueError as exc:
-            return "Invalid command arguments: %s" % exc
-        return "Unknown command.\n\n%s" % self._help_text()
+            return "Некорректные аргументы команды: %s" % exc
+        return "Неизвестная команда.\n\n%s" % self._help_text()
 
     def _handle_whoami(self, chat_id: Optional[int], user_id: Optional[int]) -> str:
         lines = [
-            "Telegram identity",
-            "user_id=%s" % (user_id if user_id is not None else "unknown"),
-            "chat_id=%s" % (chat_id if chat_id is not None else "unknown"),
+            "Данные Telegram",
+            "user_id=%s" % (user_id if user_id is not None else "неизвестно"),
+            "chat_id=%s" % (chat_id if chat_id is not None else "неизвестно"),
         ]
         if self.settings.allowed_user_ids:
-            lines.append("allowlist=enabled")
+            lines.append("белый_список=включен")
         else:
-            lines.append("allowlist=disabled")
+            lines.append("белый_список=выключен")
         return "\n".join(lines)
 
     def _handle_confirm_meal(self, args: List[str]) -> str:
         if len(args) != 1:
-            return "Usage: /confirm_meal <draft_id>"
+            return "Использование: /confirm_meal <draft_id>"
         meal = self.service.confirm_meal_draft(args[0])
         decisions = self.service.evaluate_day(meal.occurred_at.date(), now=self._local_now())
-        return "Meal logged: %s.\n%s" % (meal.title, self._format_new_decisions(decisions))
+        return "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions))
 
     def _handle_reject_meal(self, args: List[str]) -> str:
         if len(args) != 1:
-            return "Usage: /reject_meal <draft_id>"
+            return "Использование: /reject_meal <draft_id>"
         draft = self.service.reject_meal_draft(args[0])
-        return "Meal draft rejected: %s." % draft.title
+        return "Черновик приема пищи отклонен: %s." % draft.title
 
     def _handle_drafts(self) -> str:
         drafts = self.service.list_meal_drafts(status=MealDraftStatus.PENDING)
         if not drafts:
-            return "No pending meal drafts."
-        lines = ["Pending meal drafts:"]
+            return "Нет ожидающих черновиков приема пищи."
+        lines = ["Ожидающие черновики приема пищи:"]
         for draft in drafts[:10]:
             lines.append(
-                "- %s | %s kcal | %.2f conf | id=%s"
+                "- %s | %s ккал | уверенность %.2f | id=%s"
                 % (draft.title, draft.calories, draft.confidence, draft.draft_id)
             )
         return "\n".join(lines)
 
     def _handle_water(self, args: List[str]) -> str:
         if len(args) != 1:
-            return "Usage: /water <ml>"
+            return "Использование: /water <ml>"
         amount_ml = int(args[0])
         now = self._local_now()
         self.service.log_water(
@@ -270,11 +270,11 @@ class TelegramHealthBot:
             )
         )
         decisions = self.service.evaluate_day(now.date(), now=now)
-        return "Logged %s ml of water.\n%s" % (amount_ml, self._format_new_decisions(decisions))
+        return "Записано воды: %s мл.\n%s" % (amount_ml, self._format_new_decisions(decisions))
 
     def _handle_meal(self, args: List[str]) -> str:
         if len(args) < 3:
-            return 'Usage: /meal <calories> <protein_g> <title>. Example: /meal 650 45 "Chicken rice bowl"'
+            return 'Использование: /meal <calories> <protein_g> <title>. Пример: /meal 650 45 "Курица с рисом"'
         calories = int(args[0])
         protein_g = float(args[1])
         title = " ".join(args[2:])
@@ -289,11 +289,11 @@ class TelegramHealthBot:
             )
         )
         decisions = self.service.evaluate_day(now.date(), now=now)
-        return "Logged meal: %s.\n%s" % (title, self._format_new_decisions(decisions))
+        return "Прием пищи записан: %s.\n%s" % (title, self._format_new_decisions(decisions))
 
     def _handle_weight(self, args: List[str]) -> str:
         if len(args) != 1:
-            return "Usage: /weight <kg>"
+            return "Использование: /weight <kg>"
         weight_kg = float(args[0])
         now = self._local_now()
         self.service.log_weight(
@@ -303,11 +303,11 @@ class TelegramHealthBot:
                 weight_kg=weight_kg,
             )
         )
-        return "Logged weight: %.1f kg." % weight_kg
+        return "Вес записан: %.1f кг." % weight_kg
 
     def _handle_sleep(self, args: List[str]) -> str:
         if len(args) != 1:
-            return "Usage: /sleep <hours>"
+            return "Использование: /sleep <hours>"
         duration_hours = float(args[0])
         end_at = self._local_now()
         start_at = end_at - timedelta(hours=duration_hours)
@@ -319,11 +319,11 @@ class TelegramHealthBot:
             )
         )
         decisions = self.service.evaluate_day(end_at.date(), now=end_at)
-        return "Logged %.2f hours of sleep.\n%s" % (duration_hours, self._format_new_decisions(decisions))
+        return "Сон записан: %.2f ч.\n%s" % (duration_hours, self._format_new_decisions(decisions))
 
     def _handle_activity(self, args: List[str]) -> str:
         if len(args) < 3:
-            return 'Usage: /activity <minutes> <steps> <title>. Example: /activity 45 6000 "Evening walk"'
+            return 'Использование: /activity <minutes> <steps> <title>. Пример: /activity 45 6000 "Вечерняя прогулка"'
         duration_minutes = int(args[0])
         steps = int(args[1])
         title = " ".join(args[2:])
@@ -338,11 +338,11 @@ class TelegramHealthBot:
             )
         )
         decisions = self.service.evaluate_day(now.date(), now=now)
-        return "Logged activity: %s.\n%s" % (title, self._format_new_decisions(decisions))
+        return "Активность записана: %s.\n%s" % (title, self._format_new_decisions(decisions))
 
     def _handle_goals(self, args: List[str]) -> str:
         if len(args) != 4:
-            return "Usage: /goals <water_ml> <protein_g> <sleep_hours> <steps>"
+            return "Использование: /goals <water_ml> <protein_g> <sleep_hours> <steps>"
         today = self._local_today()
         goals = DailyHealthGoals(
             target_date=today,
@@ -353,7 +353,7 @@ class TelegramHealthBot:
         )
         self.service.set_goals(goals)
         return (
-            "Updated goals for %s:\nwater=%s ml, protein=%s g, sleep=%.1f h, steps=%s"
+            "Цели обновлены на %s:\nвода=%s мл, белок=%s г, сон=%.1f ч, шаги=%s"
             % (today.isoformat(), goals.water_ml, goals.protein_g, goals.sleep_hours, goals.steps)
         )
 
@@ -366,17 +366,17 @@ class TelegramHealthBot:
         summary = self.service.get_daily_summary(target_date)
         meals = self.service.list_meals(target_date)
         response = (
-            "Summary for %s\n"
-            "Meals: %s\n"
-            "Calories: %s\n"
-            "Protein: %.1f / %s g\n"
-            "Fat: %.1f g\n"
-            "Carbs: %.1f g\n"
-            "Water: %s / %s ml\n"
-            "Sleep: %.2f / %.1f h\n"
-            "Steps: %s / %s\n"
-            "Activity: %s min\n"
-            "Weight: %s"
+            "Сводка за %s\n"
+            "Приемы пищи: %s\n"
+            "Калории: %s\n"
+            "Белок: %.1f / %s г\n"
+            "Жиры: %.1f г\n"
+            "Углеводы: %.1f г\n"
+            "Вода: %s / %s мл\n"
+            "Сон: %.2f / %.1f ч\n"
+            "Шаги: %s / %s\n"
+            "Активность: %s мин\n"
+            "Вес: %s"
             % (
                 target_date.isoformat(),
                 summary.meals_count,
@@ -392,13 +392,14 @@ class TelegramHealthBot:
                 summary.steps,
                 summary.goals.steps,
                 summary.activity_minutes,
-                "%.1f kg" % summary.latest_weight_kg if summary.latest_weight_kg is not None else "n/a",
+                "%.1f кг" % summary.latest_weight_kg if summary.latest_weight_kg is not None else "нет данных",
             )
         )
         if meals:
             meal_lines = [
-                "- %s | %s kcal | Б %.1f / Ж %.1f / У %.1f"
+                "- %s | %s | %s ккал | Б %.1f / Ж %.1f / У %.1f"
                 % (
+                    meal.occurred_at.strftime("%H:%M"),
                     meal.title,
                     meal.calories,
                     meal.protein_g,
@@ -423,26 +424,26 @@ class TelegramHealthBot:
             target_date=target_date,
         )
         if not decisions:
-            return "No open decisions for %s." % target_date.isoformat()
+            return "Нет открытых решений на %s." % target_date.isoformat()
 
-        lines = ["Open decisions for %s:" % target_date.isoformat()]
+        lines = ["Открытые решения на %s:" % target_date.isoformat()]
         for decision in decisions:
             lines.append("- [%s] %s" % (decision.kind.value, decision.title))
         return "\n".join(lines)
 
     def _help_text(self) -> str:
         return (
-            "Commands:\n"
+            "Команды:\n"
             "/whoami\n"
-            "Send a food photo to create a meal draft.\n"
+            "Отправь фото еды, чтобы создать черновик приема пищи.\n"
             "/confirm_meal <draft_id>\n"
             "/reject_meal <draft_id>\n"
             "/drafts\n"
             "/water <ml>\n"
-            '/meal <calories> <protein_g> <title>  Example: /meal 650 45 "Chicken rice bowl"\n'
+            '/meal <calories> <protein_g> <title>  Пример: /meal 650 45 "Курица с рисом"\n'
             "/weight <kg>\n"
             "/sleep <hours>\n"
-            '/activity <minutes> <steps> <title>  Example: /activity 45 6000 "Evening walk"\n'
+            '/activity <minutes> <steps> <title>  Пример: /activity 45 6000 "Вечерняя прогулка"\n'
             "/goals <water_ml> <protein_g> <sleep_hours> <steps>\n"
             "/summary [YYYY-MM-DD]\n"
             "/decisions [YYYY-MM-DD]"
@@ -451,8 +452,8 @@ class TelegramHealthBot:
     def _format_new_decisions(self, decisions: Iterable) -> str:
         decision_list = list(decisions)
         if not decision_list:
-            return "No new decisions."
-        lines = ["New decisions:"]
+            return "Новых решений нет."
+        lines = ["Новые решения:"]
         for decision in decision_list:
             lines.append("- [%s] %s" % (decision.kind.value, decision.title))
         return "\n".join(lines)
@@ -570,14 +571,14 @@ class TelegramHealthBot:
         file_id = largest_photo.get("file_id")
         file_unique_id = largest_photo.get("file_unique_id")
         if not isinstance(file_id, str) or not isinstance(file_unique_id, str):
-            self._send_message(chat_id, "Photo metadata is incomplete.")
+            self._send_message(chat_id, "Метаданные фотографии неполные.")
             return
 
         try:
             file_info = self._telegram_api("getFile", {"file_id": file_id})
             file_path = file_info.get("file_path")
             if not isinstance(file_path, str):
-                raise ValueError("Telegram file path is missing")
+                raise ValueError("Telegram не вернул путь к файлу")
             image_bytes = self._download_telegram_file(file_path)
             draft = self.service.create_meal_draft_from_photo(
                 photo_file_id=file_id,
@@ -589,7 +590,7 @@ class TelegramHealthBot:
             )
         except Exception as exc:
             logger.exception("Food photo analysis failed chat_id=%s file_id=%s error=%s", chat_id, file_id, exc)
-            self._send_message(chat_id, "Food photo analysis failed: %s" % exc)
+            self._send_message(chat_id, "Не удалось распознать фото еды: %s" % exc)
             return
 
         logger.info("Food photo analyzed successfully chat_id=%s draft_id=%s", chat_id, draft.draft_id)
