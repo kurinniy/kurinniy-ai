@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from datetime import date, datetime
 
@@ -133,6 +134,50 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Команды:", response)
         self.assertIn("/whoami", response)
         self.assertIn("Отправь фото еды", response)
+        self.assertIn("/menu", response)
+
+    def test_button_text_routes_to_summary_command(self) -> None:
+        response = self.bot._route_command("Сводка за сегодня")
+        self.assertIn("Сводка за", response)
+
+    def test_help_message_attaches_reply_keyboard(self) -> None:
+        messages = []
+
+        def fake_telegram_api(method, params):
+            messages.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/help",
+                    "chat": {"id": 777},
+                    "from": {"id": 42},
+                },
+            }
+        )
+
+        self.assertEqual(messages[0][0], "sendMessage")
+        markup = json.loads(messages[0][1]["reply_markup"])
+        self.assertEqual(markup["keyboard"][0][0]["text"], "Сводка за сегодня")
+        self.assertEqual(markup["keyboard"][0][1]["text"], "Открытые решения")
+
+    def test_sync_bot_commands_registers_menu_entries(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._sync_bot_commands()
+
+        self.assertEqual(calls[0][0], "setMyCommands")
+        commands = json.loads(calls[0][1]["commands"])
+        self.assertEqual(commands[0]["command"], "menu")
+        self.assertEqual(commands[0]["description"], "Показать кнопки и список команд")
 
     def test_drafts_command_lists_pending_drafts(self) -> None:
         response = self.bot._route_command("/drafts")

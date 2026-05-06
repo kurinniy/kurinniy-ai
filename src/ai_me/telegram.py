@@ -26,6 +26,14 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramHealthBot:
+    BUTTON_TO_COMMAND = {
+        "Сводка за сегодня": "/summary",
+        "Открытые решения": "/decisions",
+        "Черновики еды": "/drafts",
+        "Кто я": "/whoami",
+        "Помощь": "/help",
+    }
+
     def __init__(self, service: HealthService, settings: TelegramSettings) -> None:
         self.service = service
         self.settings = settings
@@ -34,6 +42,7 @@ class TelegramHealthBot:
 
     def run_forever(self) -> None:
         self._ensure_polling_mode()
+        self._sync_bot_commands()
         logger.info("Telegram long polling started")
         offset = None
         while True:
@@ -86,9 +95,14 @@ class TelegramHealthBot:
 
         if isinstance(text, str):
             logger.info("Received text command chat_id=%s user_id=%s text=%s", chat_id, user_id, text.strip())
-            response = self._route_command(text=text.strip(), chat_id=chat_id, user_id=user_id)
+            normalized_text = self._normalize_command_text(text.strip())
+            response = self._route_command(text=normalized_text, chat_id=chat_id, user_id=user_id)
             if response:
-                self._send_message(chat_id, response)
+                self._send_message(
+                    chat_id,
+                    response,
+                    reply_markup=self._menu_reply_markup() if self._should_show_menu(normalized_text) else None,
+                )
 
     def _handle_callback_query(self, callback_query: Dict[str, object]) -> None:
         user = callback_query.get("from", {})
@@ -178,6 +192,7 @@ class TelegramHealthBot:
         chat_id: Optional[int] = None,
         user_id: Optional[int] = None,
     ) -> str:
+        text = self._normalize_command_text(text)
         try:
             parts = shlex.split(text)
         except ValueError as exc:
@@ -191,6 +206,8 @@ class TelegramHealthBot:
             if command == "/start":
                 return self._help_text()
             if command == "/help":
+                return self._help_text()
+            if command == "/menu":
                 return self._help_text()
             if command == "/whoami":
                 return self._handle_whoami(chat_id=chat_id, user_id=user_id)
@@ -436,6 +453,7 @@ class TelegramHealthBot:
             "Команды:\n"
             "/whoami\n"
             "Отправь фото еды, чтобы создать черновик приема пищи.\n"
+            "/menu\n"
             "/confirm_meal <draft_id>\n"
             "/reject_meal <draft_id>\n"
             "/drafts\n"
@@ -466,14 +484,14 @@ class TelegramHealthBot:
             params["offset"] = offset
         return self._telegram_api("getUpdates", params)
 
-    def _send_message(self, chat_id: int, text: str) -> None:
-        self._telegram_api(
-            "sendMessage",
-            {
-                "chat_id": chat_id,
-                "text": text,
-            },
-        )
+    def _send_message(self, chat_id: int, text: str, reply_markup: Optional[str] = None) -> None:
+        params = {
+            "chat_id": chat_id,
+            "text": text,
+        }
+        if reply_markup is not None:
+            params["reply_markup"] = reply_markup
+        self._telegram_api("sendMessage", params)
 
     def _edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
         self._telegram_api(
@@ -606,6 +624,47 @@ class TelegramHealthBot:
             )
         except Exception as exc:  # pragma: no cover
             logger.warning("Webhook cleanup failed: %s", exc)
+
+    def _sync_bot_commands(self) -> None:
+        commands = [
+            {"command": "menu", "description": "Показать кнопки и список команд"},
+            {"command": "summary", "description": "Сводка за сегодня"},
+            {"command": "decisions", "description": "Открытые решения"},
+            {"command": "drafts", "description": "Черновики приема пищи"},
+            {"command": "whoami", "description": "Мои Telegram ID"},
+            {"command": "help", "description": "Справка по командам"},
+        ]
+        try:
+            self._telegram_api(
+                "setMyCommands",
+                {
+                    "commands": json.dumps(commands, ensure_ascii=False),
+                },
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Bot command sync failed: %s", exc)
+
+    @classmethod
+    def _normalize_command_text(cls, text: str) -> str:
+        return cls.BUTTON_TO_COMMAND.get(text, text)
+
+    @staticmethod
+    def _should_show_menu(text: str) -> bool:
+        return text in {"/start", "/help", "/menu"}
+
+    @classmethod
+    def _menu_reply_markup(cls) -> str:
+        return json.dumps(
+            {
+                "resize_keyboard": True,
+                "keyboard": [
+                    [{"text": "Сводка за сегодня"}, {"text": "Открытые решения"}],
+                    [{"text": "Черновики еды"}, {"text": "Кто я"}],
+                    [{"text": "Помощь"}],
+                ],
+            },
+            ensure_ascii=False,
+        )
 
     def _telegram_api(self, method: str, params: Dict[str, object]):
         encoded = parse.urlencode(params).encode()
