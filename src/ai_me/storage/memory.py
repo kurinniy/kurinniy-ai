@@ -38,6 +38,10 @@ class InMemoryStore:
     def add_meal(self, entry: MealEntry) -> None:
         self._meals.append(entry)
 
+    def list_meals(self, target_date: date) -> List[MealEntry]:
+        meals = [entry for entry in self._meals if entry.occurred_at.date() == target_date]
+        return sorted(meals, key=lambda item: item.occurred_at)
+
     def create_meal_draft(self, draft: MealPhotoDraft) -> None:
         self._meal_drafts[draft.draft_id] = draft
 

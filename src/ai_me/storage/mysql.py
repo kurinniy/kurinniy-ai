@@ -102,6 +102,20 @@ class MySQLStore:
             ),
         )
 
+    def list_meals(self, target_date: date) -> List[MealEntry]:
+        day_start = datetime.combine(target_date, time.min)
+        day_end = datetime.combine(target_date, time.max)
+        rows = self._fetchall(
+            """
+            SELECT *
+            FROM meals
+            WHERE occurred_at BETWEEN %s AND %s
+            ORDER BY occurred_at ASC
+            """,
+            (day_start, day_end),
+        )
+        return [self._to_meal_entry(row) for row in rows]
+
     def create_meal_draft(self, draft: MealPhotoDraft) -> None:
         self._execute(
             """
@@ -550,4 +564,17 @@ class MySQLStore:
             status=MealDraftStatus(row["status"]),
             source=row["source"],
             items=items,
+        )
+
+    @staticmethod
+    def _to_meal_entry(row: dict) -> MealEntry:
+        return MealEntry(
+            entry_id=row["entry_id"],
+            occurred_at=row["occurred_at"],
+            title=row["title"],
+            calories=int(row["calories"]),
+            protein_g=float(row["protein_g"]),
+            fat_g=float(row["fat_g"]),
+            carbs_g=float(row["carbs_g"]),
+            notes=row["notes"],
         )

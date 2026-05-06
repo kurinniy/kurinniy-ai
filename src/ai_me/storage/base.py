@@ -27,6 +27,9 @@ class HealthStore(Protocol):
     def add_meal(self, entry: MealEntry) -> None:
         ...
 
+    def list_meals(self, target_date: date) -> List[MealEntry]:
+        ...
+
     def create_meal_draft(self, draft: MealPhotoDraft) -> None:
         ...
 

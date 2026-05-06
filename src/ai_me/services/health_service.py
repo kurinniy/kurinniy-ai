@@ -115,6 +115,9 @@ class HealthService:
     def get_daily_summary(self, target_date: date) -> DailyHealthSummary:
         return self.store.build_health_summary(target_date)
 
+    def list_meals(self, target_date: date) -> List[MealEntry]:
+        return self.store.list_meals(target_date)
+
     def evaluate_day(self, target_date: date, now: Optional[datetime] = None) -> List[DecisionLogEntry]:
         current_time = now or datetime.now()
         summary = self.get_daily_summary(target_date)

@@ -1,9 +1,9 @@
 import unittest
 
-from datetime import date
+from datetime import date, datetime
 
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealPhotoDraft
-from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary
+from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry
 from ai_me.config import TelegramSettings
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
 from ai_me.telegram import TelegramHealthBot
@@ -37,11 +37,11 @@ class DummyHealthService:
     def get_daily_summary(self, target_date):
         return DailyHealthSummary(
             target_date=target_date,
-            meals_count=0,
-            calories=0,
-            protein_g=0,
-            fat_g=0,
-            carbs_g=0,
+            meals_count=1,
+            calories=620,
+            protein_g=38,
+            fat_g=18,
+            carbs_g=71,
             water_ml=0,
             sleep_hours=0,
             steps=0,
@@ -49,6 +49,19 @@ class DummyHealthService:
             latest_weight_kg=None,
             goals=DailyHealthGoals(target_date=target_date),
         )
+
+    def list_meals(self, target_date):
+        return [
+            MealEntry(
+                entry_id="meal-1",
+                occurred_at=datetime(2026, 5, 6, 12, 0),
+                title="Курица с рисом",
+                calories=620,
+                protein_g=38,
+                fat_g=18,
+                carbs_g=71,
+            )
+        ]
 
     def list_decisions(self, status=None, target_date=None):
         return []
@@ -129,6 +142,34 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Meal logged", response)
         self.assertEqual(self.service.confirmed_draft_ids, ["draft-1"])
 
+    def test_confirm_callback_edits_message_and_sends_confirmation(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "meal_confirm:draft-1",
+                "from": {"id": 42},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 777},
+                },
+            }
+        )
+
+        self.assertEqual(self.service.confirmed_draft_ids, ["draft-1"])
+        self.assertEqual(calls[0][0], "editMessageText")
+        self.assertIn("Прием пищи сохранен", calls[0][1]["text"])
+        self.assertEqual(calls[1][0], "answerCallbackQuery")
+        self.assertEqual(calls[1][1]["text"], "Прием пищи сохранен.")
+        self.assertEqual(calls[2][0], "sendMessage")
+        self.assertIn("Прием пищи сохранен", calls[2][1]["text"])
+
     def test_meal_draft_message_uses_russian_labels(self) -> None:
         draft = self.service.list_meal_drafts()[0]
         messages = []
@@ -162,6 +203,12 @@ class TelegramHealthBotTest(unittest.TestCase):
             ```"""
         )
         self.assertEqual(parsed["title"], "Chicken rice bowl")
+
+    def test_summary_includes_food_breakdown(self) -> None:
+        response = self.bot._route_command("/summary 2026-05-06")
+        self.assertIn("Еда:", response)
+        self.assertIn("Курица с рисом", response)
+        self.assertIn("Б 38.0 / Ж 18.0 / У 71.0", response)
 
 
 if __name__ == "__main__":

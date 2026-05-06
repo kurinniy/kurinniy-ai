@@ -88,6 +88,7 @@ class TelegramHealthBot:
         message = callback_query.get("message", {})
         chat = message.get("chat", {})
         chat_id = chat.get("id")
+        message_id = message.get("message_id")
         if not isinstance(data, str) or not isinstance(query_id, str) or not isinstance(chat_id, int):
             return
         if self.settings.allowed_user_ids and user_id not in self.settings.allowed_user_ids:
@@ -101,11 +102,22 @@ class TelegramHealthBot:
             except ValueError as exc:
                 self._answer_callback_query(query_id, str(exc))
                 return
-            self._answer_callback_query(query_id, "Meal confirmed.")
+            if isinstance(message_id, int):
+                self._edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=(
+                        "Прием пищи сохранен\n"
+                        "Блюдо: %s\n"
+                        "Статус: подтверждено"
+                    )
+                    % meal.title,
+                )
+            self._answer_callback_query(query_id, "Прием пищи сохранен.")
             decisions = self.service.evaluate_day(meal.occurred_at.date(), now=self._local_now())
             self._send_message(
                 chat_id,
-                "Meal logged: %s.\n%s" % (meal.title, self._format_new_decisions(decisions)),
+                "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions)),
             )
             return
 
@@ -116,8 +128,19 @@ class TelegramHealthBot:
             except ValueError as exc:
                 self._answer_callback_query(query_id, str(exc))
                 return
-            self._answer_callback_query(query_id, "Meal draft rejected.")
-            self._send_message(chat_id, "Meal draft rejected: %s." % draft.title)
+            if isinstance(message_id, int):
+                self._edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=(
+                        "Черновик приема пищи отклонен\n"
+                        "Блюдо: %s\n"
+                        "Статус: отклонено"
+                    )
+                    % draft.title,
+                )
+            self._answer_callback_query(query_id, "Черновик отклонен.")
+            self._send_message(chat_id, "Черновик приема пищи отклонен: %s." % draft.title)
             return
 
         self._answer_callback_query(query_id, "Unknown action.")
@@ -314,7 +337,8 @@ class TelegramHealthBot:
             target_date = self._local_today()
         self.service.evaluate_day(target_date, now=self._local_now())
         summary = self.service.get_daily_summary(target_date)
-        return (
+        meals = self.service.list_meals(target_date)
+        response = (
             "Summary for %s\n"
             "Meals: %s\n"
             "Calories: %s\n"
@@ -344,6 +368,22 @@ class TelegramHealthBot:
                 "%.1f kg" % summary.latest_weight_kg if summary.latest_weight_kg is not None else "n/a",
             )
         )
+        if meals:
+            meal_lines = [
+                "- %s | %s kcal | Б %.1f / Ж %.1f / У %.1f"
+                % (
+                    meal.title,
+                    meal.calories,
+                    meal.protein_g,
+                    meal.fat_g,
+                    meal.carbs_g,
+                )
+                for meal in meals
+            ]
+            response += "\nЕда:\n%s" % "\n".join(meal_lines)
+        else:
+            response += "\nЕда:\n- Нет записанных приемов пищи"
+        return response
 
     def _handle_decisions(self, args: List[str]) -> str:
         if args:
@@ -403,6 +443,16 @@ class TelegramHealthBot:
             "sendMessage",
             {
                 "chat_id": chat_id,
+                "text": text,
+            },
+        )
+
+    def _edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
+        self._telegram_api(
+            "editMessageText",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
                 "text": text,
             },
         )
