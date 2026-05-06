@@ -1,9 +1,15 @@
+import logging
+
 from ai_me.bootstrap import build_health_service
 from ai_me.config import AppSettings
 from ai_me.telegram import TelegramHealthBot
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     settings = AppSettings.from_env()
     service = build_health_service(settings)
     bot = TelegramHealthBot(service=service, settings=settings.telegram)

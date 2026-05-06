@@ -1,6 +1,6 @@
 import json
+import logging
 import shlex
-import sys
 import time
 from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional
@@ -22,6 +22,9 @@ from ai_me.domain.health import (
 from ai_me.services.health_service import HealthService
 
 
+logger = logging.getLogger(__name__)
+
+
 class TelegramHealthBot:
     def __init__(self, service: HealthService, settings: TelegramSettings) -> None:
         self.service = service
@@ -31,21 +34,24 @@ class TelegramHealthBot:
 
     def run_forever(self) -> None:
         self._ensure_polling_mode()
-        print("Telegram long polling started", file=sys.stderr)
+        logger.info("Telegram long polling started")
         offset = None
         while True:
             try:
                 updates = self._get_updates(offset=offset)
+                if updates:
+                    logger.info("Received %s Telegram update(s)", len(updates))
                 for update in updates:
                     offset = update["update_id"] + 1
                     self._handle_update(update)
             except Exception as exc:  # pragma: no cover
-                print("Polling error: %s" % exc, file=sys.stderr)
+                logger.exception("Polling error: %s", exc)
                 time.sleep(3)
 
     def _handle_update(self, update: Dict[str, object]) -> None:
         callback_query = update.get("callback_query")
         if isinstance(callback_query, dict):
+            logger.info("Processing callback query update_id=%s", update.get("update_id"))
             self._handle_callback_query(callback_query)
             return
 
@@ -61,13 +67,16 @@ class TelegramHealthBot:
         chat_id = chat.get("id")
         user_id = user.get("id")
         if not isinstance(chat_id, int):
+            logger.warning("Skipping update without valid chat_id: %s", update)
             return
 
         if self.settings.allowed_user_ids and user_id not in self.settings.allowed_user_ids:
+            logger.warning("Rejected update from non-allowed user_id=%s chat_id=%s", user_id, chat_id)
             self._send_message(chat_id, "This bot is restricted to approved Telegram users.")
             return
 
         if isinstance(photo, list) and photo:
+            logger.info("Received photo message chat_id=%s user_id=%s", chat_id, user_id)
             self._handle_photo_message(
                 chat_id=chat_id,
                 photo=photo,
@@ -76,6 +85,7 @@ class TelegramHealthBot:
             return
 
         if isinstance(text, str):
+            logger.info("Received text command chat_id=%s user_id=%s text=%s", chat_id, user_id, text.strip())
             response = self._route_command(text=text.strip(), chat_id=chat_id, user_id=user_id)
             if response:
                 self._send_message(chat_id, response)
@@ -90,16 +100,28 @@ class TelegramHealthBot:
         chat_id = chat.get("id")
         message_id = message.get("message_id")
         if not isinstance(data, str) or not isinstance(query_id, str) or not isinstance(chat_id, int):
+            logger.warning("Skipping malformed callback query: %s", callback_query)
             return
+        logger.info(
+            "Received callback query_id=%s user_id=%s chat_id=%s message_id=%s data=%s",
+            query_id,
+            user_id,
+            chat_id,
+            message_id,
+            data,
+        )
         if self.settings.allowed_user_ids and user_id not in self.settings.allowed_user_ids:
+            logger.warning("Rejected callback from non-allowed user_id=%s", user_id)
             self._answer_callback_query(query_id, "Access denied.")
             return
 
         if data.startswith("meal_confirm:"):
             draft_id = data.split(":", 1)[1]
+            logger.info("Confirming meal draft_id=%s", draft_id)
             try:
                 meal = self.service.confirm_meal_draft(draft_id)
             except ValueError as exc:
+                logger.warning("Meal confirmation failed draft_id=%s error=%s", draft_id, exc)
                 self._answer_callback_query(query_id, str(exc))
                 return
             self._answer_callback_query(query_id, "Прием пищи сохранен.")
@@ -115,6 +137,7 @@ class TelegramHealthBot:
                     % meal.title,
                 )
             decisions = self.service.evaluate_day(meal.occurred_at.date(), now=self._local_now())
+            logger.info("Meal confirmed draft_id=%s title=%s", draft_id, meal.title)
             self._send_message(
                 chat_id,
                 "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions)),
@@ -123,9 +146,11 @@ class TelegramHealthBot:
 
         if data.startswith("meal_reject:"):
             draft_id = data.split(":", 1)[1]
+            logger.info("Rejecting meal draft_id=%s", draft_id)
             try:
                 draft = self.service.reject_meal_draft(draft_id)
             except ValueError as exc:
+                logger.warning("Meal rejection failed draft_id=%s error=%s", draft_id, exc)
                 self._answer_callback_query(query_id, str(exc))
                 return
             self._answer_callback_query(query_id, "Черновик отклонен.")
@@ -140,9 +165,11 @@ class TelegramHealthBot:
                     )
                     % draft.title,
                 )
+            logger.info("Meal rejected draft_id=%s title=%s", draft_id, draft.title)
             self._send_message(chat_id, "Черновик приема пищи отклонен: %s." % draft.title)
             return
 
+        logger.warning("Unknown callback action query_id=%s data=%s", query_id, data)
         self._answer_callback_query(query_id, "Unknown action.")
 
     def _route_command(
@@ -461,7 +488,12 @@ class TelegramHealthBot:
         try:
             self._edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
         except Exception as exc:  # pragma: no cover
-            print("Callback message edit failed: %s" % exc, file=sys.stderr)
+            logger.warning(
+                "Callback message edit failed chat_id=%s message_id=%s error=%s",
+                chat_id,
+                message_id,
+                exc,
+            )
 
     def _send_meal_draft(self, chat_id: int, draft: MealPhotoDraft) -> None:
         items_text = "\n".join(
@@ -556,9 +588,11 @@ class TelegramHealthBot:
                 caption=caption,
             )
         except Exception as exc:
+            logger.exception("Food photo analysis failed chat_id=%s file_id=%s error=%s", chat_id, file_id, exc)
             self._send_message(chat_id, "Food photo analysis failed: %s" % exc)
             return
 
+        logger.info("Food photo analyzed successfully chat_id=%s draft_id=%s", chat_id, draft.draft_id)
         self._send_meal_draft(chat_id, draft)
 
     def _ensure_polling_mode(self) -> None:
@@ -570,7 +604,7 @@ class TelegramHealthBot:
                 },
             )
         except Exception as exc:  # pragma: no cover
-            print("Webhook cleanup failed: %s" % exc, file=sys.stderr)
+            logger.warning("Webhook cleanup failed: %s", exc)
 
     def _telegram_api(self, method: str, params: Dict[str, object]):
         encoded = parse.urlencode(params).encode()
@@ -578,6 +612,7 @@ class TelegramHealthBot:
         with request.urlopen(req, timeout=self.settings.polling_timeout_seconds + 10) as response:
             payload = json.loads(response.read().decode("utf-8"))
         if not payload.get("ok"):
+            logger.error("Telegram API error method=%s payload=%s", method, payload)
             raise RuntimeError("Telegram API error for %s: %s" % (method, payload))
         return payload["result"]
 
