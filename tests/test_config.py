@@ -39,6 +39,20 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             TelegramSettings.from_env({})
 
+    def test_default_food_model_is_used_when_api_key_exists(self) -> None:
+        settings = AppSettings.from_env(
+            {
+                "MYSQLHOST": "mysql.railway.internal",
+                "MYSQLPORT": "3306",
+                "MYSQLDATABASE": "railway",
+                "MYSQLUSER": "root",
+                "MYSQLPASSWORD": "secret",
+                "TELEGRAM_BOT_TOKEN": "123:abc",
+                "OPENAI_API_KEY": "sk-test",
+            }
+        )
+        self.assertEqual(settings.food_vision_model, "gpt-4.1-mini")
+
 
 if __name__ == "__main__":
     unittest.main()

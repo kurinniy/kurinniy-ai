@@ -96,7 +96,7 @@ class AppSettings:
             database=DatabaseSettings.from_env(source),
             telegram=TelegramSettings.from_env(source),
             food_vision_api_key=source.get("OPENAI_API_KEY", "").strip(),
-            food_vision_model=source.get("OPENAI_MODEL", "").strip(),
+            food_vision_model=(source.get("OPENAI_MODEL", "").strip() or "gpt-4.1-mini"),
         )
 
 
