@@ -45,6 +45,7 @@ class OpenAIFoodPhotoAnalyzer:
             "Analyze this food photo. Return strict JSON with keys: "
             "title, summary, calories, protein_g, fat_g, carbs_g, confidence, items. "
             "Each item must include title, portion_text, calories, protein_g, fat_g, carbs_g. "
+            "Return title, summary, item titles, and portion_text in Russian. "
             "Estimate conservatively. If unclear, lower confidence. "
             "Caption context: %s" % (caption or "none")
         )

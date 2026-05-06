@@ -409,7 +409,7 @@ class TelegramHealthBot:
 
     def _send_meal_draft(self, chat_id: int, draft: MealPhotoDraft) -> None:
         items_text = "\n".join(
-            "- %s (%s): %s kcal, P %.1f / F %.1f / C %.1f"
+            "- %s (%s): %s ккал, Б %.1f / Ж %.1f / У %.1f"
             % (
                 item.title,
                 item.portion_text,
@@ -421,15 +421,15 @@ class TelegramHealthBot:
             for item in draft.items
         )
         text = (
-            "Meal draft\n"
-            "Title: %s\n"
-            "Summary: %s\n"
-            "Calories: %s\n"
-            "Protein: %.1f g\n"
-            "Fat: %.1f g\n"
-            "Carbs: %.1f g\n"
-            "Confidence: %.2f\n"
-            "Draft ID: %s"
+            "Черновик приема пищи\n"
+            "Блюдо: %s\n"
+            "Состав: %s\n"
+            "Калории: %s\n"
+            "Белки: %.1f г\n"
+            "Жиры: %.1f г\n"
+            "Углеводы: %.1f г\n"
+            "Уверенность: %.2f\n"
+            "ID черновика: %s"
             % (
                 draft.title,
                 draft.summary,
@@ -442,7 +442,7 @@ class TelegramHealthBot:
             )
         )
         if items_text:
-            text += "\nItems:\n%s" % items_text
+            text += "\nИнгредиенты:\n%s" % items_text
 
         self._telegram_api(
             "sendMessage",
@@ -454,11 +454,11 @@ class TelegramHealthBot:
                         "inline_keyboard": [
                             [
                                 {
-                                    "text": "Confirm meal",
+                                    "text": "Подтвердить",
                                     "callback_data": "meal_confirm:%s" % draft.draft_id,
                                 },
                                 {
-                                    "text": "Reject",
+                                    "text": "Отклонить",
                                     "callback_data": "meal_reject:%s" % draft.draft_id,
                                 },
                             ]

@@ -2,7 +2,7 @@ import unittest
 
 from datetime import date
 
-from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
+from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary
 from ai_me.config import TelegramSettings
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
@@ -68,6 +68,16 @@ class DummyHealthService:
                 confidence=0.84,
                 photo_file_id="file-1",
                 photo_unique_id="u-1",
+                items=[
+                    FoodItemEstimate(
+                        title="Курица",
+                        portion_text="150 г",
+                        calories=250,
+                        protein_g=31,
+                        fat_g=8,
+                        carbs_g=0,
+                    )
+                ],
             )
         ]
 
@@ -118,6 +128,23 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/confirm_meal draft-1")
         self.assertIn("Meal logged", response)
         self.assertEqual(self.service.confirmed_draft_ids, ["draft-1"])
+
+    def test_meal_draft_message_uses_russian_labels(self) -> None:
+        draft = self.service.list_meal_drafts()[0]
+        messages = []
+
+        def fake_telegram_api(method, params):
+            messages.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._send_meal_draft(777, draft)
+
+        self.assertEqual(messages[0][0], "sendMessage")
+        text = messages[0][1]["text"]
+        self.assertIn("Черновик приема пищи", text)
+        self.assertIn("Состав:", text)
+        self.assertIn("Ингредиенты:", text)
 
     def test_food_analysis_parser_handles_markdown_wrapped_json(self) -> None:
         parsed = OpenAIFoodPhotoAnalyzer._parse_json_text(
