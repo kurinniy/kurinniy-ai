@@ -20,6 +20,12 @@
 
 ## 2026-05-07
 
+- Версия или commit: `e707b56`
+- Удалены ручные Telegram-команды `/water`, `/meal`, `/weight`, `/sleep`, `/activity`, `/goals`.
+- Обновлены help-текст и документация бота под photo-first и import-first сценарии.
+
+## 2026-05-07
+
 - Версия или commit: `be9ddfe`
 - Добавлен multi-user режим с invite-only onboarding для Telegram-бота.
 - Добавлены пользователи, инвайты, private-chat only режим и admin-команды для управления инвайтами.
