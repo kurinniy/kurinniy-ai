@@ -559,7 +559,6 @@ class TelegramHealthBot:
         self.service.evaluate_day(app_user.user_id, target_date, now=self._local_now())
         summary = self.service.get_daily_summary(app_user.user_id, target_date)
         yesterday_steps = self.service.build_step_progress_insight(app_user.user_id, target_date - timedelta(days=1))
-        meals = self.service.list_meals(app_user.user_id, target_date)
         response = (
             "Сводка за %s\n"
             "Приемы пищи: %s\n"
@@ -569,9 +568,7 @@ class TelegramHealthBot:
             "Углеводы: %.1f г\n"
             "Вода: %s / %s мл\n"
             "Сон: %.2f / %.1f ч\n"
-            "Шаги: %s / %s\n"
-            "Активность: %s мин\n"
-            "Вес: %s"
+            "Шаги: %s / %s"
             % (
                 target_date.isoformat(),
                 summary.meals_count,
@@ -586,26 +583,8 @@ class TelegramHealthBot:
                 summary.goals.sleep_hours,
                 summary.steps,
                 summary.goals.steps,
-                summary.activity_minutes,
-                "%.1f кг" % summary.latest_weight_kg if summary.latest_weight_kg is not None else "нет данных",
             )
         )
-        if meals:
-            meal_lines = [
-                "- %s | %s | %s ккал | Б %.1f / Ж %.1f / У %.1f"
-                % (
-                    meal.occurred_at.strftime("%H:%M"),
-                    meal.title,
-                    meal.calories,
-                    meal.protein_g,
-                    meal.fat_g,
-                    meal.carbs_g,
-                )
-                for meal in meals
-            ]
-            response += "\nЕда:\n%s" % "\n".join(meal_lines)
-        else:
-            response += "\nЕда:\n- Нет записанных приемов пищи"
         response += (
             "\nШаги за вчера (%s): %s / %s"
             % (
