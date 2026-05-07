@@ -147,6 +147,8 @@ class DummyHealthService:
         return True
 
     def connect_google_drive_folder(self, user_id, folder_input: str, now=None):
+        if "denied" in folder_input:
+            raise RuntimeError("Нет доступа к папке Google Drive. Проверьте, что папка расшарена на service account, и повторите попытку.")
         settings = UserGoogleDriveSettings(
             user_id=user_id,
             folder_id="folder-123",
@@ -453,6 +455,13 @@ class TelegramHealthBotTest(unittest.TestCase):
             self.service.drive_settings_by_user_id[1].folder_url,
             "https://drive.google.com/drive/folders/folder-123",
         )
+
+    def test_connect_drive_command_returns_access_error_message(self) -> None:
+        response = self.bot._route_command(
+            "/connect_drive https://drive.google.com/drive/folders/denied-folder",
+            app_user=self.service.users_by_telegram_id[42],
+        )
+        self.assertIn("Нет доступа к папке Google Drive", response)
 
     def test_drive_status_reports_missing_folder_before_connect(self) -> None:
         response = self.bot._route_command("/drive_status", app_user=self.service.users_by_telegram_id[42])

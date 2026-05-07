@@ -70,6 +70,10 @@ class DisabledGoogleDriveClient:
         raise RuntimeError("Интеграция с Google Drive не настроена.")
 
 
+class GoogleDriveFolderAccessError(RuntimeError):
+    pass
+
+
 class ServiceAccountGoogleDriveClient:
     DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 
@@ -83,7 +87,10 @@ class ServiceAccountGoogleDriveClient:
 
     def ensure_folder_access(self, folder_id: str) -> None:
         service = self._get_service()
-        service.files().get(fileId=folder_id, fields="id,name,mimeType").execute()
+        try:
+            service.files().get(fileId=folder_id, fields="id,name,mimeType").execute()
+        except Exception as exc:
+            raise self._translate_folder_access_error(exc) from exc
 
     def list_json_files(self, folder_id: str) -> List[GoogleDriveFile]:
         service = self._get_service()
@@ -162,6 +169,20 @@ class ServiceAccountGoogleDriveClient:
             raise RuntimeError("Google Drive service account is not configured.")
         self._service = build("drive", "v3", credentials=credentials, cache_discovery=False)
         return self._service
+
+    @staticmethod
+    def _translate_folder_access_error(exc: Exception) -> GoogleDriveFolderAccessError:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        if status == 403:
+            return GoogleDriveFolderAccessError(
+                "Нет доступа к папке Google Drive. Проверьте, что папка расшарена на service account, и повторите попытку."
+            )
+        if status == 404:
+            return GoogleDriveFolderAccessError(
+                "Папка Google Drive не найдена или недоступна. Проверьте ссылку на папку и доступ service account."
+            )
+        message = str(exc).strip() or "Неизвестная ошибка Google Drive."
+        return GoogleDriveFolderAccessError("Не удалось проверить доступ к папке Google Drive: %s" % message)
 
 
 class GoogleDriveHealthJSONParser:

@@ -5,9 +5,11 @@ from datetime import datetime
 from ai_me.domain.health_import import HealthImportProvider
 from ai_me.domain.user import UserStatus
 from ai_me.services.google_drive_import import (
+    GoogleDriveFolderAccessError,
     GoogleDriveFile,
     GoogleDriveHealthImportService,
     GoogleDriveHealthJSONParser,
+    ServiceAccountGoogleDriveClient,
     extract_google_drive_folder_id,
 )
 from ai_me.storage.memory import InMemoryStore
@@ -82,6 +84,12 @@ class FakeGoogleDriveClient:
         return self.payload_by_file_id[file_id]
 
 
+class FakeHttpError(Exception):
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.resp = type("Resp", (), {"status": status})()
+
+
 class GoogleDriveHealthImportTest(unittest.TestCase):
     def setUp(self) -> None:
         self.store = InMemoryStore()
@@ -143,6 +151,16 @@ class GoogleDriveHealthImportTest(unittest.TestCase):
         self.assertEqual(result.skipped_files, 1)
         imported_files = self.store.list_health_import_files(self.user.user_id, provider=HealthImportProvider.GOOGLE_DRIVE)
         self.assertEqual(len(imported_files), 1)
+
+    def test_google_drive_access_error_is_translated_for_403(self) -> None:
+        error = ServiceAccountGoogleDriveClient._translate_folder_access_error(FakeHttpError(403, "forbidden"))
+        self.assertIsInstance(error, GoogleDriveFolderAccessError)
+        self.assertIn("Нет доступа к папке Google Drive", str(error))
+
+    def test_google_drive_access_error_is_translated_for_404(self) -> None:
+        error = ServiceAccountGoogleDriveClient._translate_folder_access_error(FakeHttpError(404, "not found"))
+        self.assertIsInstance(error, GoogleDriveFolderAccessError)
+        self.assertIn("Папка Google Drive не найдена", str(error))
 
 
 if __name__ == "__main__":

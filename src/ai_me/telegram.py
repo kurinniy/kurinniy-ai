@@ -415,11 +415,15 @@ class TelegramHealthBot:
                 "Пример:\n"
                 "/connect_drive https://drive.google.com/drive/folders/..."
             )
-        settings = self.service.connect_google_drive_folder(
-            app_user.user_id,
-            folder_input=args[0],
-            now=self._local_now(),
-        )
+        try:
+            settings = self.service.connect_google_drive_folder(
+                app_user.user_id,
+                folder_input=args[0],
+                now=self._local_now(),
+            )
+        except RuntimeError as exc:
+            logger.warning("Google Drive connect failed user_id=%s error=%s", app_user.user_id, exc)
+            return str(exc)
         return (
             "Папка Google Drive подключена.\n"
             "folder_id=%s\n"
