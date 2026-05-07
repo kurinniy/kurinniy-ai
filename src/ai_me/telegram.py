@@ -2,15 +2,17 @@ import json
 import logging
 import shlex
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional
 from urllib import parse, request
 from zoneinfo import ZoneInfo
 
 from ai_me.config import TelegramSettings
 from ai_me.domain.decision_log import DecisionStatus
+from ai_me.domain.digest import DailyFoodDigest, WeeklyFoodDigest
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
 from ai_me.domain.user import AppUser, InviteStatus, UserStatus
+from ai_me.services.digest_renderer import DigestImageRenderer
 from ai_me.services.health_service import HealthService
 
 
@@ -28,11 +30,17 @@ class TelegramHealthBot:
         "Помощь": "/help",
     }
 
-    def __init__(self, service: HealthService, settings: TelegramSettings) -> None:
+    def __init__(
+        self,
+        service: HealthService,
+        settings: TelegramSettings,
+        digest_renderer: Optional[DigestImageRenderer] = None,
+    ) -> None:
         self.service = service
         self.settings = settings
         self.base_url = "https://api.telegram.org/bot%s/" % settings.bot_token
         self.timezone = ZoneInfo(settings.timezone_name)
+        self.digest_renderer = digest_renderer or DigestImageRenderer()
 
     def run_forever(self) -> None:
         self._ensure_polling_mode()
@@ -269,6 +277,22 @@ class TelegramHealthBot:
                 return self._handle_import_tbank()
             if command == "/finance_month":
                 return self._handle_finance_month(app_user, args)
+            if command == "/digest_status":
+                return self._handle_digest_status(app_user)
+            if command == "/digest_on":
+                return self._handle_digest_toggle(app_user, enabled=True)
+            if command == "/digest_off":
+                return self._handle_digest_toggle(app_user, enabled=False)
+            if command == "/digest_preview":
+                if chat_id is not None:
+                    self._send_daily_digest_preview(chat_id=chat_id, app_user=app_user, args=args)
+                    return ""
+                return self._handle_digest_preview(app_user, args)
+            if command == "/weekly_digest_preview":
+                if chat_id is not None:
+                    self._send_weekly_digest_preview(chat_id=chat_id, app_user=app_user, args=args)
+                    return ""
+                return self._handle_weekly_digest_preview(app_user, args)
             if command == "/confirm_meal":
                 return self._handle_confirm_meal(app_user, args)
             if command == "/reject_meal":
@@ -369,6 +393,59 @@ class TelegramHealthBot:
         else:
             lines.append("Расходов за этот месяц пока нет.")
         return "\n".join(lines)
+
+    def _handle_digest_status(self, app_user: AppUser) -> str:
+        settings = self.service.get_digest_settings(app_user.user_id)
+        return (
+            "Настройки digest\n"
+            "Часовой пояс: %s\n"
+            "Ежедневная сводка: %s в %s\n"
+            "Недельная сводка: %s по понедельникам в %s"
+            % (
+                settings.timezone_name,
+                "включена" if settings.daily_digest_enabled else "выключена",
+                settings.daily_digest_time,
+                "включена" if settings.weekly_digest_enabled else "выключена",
+                settings.weekly_digest_time,
+            )
+        )
+
+    def _handle_digest_toggle(self, app_user: AppUser, enabled: bool) -> str:
+        settings = self.service.set_digest_enabled(app_user.user_id, enabled=enabled)
+        state = "включен" if enabled else "выключен"
+        return (
+            "Digest %s.\n"
+            "Ежедневная сводка: %s в %s\n"
+            "Недельная сводка: %s по понедельникам в %s"
+            % (
+                state,
+                "включена" if settings.daily_digest_enabled else "выключена",
+                settings.daily_digest_time,
+                "включена" if settings.weekly_digest_enabled else "выключена",
+                settings.weekly_digest_time,
+            )
+        )
+
+    def _handle_digest_preview(self, app_user: AppUser, args: List[str]) -> str:
+        target_date = date.fromisoformat(args[0]) if args else (self._local_today() - timedelta(days=1))
+        digest = self.service.build_daily_food_digest(app_user.user_id, target_date)
+        if digest is None:
+            return "Для %s нет подтвержденных фото-блюд для daily digest." % target_date.isoformat()
+        return self._format_daily_digest_text(digest, preview=True)
+
+    def _handle_weekly_digest_preview(self, app_user: AppUser, args: List[str]) -> str:
+        if args:
+            base_date = date.fromisoformat(args[0])
+        else:
+            base_date = self._local_today() - timedelta(days=7)
+        week_start = base_date - timedelta(days=base_date.weekday())
+        digest = self.service.build_weekly_food_digest(app_user.user_id, week_start)
+        if digest is None:
+            return "Для недели %s — %s нет подтвержденных фото-блюд для weekly digest." % (
+                week_start.isoformat(),
+                (week_start + timedelta(days=6)).isoformat(),
+            )
+        return self._format_weekly_digest_text(digest, preview=True)
 
     def _handle_confirm_meal(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) != 1:
@@ -530,6 +607,11 @@ class TelegramHealthBot:
             "/menu",
             "/import_tbank",
             "/finance_month [YYYY-MM]",
+            "/digest_status",
+            "/digest_on",
+            "/digest_off",
+            "/digest_preview [YYYY-MM-DD]",
+            "/weekly_digest_preview [YYYY-MM-DD]",
             "/confirm_meal <draft_id>",
             "/reject_meal <draft_id>",
             "/drafts",
@@ -573,6 +655,26 @@ class TelegramHealthBot:
         if reply_markup is not None:
             params["reply_markup"] = reply_markup
         self._telegram_api("sendMessage", params)
+
+    def _send_photo_bytes(
+        self,
+        chat_id: int,
+        photo_bytes: bytes,
+        *,
+        filename: str = "digest.jpg",
+        caption: Optional[str] = None,
+    ) -> None:
+        params: Dict[str, object] = {"chat_id": chat_id}
+        if caption:
+            params["caption"] = caption
+        self._telegram_api_multipart(
+            "sendPhoto",
+            params=params,
+            file_field_name="photo",
+            filename=filename,
+            file_bytes=photo_bytes,
+            mime_type="image/jpeg",
+        )
 
     def _edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
         self._telegram_api(
@@ -656,6 +758,90 @@ class TelegramHealthBot:
                 ),
             },
         )
+
+    def _send_daily_digest_preview(self, chat_id: int, app_user: AppUser, args: List[str]) -> None:
+        target_date = date.fromisoformat(args[0]) if args else (self._local_today() - timedelta(days=1))
+        digest = self.service.build_daily_food_digest(app_user.user_id, target_date)
+        if digest is None:
+            self._send_message(chat_id, "Для %s нет подтвержденных фото-блюд для daily digest." % target_date.isoformat())
+            return
+        mosaic_bytes = self.digest_renderer.render_daily_mosaic(digest)
+        if mosaic_bytes is not None:
+            self._send_photo_bytes(
+                chat_id,
+                mosaic_bytes,
+                filename="daily-digest-%s.jpg" % target_date.isoformat(),
+            )
+        self._send_message(chat_id, self._format_daily_digest_text(digest, preview=True))
+
+    def _send_weekly_digest_preview(self, chat_id: int, app_user: AppUser, args: List[str]) -> None:
+        if args:
+            base_date = date.fromisoformat(args[0])
+        else:
+            base_date = self._local_today() - timedelta(days=7)
+        week_start = base_date - timedelta(days=base_date.weekday())
+        digest = self.service.build_weekly_food_digest(app_user.user_id, week_start)
+        if digest is None:
+            self._send_message(
+                chat_id,
+                "Для недели %s — %s нет подтвержденных фото-блюд для weekly digest."
+                % (week_start.isoformat(), (week_start + timedelta(days=6)).isoformat()),
+            )
+            return
+        mosaic_bytes = self.digest_renderer.render_weekly_mosaic(digest)
+        if mosaic_bytes is not None:
+            self._send_photo_bytes(
+                chat_id,
+                mosaic_bytes,
+                filename="weekly-digest-%s.jpg" % week_start.isoformat(),
+            )
+        self._send_message(chat_id, self._format_weekly_digest_text(digest, preview=True))
+
+    @staticmethod
+    def _format_daily_digest_text(digest: DailyFoodDigest, preview: bool = False) -> str:
+        lines = [
+            ("Daily digest preview за %s" % digest.digest_date.isoformat())
+            if preview
+            else ("Сводка по еде за %s" % digest.digest_date.isoformat()),
+            "Блюд: %s" % len(digest.meals),
+            "Калории: %s" % digest.total_calories,
+            "Белок: %.1f г" % digest.total_protein_g,
+            "Жиры: %.1f г" % digest.total_fat_g,
+            "Углеводы: %.1f г" % digest.total_carbs_g,
+            "Список блюд:",
+        ]
+        for meal in digest.meals:
+            lines.append("- %s | %s | %s ккал" % (meal.occurred_at.strftime("%H:%M"), meal.title, meal.calories))
+        lines.append("")
+        lines.append(digest.commentary)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_weekly_digest_text(digest: WeeklyFoodDigest, preview: bool = False) -> str:
+        lines = [
+            ("Weekly digest preview за %s — %s" % (digest.week_start.isoformat(), digest.week_end.isoformat()))
+            if preview
+            else ("Недельная сводка по еде за %s — %s" % (digest.week_start.isoformat(), digest.week_end.isoformat())),
+            "Блюд за неделю: %s" % digest.total_meals,
+            "Калории за неделю: %s" % digest.total_calories,
+            "Выделяющиеся блюда по дням:",
+        ]
+        for highlight in digest.highlights:
+            if highlight.meal is None:
+                lines.append("- %s | нет блюда" % highlight.digest_date.isoformat())
+                continue
+            lines.append(
+                "- %s | %s | %s ккал | %s"
+                % (
+                    highlight.digest_date.isoformat(),
+                    highlight.meal.title,
+                    highlight.meal.calories,
+                    highlight.reason,
+                )
+            )
+        lines.append("")
+        lines.append(digest.commentary)
+        return "\n".join(lines)
 
     def _answer_callback_query(self, callback_query_id: str, text: str) -> None:
         self._telegram_api(
@@ -747,6 +933,11 @@ class TelegramHealthBot:
             {"command": "summary", "description": "Сводка за сегодня"},
             {"command": "finance_month", "description": "Финансовая сводка за месяц"},
             {"command": "decisions", "description": "Открытые решения"},
+            {"command": "digest_status", "description": "Статус ежедневных и недельных digest"},
+            {"command": "digest_on", "description": "Включить ежедневные и недельные digest"},
+            {"command": "digest_off", "description": "Выключить ежедневные и недельные digest"},
+            {"command": "digest_preview", "description": "Предпросмотр daily digest"},
+            {"command": "weekly_digest_preview", "description": "Предпросмотр weekly digest"},
             {"command": "import_tbank", "description": "Импорт CSV из Т-Банка"},
             {"command": "drafts", "description": "Черновики приема пищи"},
             {"command": "create_invite", "description": "Создать инвайт (admin)"},
@@ -846,6 +1037,52 @@ class TelegramHealthBot:
             payload = json.loads(response.read().decode("utf-8"))
         if not payload.get("ok"):
             logger.error("Telegram API error method=%s payload=%s", method, payload)
+            raise RuntimeError("Telegram API error for %s: %s" % (method, payload))
+        return payload["result"]
+
+    def _telegram_api_multipart(
+        self,
+        method: str,
+        *,
+        params: Dict[str, object],
+        file_field_name: str,
+        filename: str,
+        file_bytes: bytes,
+        mime_type: str,
+    ):
+        boundary = "----AiMeBoundary%s" % int(time.time() * 1000)
+        body_chunks: List[bytes] = []
+        for key, value in params.items():
+            body_chunks.extend(
+                [
+                    ("--%s\r\n" % boundary).encode("utf-8"),
+                    ('Content-Disposition: form-data; name="%s"\r\n\r\n' % key).encode("utf-8"),
+                    str(value).encode("utf-8"),
+                    b"\r\n",
+                ]
+            )
+        body_chunks.extend(
+            [
+                ("--%s\r\n" % boundary).encode("utf-8"),
+                (
+                    'Content-Disposition: form-data; name="%s"; filename="%s"\r\n'
+                    % (file_field_name, filename)
+                ).encode("utf-8"),
+                ("Content-Type: %s\r\n\r\n" % mime_type).encode("utf-8"),
+                file_bytes,
+                b"\r\n",
+                ("--%s--\r\n" % boundary).encode("utf-8"),
+            ]
+        )
+        req = request.Request(
+            self.base_url + method,
+            data=b"".join(body_chunks),
+            headers={"Content-Type": "multipart/form-data; boundary=%s" % boundary},
+        )
+        with request.urlopen(req, timeout=self.settings.polling_timeout_seconds + 20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not payload.get("ok"):
+            logger.error("Telegram multipart API error method=%s payload=%s", method, payload)
             raise RuntimeError("Telegram API error for %s: %s" % (method, payload))
         return payload["result"]
 

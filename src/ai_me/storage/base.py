@@ -1,9 +1,10 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Iterable, List, Optional, Protocol
 
+from ai_me.domain.digest import DigestRun, DigestStatus, DigestType, UserDigestSettings
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
 from ai_me.domain.finance import FinanceMonthlySummary, FinanceTransaction
-from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
+from ai_me.domain.food import MealDraftStatus, MealMedia, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -52,6 +53,33 @@ class HealthStore(Protocol):
     def update_invite_status(self, code: str, status: InviteStatus) -> None:
         ...
 
+    def get_user_digest_settings(self, user_id: int) -> Optional[UserDigestSettings]:
+        ...
+
+    def upsert_user_digest_settings(self, settings: UserDigestSettings) -> UserDigestSettings:
+        ...
+
+    def create_digest_run(self, run: DigestRun) -> DigestRun:
+        ...
+
+    def list_digest_runs(
+        self,
+        user_id: int,
+        digest_type: Optional[DigestType] = None,
+        status: Optional[DigestStatus] = None,
+    ) -> List[DigestRun]:
+        ...
+
+    def update_digest_run(
+        self,
+        run_id: str,
+        status: DigestStatus,
+        sent_at: Optional[datetime] = None,
+        error_message: str = "",
+        payload: Optional[dict] = None,
+    ) -> None:
+        ...
+
     def set_health_goals(self, user_id: int, goals: DailyHealthGoals) -> None:
         ...
 
@@ -65,6 +93,15 @@ class HealthStore(Protocol):
         ...
 
     def create_meal_draft(self, user_id: int, draft: MealPhotoDraft) -> None:
+        ...
+
+    def create_meal_media(self, media: MealMedia) -> None:
+        ...
+
+    def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
+        ...
+
+    def attach_meal_media_to_meal(self, user_id: int, draft_id: str, meal_entry_id: str) -> None:
         ...
 
     def get_meal_draft(self, user_id: int, draft_id: str) -> Optional[MealPhotoDraft]:

@@ -19,4 +19,5 @@ def build_health_service(settings: AppSettings) -> HealthService:
         store=store,
         food_photo_analyzer=analyzer,
         admin_telegram_user_ids=settings.telegram.admin_user_ids,
+        default_timezone_name=settings.telegram.timezone_name,
     )

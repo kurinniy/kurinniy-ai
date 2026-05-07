@@ -1,9 +1,10 @@
 from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional
 
+from ai_me.domain.digest import DigestRun, DigestStatus, DigestType, UserDigestSettings
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceMonthlySummary, FinanceTransaction
-from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
+from ai_me.domain.food import MealDraftStatus, MealMedia, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -22,9 +23,12 @@ class InMemoryStore:
         self._users_by_id: Dict[int, AppUser] = {}
         self._user_ids_by_telegram_id: Dict[int, int] = {}
         self._invites_by_code: Dict[str, InviteCode] = {}
+        self._digest_settings_by_user: Dict[int, UserDigestSettings] = {}
+        self._digest_runs_by_id: Dict[str, DigestRun] = {}
         self._goals: Dict[int, Dict[date, DailyHealthGoals]] = {}
         self._meals: Dict[int, List[MealEntry]] = {}
         self._meal_drafts: Dict[int, Dict[str, MealPhotoDraft]] = {}
+        self._meal_media_by_user: Dict[int, Dict[str, MealMedia]] = {}
         self._water_entries: Dict[int, List[WaterEntry]] = {}
         self._sleep_entries: Dict[int, List[SleepEntry]] = {}
         self._weight_entries: Dict[int, List[WeightEntry]] = {}
@@ -129,6 +133,52 @@ class InMemoryStore:
             status=status,
         )
 
+    def get_user_digest_settings(self, user_id: int) -> Optional[UserDigestSettings]:
+        return self._digest_settings_by_user.get(user_id)
+
+    def upsert_user_digest_settings(self, settings: UserDigestSettings) -> UserDigestSettings:
+        self._digest_settings_by_user[settings.user_id] = settings
+        return settings
+
+    def create_digest_run(self, run: DigestRun) -> DigestRun:
+        self._digest_runs_by_id[run.run_id] = run
+        return run
+
+    def list_digest_runs(
+        self,
+        user_id: int,
+        digest_type: Optional[DigestType] = None,
+        status: Optional[DigestStatus] = None,
+    ) -> List[DigestRun]:
+        runs = [run for run in self._digest_runs_by_id.values() if run.user_id == user_id]
+        if digest_type is not None:
+            runs = [run for run in runs if run.digest_type == digest_type]
+        if status is not None:
+            runs = [run for run in runs if run.status == status]
+        return sorted(runs, key=lambda item: (item.digest_date, item.created_at))
+
+    def update_digest_run(
+        self,
+        run_id: str,
+        status: DigestStatus,
+        sent_at: Optional[datetime] = None,
+        error_message: str = "",
+        payload: Optional[dict] = None,
+    ) -> None:
+        current = self._digest_runs_by_id[run_id]
+        self._digest_runs_by_id[run_id] = DigestRun(
+            run_id=current.run_id,
+            user_id=current.user_id,
+            digest_type=current.digest_type,
+            digest_date=current.digest_date,
+            status=status,
+            created_at=current.created_at,
+            scheduled_for=current.scheduled_for,
+            sent_at=sent_at if sent_at is not None else current.sent_at,
+            error_message=error_message,
+            payload=payload if payload is not None else current.payload,
+        )
+
     def set_health_goals(self, user_id: int, goals: DailyHealthGoals) -> None:
         self._goals.setdefault(user_id, {})[goals.target_date] = goals
 
@@ -144,6 +194,36 @@ class InMemoryStore:
 
     def create_meal_draft(self, user_id: int, draft: MealPhotoDraft) -> None:
         self._meal_drafts.setdefault(user_id, {})[draft.draft_id] = draft
+
+    def create_meal_media(self, media: MealMedia) -> None:
+        self._meal_media_by_user.setdefault(media.user_id, {})[media.media_id] = media
+
+    def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
+        media = list(self._meal_media_by_user.get(user_id, {}).values())
+        if target_date is not None:
+            media = [item for item in media if item.occurred_at.date() == target_date]
+        return sorted(media, key=lambda item: item.occurred_at)
+
+    def attach_meal_media_to_meal(self, user_id: int, draft_id: str, meal_entry_id: str) -> None:
+        current_items = self._meal_media_by_user.get(user_id, {})
+        for media_id, media in list(current_items.items()):
+            if media.draft_id != draft_id:
+                continue
+            current_items[media_id] = MealMedia(
+                media_id=media.media_id,
+                user_id=media.user_id,
+                draft_id=media.draft_id,
+                occurred_at=media.occurred_at,
+                created_at=media.created_at,
+                mime_type=media.mime_type,
+                telegram_file_id=media.telegram_file_id,
+                telegram_unique_id=media.telegram_unique_id,
+                byte_size=media.byte_size,
+                sha256=media.sha256,
+                image_bytes=media.image_bytes,
+                meal_entry_id=meal_entry_id,
+                storage_kind=media.storage_kind,
+            )
 
     def get_meal_draft(self, user_id: int, draft_id: str) -> Optional[MealPhotoDraft]:
         return self._meal_drafts.get(user_id, {}).get(draft_id)

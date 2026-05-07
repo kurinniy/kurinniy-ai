@@ -2,6 +2,7 @@ import unittest
 from datetime import date, datetime
 
 from ai_me.domain.decision_log import DecisionStatus
+from ai_me.domain.digest import DigestStatus, DigestType
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus
 from ai_me.domain.health import (
     ActivityEntry,
@@ -303,7 +304,99 @@ class HealthServiceTest(unittest.TestCase):
                 now=datetime(2026, 5, 6, 10, 0),
             )
 
+    def test_digest_settings_default_to_enabled_and_can_be_disabled(self) -> None:
+        settings = self.service.get_digest_settings(self.user.user_id)
+
+        self.assertTrue(settings.daily_digest_enabled)
+        self.assertTrue(settings.weekly_digest_enabled)
+        self.assertEqual(settings.daily_digest_time, "08:00")
+        self.assertEqual(settings.weekly_digest_time, "08:00")
+
+        updated = self.service.set_digest_enabled(self.user.user_id, enabled=False)
+
+        self.assertFalse(updated.daily_digest_enabled)
+        self.assertFalse(updated.weekly_digest_enabled)
+
+    def test_create_digest_run_records_run_for_user(self) -> None:
+        run = self.service.create_digest_run(
+            self.user.user_id,
+            digest_type=DigestType.DAILY,
+            digest_date=self.target_date,
+            status=DigestStatus.PENDING,
+            now=datetime(2026, 5, 7, 8, 0),
+        )
+        runs = self.service.list_digest_runs(self.user.user_id, digest_type=DigestType.DAILY)
+
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0].run_id, run.run_id)
+        self.assertEqual(runs[0].digest_date, self.target_date)
+
+    def test_meal_photo_draft_stores_media_and_links_it_on_confirmation(self) -> None:
+        draft = self.service.create_meal_draft_from_photo(
+            self.user.user_id,
+            photo_file_id="telegram-photo-1",
+            photo_unique_id="unique-1",
+            image_bytes=b"fake-jpeg-data",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 19, 0),
+            caption="Dinner",
+        )
+
+        media_before = self.service.list_meal_media(self.user.user_id, target_date=self.target_date)
+        self.assertEqual(len(media_before), 1)
+        self.assertEqual(media_before[0].draft_id, draft.draft_id)
+        self.assertEqual(media_before[0].meal_entry_id, "")
+
+        meal = self.service.confirm_meal_draft(self.user.user_id, draft.draft_id)
+        media_after = self.service.list_meal_media(self.user.user_id, target_date=self.target_date)
+
+        self.assertEqual(media_after[0].meal_entry_id, meal.entry_id)
+        self.assertEqual(media_after[0].telegram_file_id, "telegram-photo-1")
+
+    def test_build_daily_food_digest_uses_confirmed_photo_meals_and_trends(self) -> None:
+        historical_dates = [date(2026, 5, 3), date(2026, 5, 4), date(2026, 5, 5)]
+        for index, current_date in enumerate(historical_dates, start=1):
+            draft = self.service.create_meal_draft_from_photo(
+                self.user.user_id,
+                photo_file_id="file-%s" % index,
+                photo_unique_id="uniq-%s" % index,
+                image_bytes=("img-%s" % index).encode("utf-8"),
+                mime_type="image/jpeg",
+                occurred_at=datetime.combine(current_date, datetime.min.time()).replace(hour=12),
+                caption="history",
+            )
+            self.service.confirm_meal_draft(self.user.user_id, draft.draft_id)
+
+        digest = self.service.build_daily_food_digest(self.user.user_id, historical_dates[-1])
+
+        self.assertIsNotNone(digest)
+        self.assertEqual(len(digest.meals), 1)
+        self.assertEqual(digest.total_calories, 620)
+        self.assertEqual([trend.days for trend in digest.trend_windows], [7, 14, 30])
+        self.assertIn("Относительно 7 дней", digest.commentary)
+
+    def test_build_weekly_food_digest_selects_highlights(self) -> None:
+        for offset in range(7):
+            current_date = date(2026, 5, 4) + __import__("datetime").timedelta(days=offset)
+            draft = self.service.create_meal_draft_from_photo(
+                self.user.user_id,
+                photo_file_id="week-file-%s" % offset,
+                photo_unique_id="week-uniq-%s" % offset,
+                image_bytes=("week-img-%s" % offset).encode("utf-8"),
+                mime_type="image/jpeg",
+                occurred_at=datetime.combine(current_date, datetime.min.time()).replace(hour=12),
+                caption="week",
+            )
+            self.service.confirm_meal_draft(self.user.user_id, draft.draft_id)
+
+        digest = self.service.build_weekly_food_digest(self.user.user_id, date(2026, 5, 4))
+
+        self.assertIsNotNone(digest)
+        self.assertEqual(digest.total_meals, 7)
+        self.assertEqual(len(digest.highlights), 7)
+        self.assertTrue(any(item.meal is not None for item in digest.highlights))
+        self.assertIn("Самое выделяющееся блюдо недели", digest.commentary)
+
 
 if __name__ == "__main__":
     unittest.main()
-

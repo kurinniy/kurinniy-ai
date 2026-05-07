@@ -3,9 +3,10 @@ import logging
 from datetime import date, datetime, time
 from typing import Iterable, List, Optional
 
+from ai_me.domain.digest import DigestRun, DigestStatus, DigestType, UserDigestSettings
 from ai_me.domain.decision_log import DecisionKind, DecisionLogEntry, DecisionStatus
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceMonthlySummary, FinanceTransaction
-from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealPhotoDraft
+from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -180,6 +181,132 @@ class MySQLStore:
             (status.value, code),
         )
 
+    def get_user_digest_settings(self, user_id: int) -> Optional[UserDigestSettings]:
+        row = self._fetchone(
+            "SELECT * FROM user_digest_settings WHERE user_id = %s",
+            (user_id,),
+        )
+        return self._to_user_digest_settings(row) if row else None
+
+    def upsert_user_digest_settings(self, settings: UserDigestSettings) -> UserDigestSettings:
+        self._execute(
+            """
+            INSERT INTO user_digest_settings (
+                user_id,
+                timezone_name,
+                daily_digest_enabled,
+                daily_digest_time,
+                weekly_digest_enabled,
+                weekly_digest_time,
+                weekly_digest_weekday
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                timezone_name = VALUES(timezone_name),
+                daily_digest_enabled = VALUES(daily_digest_enabled),
+                daily_digest_time = VALUES(daily_digest_time),
+                weekly_digest_enabled = VALUES(weekly_digest_enabled),
+                weekly_digest_time = VALUES(weekly_digest_time),
+                weekly_digest_weekday = VALUES(weekly_digest_weekday)
+            """,
+            (
+                settings.user_id,
+                settings.timezone_name,
+                1 if settings.daily_digest_enabled else 0,
+                settings.daily_digest_time,
+                1 if settings.weekly_digest_enabled else 0,
+                settings.weekly_digest_time,
+                settings.weekly_digest_weekday,
+            ),
+        )
+        saved = self.get_user_digest_settings(settings.user_id)
+        if saved is None:
+            raise RuntimeError("Не удалось сохранить digest settings для пользователя %s" % settings.user_id)
+        return saved
+
+    def create_digest_run(self, run: DigestRun) -> DigestRun:
+        self._execute(
+            """
+            INSERT INTO digest_runs (
+                run_id,
+                user_id,
+                digest_type,
+                digest_date,
+                status,
+                created_at,
+                scheduled_for,
+                sent_at,
+                error_message,
+                payload_json
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                status = VALUES(status),
+                scheduled_for = VALUES(scheduled_for),
+                sent_at = VALUES(sent_at),
+                error_message = VALUES(error_message),
+                payload_json = VALUES(payload_json)
+            """,
+            (
+                run.run_id,
+                run.user_id,
+                run.digest_type.value,
+                run.digest_date,
+                run.status.value,
+                run.created_at,
+                run.scheduled_for,
+                run.sent_at,
+                run.error_message,
+                json.dumps(run.payload, sort_keys=True),
+            ),
+        )
+        row = self._fetchone("SELECT * FROM digest_runs WHERE run_id = %s", (run.run_id,))
+        if row is None:
+            raise RuntimeError("Не удалось сохранить digest run %s" % run.run_id)
+        return self._to_digest_run(row)
+
+    def list_digest_runs(
+        self,
+        user_id: int,
+        digest_type: Optional[DigestType] = None,
+        status: Optional[DigestStatus] = None,
+    ) -> List[DigestRun]:
+        query = "SELECT * FROM digest_runs WHERE user_id = %s"
+        params = [user_id]
+        if digest_type is not None:
+            query += " AND digest_type = %s"
+            params.append(digest_type.value)
+        if status is not None:
+            query += " AND status = %s"
+            params.append(status.value)
+        query += " ORDER BY digest_date ASC, created_at ASC"
+        rows = self._fetchall(query, tuple(params))
+        return [self._to_digest_run(row) for row in rows]
+
+    def update_digest_run(
+        self,
+        run_id: str,
+        status: DigestStatus,
+        sent_at: Optional[datetime] = None,
+        error_message: str = "",
+        payload: Optional[dict] = None,
+    ) -> None:
+        current = self._fetchone("SELECT * FROM digest_runs WHERE run_id = %s", (run_id,))
+        if current is None:
+            raise ValueError("Digest run не найден: %s" % run_id)
+        payload_json = current["payload_json"] if payload is None else json.dumps(payload, sort_keys=True)
+        self._execute(
+            """
+            UPDATE digest_runs
+            SET status = %s,
+                sent_at = %s,
+                error_message = %s,
+                payload_json = %s
+            WHERE run_id = %s
+            """,
+            (status.value, sent_at, error_message, payload_json, run_id),
+        )
+
     def set_health_goals(self, user_id: int, goals: DailyHealthGoals) -> None:
         self._execute(
             """
@@ -291,6 +418,70 @@ class MySQLStore:
                 draft.source,
                 json.dumps([item.__dict__ for item in draft.items], sort_keys=True),
             ),
+        )
+
+    def create_meal_media(self, media: MealMedia) -> None:
+        self._execute(
+            """
+            INSERT INTO meal_media (
+                media_id,
+                user_id,
+                draft_id,
+                meal_entry_id,
+                occurred_at,
+                created_at,
+                mime_type,
+                telegram_file_id,
+                telegram_unique_id,
+                byte_size,
+                sha256,
+                storage_kind,
+                image_bytes
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                media.media_id,
+                media.user_id,
+                media.draft_id,
+                media.meal_entry_id or None,
+                media.occurred_at,
+                media.created_at,
+                media.mime_type,
+                media.telegram_file_id,
+                media.telegram_unique_id,
+                media.byte_size,
+                media.sha256,
+                media.storage_kind,
+                media.image_bytes,
+            ),
+        )
+
+    def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
+        query = """
+            SELECT *
+            FROM meal_media
+            WHERE user_id = %s
+        """
+        params = [user_id]
+        if target_date is not None:
+            day_start = datetime.combine(target_date, time.min)
+            day_end = datetime.combine(target_date, time.max)
+            query += " AND occurred_at BETWEEN %s AND %s"
+            params.extend([day_start, day_end])
+        query += " ORDER BY occurred_at ASC, created_at ASC"
+        rows = self._fetchall(query, tuple(params))
+        return [self._to_meal_media(row) for row in rows]
+
+    def attach_meal_media_to_meal(self, user_id: int, draft_id: str, meal_entry_id: str) -> None:
+        self._execute(
+            """
+            UPDATE meal_media
+            SET meal_entry_id = %s
+            WHERE user_id = %s
+              AND draft_id = %s
+            """,
+            (meal_entry_id, user_id, draft_id),
         )
 
     def get_meal_draft(self, user_id: int, draft_id: str) -> Optional[MealPhotoDraft]:
@@ -656,6 +847,34 @@ class MySQLStore:
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
             """,
             """
+            CREATE TABLE IF NOT EXISTS user_digest_settings (
+                user_id BIGINT NOT NULL PRIMARY KEY,
+                timezone_name VARCHAR(64) NOT NULL,
+                daily_digest_enabled TINYINT(1) NOT NULL DEFAULT 1,
+                daily_digest_time VARCHAR(5) NOT NULL DEFAULT '08:00',
+                weekly_digest_enabled TINYINT(1) NOT NULL DEFAULT 1,
+                weekly_digest_time VARCHAR(5) NOT NULL DEFAULT '08:00',
+                weekly_digest_weekday INT NOT NULL DEFAULT 0
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS digest_runs (
+                run_id VARCHAR(64) NOT NULL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                digest_type VARCHAR(16) NOT NULL,
+                digest_date DATE NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                created_at DATETIME(6) NOT NULL,
+                scheduled_for DATETIME(6) NULL,
+                sent_at DATETIME(6) NULL,
+                error_message TEXT NOT NULL,
+                payload_json LONGTEXT NOT NULL,
+                UNIQUE KEY uk_digest_user_type_date (user_id, digest_type, digest_date),
+                INDEX idx_digest_runs_user_status (user_id, status),
+                INDEX idx_digest_runs_user_date (user_id, digest_date)
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+            """,
+            """
             CREATE TABLE IF NOT EXISTS health_goals (
                 goal_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                 user_id BIGINT NOT NULL,
@@ -701,6 +920,26 @@ class MySQLStore:
                 source VARCHAR(64) NOT NULL,
                 items_json LONGTEXT NOT NULL,
                 INDEX idx_meal_drafts_user_status_created_at (user_id, status, created_at)
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS meal_media (
+                media_id VARCHAR(64) NOT NULL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                draft_id VARCHAR(64) NOT NULL,
+                meal_entry_id VARCHAR(64) NULL,
+                occurred_at DATETIME(6) NOT NULL,
+                created_at DATETIME(6) NOT NULL,
+                mime_type VARCHAR(64) NOT NULL,
+                telegram_file_id VARCHAR(255) NOT NULL,
+                telegram_unique_id VARCHAR(255) NOT NULL,
+                byte_size INT NOT NULL,
+                sha256 VARCHAR(64) NOT NULL,
+                storage_kind VARCHAR(32) NOT NULL,
+                image_bytes LONGBLOB NOT NULL,
+                INDEX idx_meal_media_user_occurred_at (user_id, occurred_at),
+                INDEX idx_meal_media_user_draft_id (user_id, draft_id),
+                INDEX idx_meal_media_user_meal_entry_id (user_id, meal_entry_id)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
             """,
             """
@@ -1048,6 +1287,33 @@ class MySQLStore:
         )
 
     @staticmethod
+    def _to_user_digest_settings(row: dict) -> UserDigestSettings:
+        return UserDigestSettings(
+            user_id=int(row["user_id"]),
+            timezone_name=row["timezone_name"],
+            daily_digest_enabled=bool(row["daily_digest_enabled"]),
+            daily_digest_time=row["daily_digest_time"],
+            weekly_digest_enabled=bool(row["weekly_digest_enabled"]),
+            weekly_digest_time=row["weekly_digest_time"],
+            weekly_digest_weekday=int(row["weekly_digest_weekday"]),
+        )
+
+    @staticmethod
+    def _to_digest_run(row: dict) -> DigestRun:
+        return DigestRun(
+            run_id=row["run_id"],
+            user_id=int(row["user_id"]),
+            digest_type=DigestType(row["digest_type"]),
+            digest_date=row["digest_date"],
+            status=DigestStatus(row["status"]),
+            created_at=row["created_at"],
+            scheduled_for=row["scheduled_for"],
+            sent_at=row["sent_at"],
+            error_message=row["error_message"] or "",
+            payload=json.loads(row["payload_json"]) if row["payload_json"] else {},
+        )
+
+    @staticmethod
     def _to_decision(row: dict) -> DecisionLogEntry:
         return DecisionLogEntry(
             decision_id=row["decision_id"],
@@ -1091,6 +1357,24 @@ class MySQLStore:
             status=MealDraftStatus(row["status"]),
             source=row["source"],
             items=items,
+        )
+
+    @staticmethod
+    def _to_meal_media(row: dict) -> MealMedia:
+        return MealMedia(
+            media_id=row["media_id"],
+            user_id=int(row["user_id"]),
+            draft_id=row["draft_id"],
+            occurred_at=row["occurred_at"],
+            created_at=row["created_at"],
+            mime_type=row["mime_type"],
+            telegram_file_id=row["telegram_file_id"],
+            telegram_unique_id=row["telegram_unique_id"],
+            byte_size=int(row["byte_size"]),
+            sha256=row["sha256"],
+            image_bytes=row["image_bytes"],
+            meal_entry_id=row["meal_entry_id"] or "",
+            storage_kind=row["storage_kind"],
         )
 
     @staticmethod

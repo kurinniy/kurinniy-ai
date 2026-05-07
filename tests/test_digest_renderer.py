@@ -1,0 +1,75 @@
+import base64
+import unittest
+from datetime import date, datetime
+
+from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDigestHighlight, WeeklyFoodDigest
+from ai_me.domain.food import MealMedia
+from ai_me.services.digest_renderer import DigestImageRenderer
+
+
+VALID_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2WZgAAAABJRU5ErkJggg=="
+)
+
+
+class DigestImageRendererTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.renderer = DigestImageRenderer(tile_size=120, gap=8)
+        self.media = MealMedia(
+            media_id="media-1",
+            user_id=1,
+            draft_id="draft-1",
+            meal_entry_id="meal-1",
+            occurred_at=datetime(2026, 5, 6, 12, 0),
+            created_at=datetime(2026, 5, 6, 12, 0),
+            mime_type="image/png",
+            telegram_file_id="file-1",
+            telegram_unique_id="u-1",
+            byte_size=len(VALID_PNG_BYTES),
+            sha256="abc",
+            image_bytes=VALID_PNG_BYTES,
+        )
+
+    def test_render_daily_mosaic_returns_jpeg_bytes(self) -> None:
+        digest = DailyFoodDigest(
+            user_id=1,
+            digest_date=date(2026, 5, 6),
+            meals=[
+                DigestMealSnapshot(
+                    meal_entry_id="meal-1",
+                    occurred_at=datetime(2026, 5, 6, 12, 0),
+                    title="Курица с рисом",
+                    calories=620,
+                    protein_g=38,
+                    fat_g=18,
+                    carbs_g=71,
+                    media_items=[self.media],
+                )
+            ],
+            total_calories=620,
+            total_protein_g=38.0,
+            total_fat_g=18.0,
+            total_carbs_g=71.0,
+            trend_windows=[],
+            commentary="Комментарий",
+        )
+
+        image_bytes = self.renderer.render_daily_mosaic(digest)
+
+        self.assertIsNotNone(image_bytes)
+        self.assertTrue(image_bytes.startswith(b"\xff\xd8\xff"))
+
+    def test_render_weekly_mosaic_returns_none_without_images(self) -> None:
+        digest = WeeklyFoodDigest(
+            user_id=1,
+            week_start=date(2026, 5, 4),
+            week_end=date(2026, 5, 10),
+            highlights=[WeeklyDigestHighlight(digest_date=date(2026, 5, 4), meal=None, score=0.0, reason="Нет блюда")],
+            total_meals=0,
+            total_calories=0,
+            commentary="Комментарий",
+        )
+
+        image_bytes = self.renderer.render_weekly_mosaic(digest)
+
+        self.assertIsNone(image_bytes)

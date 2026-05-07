@@ -1,1 +1,2 @@
 mysql-connector-python>=9.0,<10.0
+Pillow>=10.0,<12.0

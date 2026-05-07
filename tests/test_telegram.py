@@ -1,14 +1,21 @@
+import base64
 import json
 import unittest
 from datetime import date, datetime
 
 from ai_me.config import TelegramSettings
+from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDigestHighlight, WeeklyFoodDigest
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
-from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealPhotoDraft
+from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry
 from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
 from ai_me.telegram import TelegramHealthBot
+
+
+VALID_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2WZgAAAABJRU5ErkJggg=="
+)
 
 
 class DummyHealthService:
@@ -106,6 +113,110 @@ class DummyHealthService:
 
     def revoke_invite(self, code: str) -> None:
         return None
+
+    def get_digest_settings(self, user_id):
+        return type(
+            "DigestSettings",
+            (),
+            {
+                "timezone_name": "Europe/Moscow",
+                "daily_digest_enabled": True,
+                "daily_digest_time": "08:00",
+                "weekly_digest_enabled": True,
+                "weekly_digest_time": "08:00",
+            },
+        )()
+
+    def set_digest_enabled(self, user_id, enabled: bool):
+        return type(
+            "DigestSettings",
+            (),
+            {
+                "timezone_name": "Europe/Moscow",
+                "daily_digest_enabled": enabled,
+                "daily_digest_time": "08:00",
+                "weekly_digest_enabled": enabled,
+                "weekly_digest_time": "08:00",
+            },
+        )()
+
+    def build_daily_food_digest(self, user_id, digest_date):
+        media = MealMedia(
+            media_id="media-1",
+            user_id=user_id,
+            draft_id="draft-1",
+            occurred_at=datetime(2026, 5, 6, 12, 0),
+            created_at=datetime(2026, 5, 6, 12, 0),
+            mime_type="image/jpeg",
+            telegram_file_id="file-1",
+            telegram_unique_id="u-1",
+            byte_size=1234,
+            sha256="abc",
+            image_bytes=VALID_PNG_BYTES,
+            meal_entry_id="meal-1",
+        )
+        return DailyFoodDigest(
+            user_id=user_id,
+            digest_date=digest_date,
+            meals=[
+                DigestMealSnapshot(
+                    meal_entry_id="meal-1",
+                    occurred_at=datetime(2026, 5, 6, 12, 0),
+                    title="Курица с рисом",
+                    calories=620,
+                    protein_g=38,
+                    fat_g=18,
+                    carbs_g=71,
+                    media_items=[media],
+                )
+            ],
+            total_calories=620,
+            total_protein_g=38.0,
+            total_fat_g=18.0,
+            total_carbs_g=71.0,
+            commentary="Относительно 7 дней калорийность выше среднего.",
+        )
+
+    def build_weekly_food_digest(self, user_id, week_start):
+        media = MealMedia(
+            media_id="media-1",
+            user_id=user_id,
+            draft_id="draft-1",
+            occurred_at=datetime(2026, 5, 5, 12, 0),
+            created_at=datetime(2026, 5, 5, 12, 0),
+            mime_type="image/jpeg",
+            telegram_file_id="file-1",
+            telegram_unique_id="u-1",
+            byte_size=1234,
+            sha256="abc",
+            image_bytes=VALID_PNG_BYTES,
+            meal_entry_id="meal-1",
+        )
+        return WeeklyFoodDigest(
+            user_id=user_id,
+            week_start=week_start,
+            week_end=week_start + __import__("datetime").timedelta(days=6),
+            highlights=[
+                WeeklyDigestHighlight(
+                    digest_date=week_start,
+                    meal=DigestMealSnapshot(
+                        meal_entry_id="meal-1",
+                        occurred_at=datetime(2026, 5, 5, 12, 0),
+                        title="Курица с рисом",
+                        calories=620,
+                        protein_g=38,
+                        fat_g=18,
+                        carbs_g=71,
+                        media_items=[media],
+                    ),
+                    score=1.2,
+                    reason="Выбрано как блюдо с наибольшим отклонением от личной базы по калориям.",
+                )
+            ],
+            total_meals=5,
+            total_calories=3100,
+            commentary="Самое выделяющееся блюдо недели: Курица с рисом.",
+        )
 
     def log_water(self, user_id, entry) -> None:
         return None
@@ -283,6 +394,91 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("/summary", response)
         self.assertIn(999, self.service.users_by_telegram_id)
 
+    def test_digest_status_command_returns_current_settings(self) -> None:
+        response = self.bot._route_command("/digest_status", app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("Настройки digest", response)
+        self.assertIn("Ежедневная сводка: включена в 08:00", response)
+        self.assertIn("Недельная сводка: включена по понедельникам в 08:00", response)
+
+    def test_digest_off_command_disables_both_digests(self) -> None:
+        response = self.bot._route_command("/digest_off", app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("Digest выключен", response)
+        self.assertIn("Ежедневная сводка: выключена", response)
+        self.assertIn("Недельная сводка: выключена", response)
+
+    def test_digest_preview_command_returns_daily_preview(self) -> None:
+        response = self.bot._route_command("/digest_preview 2026-05-06", app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("Daily digest preview за 2026-05-06", response)
+        self.assertIn("Список блюд:", response)
+        self.assertIn("Курица с рисом", response)
+
+    def test_weekly_digest_preview_command_returns_weekly_preview(self) -> None:
+        response = self.bot._route_command(
+            "/weekly_digest_preview 2026-05-06",
+            app_user=self.service.users_by_telegram_id[42],
+        )
+        self.assertIn("Weekly digest preview", response)
+        self.assertIn("Выделяющиеся блюда по дням:", response)
+        self.assertIn("Курица с рисом", response)
+
+    def test_digest_preview_update_sends_mosaic_photo_and_text(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        def fake_telegram_api_multipart(method, **kwargs):
+            calls.append((method, kwargs))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._telegram_api_multipart = fake_telegram_api_multipart
+
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/digest_preview 2026-05-06",
+                    "chat": {"id": 777, "type": "private"},
+                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                },
+            }
+        )
+
+        self.assertEqual(calls[0][0], "sendPhoto")
+        self.assertEqual(calls[1][0], "sendMessage")
+        self.assertIn("Daily digest preview за 2026-05-06", calls[1][1]["text"])
+
+    def test_weekly_digest_preview_update_sends_mosaic_photo_and_text(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        def fake_telegram_api_multipart(method, **kwargs):
+            calls.append((method, kwargs))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._telegram_api_multipart = fake_telegram_api_multipart
+
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/weekly_digest_preview 2026-05-06",
+                    "chat": {"id": 777, "type": "private"},
+                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                },
+            }
+        )
+
+        self.assertEqual(calls[0][0], "sendPhoto")
+        self.assertEqual(calls[1][0], "sendMessage")
+        self.assertIn("Weekly digest preview", calls[1][1]["text"])
+
     def test_non_private_chat_is_rejected(self) -> None:
         messages = []
 
@@ -343,7 +539,12 @@ class TelegramHealthBotTest(unittest.TestCase):
         commands = json.loads(calls[0][1]["commands"])
         self.assertEqual(commands[0]["command"], "start")
         self.assertEqual(commands[1]["command"], "menu")
-        self.assertEqual(commands[7]["command"], "create_invite")
+        self.assertEqual(commands[5]["command"], "digest_status")
+        self.assertEqual(commands[6]["command"], "digest_on")
+        self.assertEqual(commands[7]["command"], "digest_off")
+        self.assertEqual(commands[8]["command"], "digest_preview")
+        self.assertEqual(commands[9]["command"], "weekly_digest_preview")
+        self.assertEqual(commands[12]["command"], "create_invite")
 
     def test_document_imports_tbank_csv_in_user_scope(self) -> None:
         calls = []

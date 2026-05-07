@@ -38,3 +38,19 @@ class MealPhotoDraft:
     source: str = "telegram_photo"
     items: List[FoodItemEstimate] = field(default_factory=list)
 
+
+@dataclass(frozen=True)
+class MealMedia:
+    media_id: str
+    user_id: int
+    draft_id: str
+    occurred_at: datetime
+    created_at: datetime
+    mime_type: str
+    telegram_file_id: str
+    telegram_unique_id: str
+    byte_size: int
+    sha256: str
+    image_bytes: bytes
+    meal_entry_id: str = ""
+    storage_kind: str = "db_blob"
