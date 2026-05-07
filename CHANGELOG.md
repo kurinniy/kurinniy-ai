@@ -20,6 +20,13 @@
 
 ## 2026-05-07
 
+- Версия или commit: `f3371b3`
+- В `/help` добавлены текущая версия приложения и дата релиза.
+- Введен единый источник версии в `src/ai_me/version.py`.
+- Текущая продуктовая версия зафиксирована как `0.1`.
+
+## 2026-05-07
+
 - Версия или commit: `8f596fa`
 - Улучшена структура комментариев для daily и weekly digest.
 - В digest добавлены структурированные commentary data: comparisons, meal pattern, macro balance, streaks, weekly patterns, consistency и highlight summary.
