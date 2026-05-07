@@ -55,48 +55,12 @@ export type DashboardPayload = {
     status: string;
     context_date: string;
   }>;
-  finance: {
-    month_start: string;
-    month_end: string;
-    transaction_count: number;
-    income_total: number;
-    expense_total: number;
-    net_total: number;
-    top_expense_categories: Array<{
-      category: string;
-      amount: number;
-      transaction_count: number;
-    }>;
-  };
-  digest: {
-    timezone_name: string;
-    daily_enabled: boolean;
-    daily_time: string;
-    weekly_enabled: boolean;
-    weekly_time: string;
-    weekly_weekday: number;
-  };
   drive: {
     connected: boolean;
     enabled: boolean;
     folder_id: string;
     folder_url: string;
-    recent_imports: Array<{
-      file_name: string;
-      status: string;
-      file_date: string | null;
-      imported_at: string;
-      activity_entries_count: number;
-      error_message: string;
-    }>;
   };
-  drafts: Array<{
-    draft_id: string;
-    title: string;
-    calories: number;
-    confidence: number;
-    occurred_at: string;
-  }>;
 };
 
 export type AuthResponse = {
@@ -110,4 +74,8 @@ export type AuthResponse = {
     is_admin: boolean;
     status: string;
   };
+};
+
+export type BootstrapResponse = AuthResponse & {
+  dashboard: DashboardPayload;
 };

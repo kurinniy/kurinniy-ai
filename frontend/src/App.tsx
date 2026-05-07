@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import type { AuthResponse, DashboardPayload } from "./types";
+import type { AuthResponse, BootstrapResponse, DashboardPayload } from "./types";
 
 declare global {
   interface Window {
@@ -46,9 +46,8 @@ export function App() {
       }
 
       try {
-        const auth = await authenticate(initData);
-        const dashboard = await fetchDashboard(auth.token);
-        setState({ kind: "ready", auth, dashboard });
+        const result = await loadApplication(initData);
+        setState({ kind: "ready", auth: result.auth, dashboard: result.dashboard });
       } catch (error) {
         setState({
           kind: "error",
@@ -105,14 +104,6 @@ export function App() {
         <MealList dashboard={dashboard} />
       </Section>
 
-      <Section title="Финансы">
-        <FinanceCard dashboard={dashboard} />
-      </Section>
-
-      <Section title="Digest">
-        <DigestCard dashboard={dashboard} />
-      </Section>
-
       <Section title="Google Drive">
         <DriveCard dashboard={dashboard} />
       </Section>
@@ -126,19 +117,19 @@ export function App() {
   );
 }
 
-async function authenticate(initData: string): Promise<AuthResponse> {
+async function loadApplication(initData: string): Promise<{ auth: AuthResponse; dashboard: DashboardPayload }> {
   const cached = sessionStorage.getItem(SESSION_KEY);
   if (cached) {
     const parsed = JSON.parse(cached) as AuthResponse;
     try {
-      await fetchDashboard(parsed.token);
-      return parsed;
+      const dashboard = await fetchDashboard(parsed.token);
+      return { auth: parsed, dashboard };
     } catch {
       sessionStorage.removeItem(SESSION_KEY);
     }
   }
 
-  const response = await fetch("/api/webapp/auth", {
+  const response = await fetch("/api/webapp/bootstrap", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ init_data: initData }),
@@ -147,9 +138,14 @@ async function authenticate(initData: string): Promise<AuthResponse> {
     const payload = await safeJson(response);
     throw new Error(mapApiError(payload?.detail));
   }
-  const auth = (await response.json()) as AuthResponse;
+  const bootstrap = (await response.json()) as BootstrapResponse;
+  const auth: AuthResponse = {
+    token: bootstrap.token,
+    expires_in: bootstrap.expires_in,
+    user: bootstrap.user,
+  };
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(auth));
-  return auth;
+  return { auth, dashboard: bootstrap.dashboard };
 }
 
 async function fetchDashboard(token: string): Promise<DashboardPayload> {
@@ -195,7 +191,7 @@ function Hero({ firstName }: { firstName: string }) {
     <section className="hero">
       <div className="hero__eyebrow">Telegram Mini App</div>
       <h1 className="hero__title">ai-me</h1>
-      <p className="hero__subtitle">Привет, {firstName}. Здесь сводка по здоровью, финансам и интеграциям без чата-команд.</p>
+      <p className="hero__subtitle">Привет, {firstName}. Здесь сводка по здоровью, активности и интеграциям без чата-команд.</p>
     </section>
   );
 }
@@ -269,51 +265,6 @@ function MealList({ dashboard }: { dashboard: DashboardPayload }) {
   );
 }
 
-function FinanceCard({ dashboard }: { dashboard: DashboardPayload }) {
-  return (
-    <div className="card">
-      <div className="metric-grid metric-grid--compact">
-        <div className="metric-tile">
-          <div className="metric-tile__value">{dashboard.finance.income_total.toFixed(0)} ₽</div>
-          <div className="metric-tile__label">Доходы</div>
-        </div>
-        <div className="metric-tile">
-          <div className="metric-tile__value">{dashboard.finance.expense_total.toFixed(0)} ₽</div>
-          <div className="metric-tile__label">Расходы</div>
-        </div>
-        <div className="metric-tile">
-          <div className="metric-tile__value">{dashboard.finance.net_total.toFixed(0)} ₽</div>
-          <div className="metric-tile__label">Чистый поток</div>
-        </div>
-      </div>
-      <div className="list">
-        {dashboard.finance.top_expense_categories.map((item) => (
-          <div className="list__row" key={item.category}>
-            <span>{item.category}</span>
-            <span>{item.amount.toFixed(0)} ₽</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DigestCard({ dashboard }: { dashboard: DashboardPayload }) {
-  return (
-    <div className="card">
-      <div className="list__row">
-        <span>Daily digest</span>
-        <strong>{dashboard.digest.daily_enabled ? `включён в ${dashboard.digest.daily_time}` : "выключен"}</strong>
-      </div>
-      <div className="list__row">
-        <span>Weekly digest</span>
-        <strong>{dashboard.digest.weekly_enabled ? `понедельник ${dashboard.digest.weekly_time}` : "выключен"}</strong>
-      </div>
-      <div className="card__text">Часовой пояс: {dashboard.digest.timezone_name}</div>
-    </div>
-  );
-}
-
 function DriveCard({ dashboard }: { dashboard: DashboardPayload }) {
   if (!dashboard.drive.connected) {
     return <StatusCard title="Google Drive" text="Папка ещё не подключена. Используйте команду /connect_drive в чате с ботом." />;
@@ -324,17 +275,10 @@ function DriveCard({ dashboard }: { dashboard: DashboardPayload }) {
         <span>{dashboard.drive.enabled ? "Импорт включён" : "Импорт выключен"}</span>
         <span className="card__muted">{dashboard.drive.folder_id}</span>
       </div>
-      <div className="list">
-        {dashboard.drive.recent_imports.length === 0 ? (
-          <div className="card__text">Импортов пока не было.</div>
-        ) : (
-          dashboard.drive.recent_imports.map((item) => (
-            <div className="list__row" key={`${item.file_name}-${item.imported_at}`}>
-              <span>{item.file_name}</span>
-              <span>{item.status}</span>
-            </div>
-          ))
-        )}
+      <div className="card__text">
+        {dashboard.drive.enabled
+          ? "Новые JSON-файлы из подключённой папки будут импортироваться автоматически."
+          : "Подключение сохранено, но импорт сейчас выключен."}
       </div>
     </div>
   );

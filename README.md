@@ -132,7 +132,7 @@ The build output goes to `frontend/dist` and is served by the Python web runtime
 
 Current Mini App scope:
 
-- read-only dashboard for summary, yesterday steps, finance, digest status, Google Drive status, drafts, and open decisions;
+- read-only dashboard for summary, yesterday steps, Google Drive status, and open decisions;
 - Telegram WebApp authentication with signed `initData` validation on the backend;
 - menu button sync from the bot when `MINI_APP_URL` is configured.
 

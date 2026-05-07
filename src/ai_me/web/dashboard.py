@@ -1,8 +1,7 @@
 from datetime import date, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from ai_me.domain.decision_log import DecisionStatus
-from ai_me.domain.food import MealDraftStatus
 from ai_me.domain.health import DailyHealthSummary, StepProgressInsight
 from ai_me.domain.user import AppUser
 from ai_me.services.health_service import HealthService
@@ -14,18 +13,13 @@ def build_dashboard_payload(
     service: HealthService,
     app_user: AppUser,
     target_date: date,
-    month_start: date,
 ) -> Dict[str, object]:
     service.evaluate_day(app_user.user_id, target_date)
     summary = service.get_daily_summary(app_user.user_id, target_date)
     meals = service.list_meals(app_user.user_id, target_date)
     decisions = service.list_decisions(app_user.user_id, status=DecisionStatus.OPEN, target_date=target_date)
-    finance = service.get_finance_monthly_summary(app_user.user_id, month_start)
-    digest_settings = service.get_digest_settings(app_user.user_id)
     drive_settings = service.get_google_drive_settings(app_user.user_id)
-    drive_imports = service.list_health_import_files(app_user.user_id)[:5]
     step_progress = service.build_step_progress_insight(app_user.user_id, target_date - timedelta(days=1))
-    meal_drafts = service.list_meal_drafts(app_user.user_id, status=MealDraftStatus.PENDING)
 
     return {
         "user": {
@@ -52,57 +46,12 @@ def build_dashboard_payload(
             }
             for decision in decisions
         ],
-        "finance": {
-            "month_start": finance.month_start.isoformat(),
-            "month_end": finance.month_end.isoformat(),
-            "transaction_count": finance.transaction_count,
-            "income_total": finance.income_total,
-            "expense_total": finance.expense_total,
-            "net_total": finance.net_total,
-            "top_expense_categories": [
-                {
-                    "category": item.category,
-                    "amount": item.amount,
-                    "transaction_count": item.transaction_count,
-                }
-                for item in finance.top_expense_categories
-            ],
-        },
-        "digest": {
-            "timezone_name": digest_settings.timezone_name,
-            "daily_enabled": digest_settings.daily_digest_enabled,
-            "daily_time": digest_settings.daily_digest_time,
-            "weekly_enabled": digest_settings.weekly_digest_enabled,
-            "weekly_time": digest_settings.weekly_digest_time,
-            "weekly_weekday": digest_settings.weekly_digest_weekday,
-        },
         "drive": {
             "connected": drive_settings is not None,
             "enabled": drive_settings.enabled if drive_settings is not None else False,
             "folder_id": drive_settings.folder_id if drive_settings is not None else "",
             "folder_url": drive_settings.folder_url if drive_settings is not None else "",
-            "recent_imports": [
-                {
-                    "file_name": item.file_name,
-                    "status": item.status.value,
-                    "file_date": item.file_date.isoformat() if item.file_date else None,
-                    "imported_at": item.imported_at.isoformat(),
-                    "activity_entries_count": item.activity_entries_count,
-                    "error_message": item.error_message,
-                }
-                for item in drive_imports
-            ],
         },
-        "drafts": [
-            {
-                "draft_id": draft.draft_id,
-                "title": draft.title,
-                "calories": draft.calories,
-                "confidence": draft.confidence,
-                "occurred_at": draft.occurred_at.isoformat(),
-            }
-            for draft in meal_drafts
-        ],
     }
 
 
