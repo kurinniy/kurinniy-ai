@@ -403,6 +403,7 @@ class HealthService:
             photo_file_id=photo_file_id,
             photo_unique_id=photo_unique_id,
             items=analyzed.items,
+            water_ml=analyzed.water_ml,
         )
         self.store.create_meal_draft(user_id, draft)
         self.store.create_meal_media(
@@ -432,6 +433,7 @@ class HealthService:
             protein_g=draft.protein_g,
             fat_g=draft.fat_g,
             carbs_g=draft.carbs_g,
+            water_ml=draft.water_ml,
             notes=json.dumps(
                 {
                     "source": draft.source,

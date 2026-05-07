@@ -312,6 +312,7 @@ class InMemoryStore:
             status=status,
             source=current.source,
             items=current.items,
+            water_ml=current.water_ml,
         )
 
     def add_water(self, user_id: int, entry: WaterEntry) -> None:
@@ -361,7 +362,7 @@ class InMemoryStore:
             protein_g=round(sum(entry.protein_g for entry in meals), 2),
             fat_g=round(sum(entry.fat_g for entry in meals), 2),
             carbs_g=round(sum(entry.carbs_g for entry in meals), 2),
-            water_ml=sum(entry.amount_ml for entry in water_entries),
+            water_ml=sum(entry.amount_ml for entry in water_entries) + sum(entry.water_ml for entry in meals),
             sleep_hours=round(sum(entry.duration_hours for entry in sleep_entries), 2),
             steps=sum(entry.steps for entry in activity_entries),
             activity_minutes=sum(entry.duration_minutes for entry in activity_entries),

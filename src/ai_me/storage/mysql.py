@@ -495,8 +495,8 @@ class MySQLStore:
     def add_meal(self, user_id: int, entry: MealEntry) -> None:
         self._execute(
             """
-            INSERT INTO meals (entry_id, user_id, occurred_at, title, calories, protein_g, fat_g, carbs_g, notes)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO meals (entry_id, user_id, occurred_at, title, calories, protein_g, fat_g, carbs_g, water_ml, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 entry.entry_id,
@@ -507,6 +507,7 @@ class MySQLStore:
                 entry.protein_g,
                 entry.fat_g,
                 entry.carbs_g,
+                entry.water_ml,
                 entry.notes,
             ),
         )
@@ -540,6 +541,7 @@ class MySQLStore:
                 protein_g,
                 fat_g,
                 carbs_g,
+                water_ml,
                 confidence,
                 photo_file_id,
                 photo_unique_id,
@@ -547,7 +549,7 @@ class MySQLStore:
                 source,
                 items_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 draft.draft_id,
@@ -560,6 +562,7 @@ class MySQLStore:
                 draft.protein_g,
                 draft.fat_g,
                 draft.carbs_g,
+                draft.water_ml,
                 draft.confidence,
                 draft.photo_file_id,
                 draft.photo_unique_id,
@@ -755,7 +758,8 @@ class MySQLStore:
                    COALESCE(SUM(calories), 0) AS calories,
                    COALESCE(SUM(protein_g), 0) AS protein_g,
                    COALESCE(SUM(fat_g), 0) AS fat_g,
-                   COALESCE(SUM(carbs_g), 0) AS carbs_g
+                   COALESCE(SUM(carbs_g), 0) AS carbs_g,
+                   COALESCE(SUM(water_ml), 0) AS meal_water_ml
             FROM meals
             WHERE user_id = %s
               AND occurred_at BETWEEN %s AND %s
@@ -813,7 +817,7 @@ class MySQLStore:
             protein_g=round(float(meals["protein_g"]), 2),
             fat_g=round(float(meals["fat_g"]), 2),
             carbs_g=round(float(meals["carbs_g"]), 2),
-            water_ml=int(water["water_ml"]),
+            water_ml=int(water["water_ml"]) + int(meals["meal_water_ml"]),
             sleep_hours=round(sleep_hours, 2),
             steps=int(activity["steps"]),
             activity_minutes=int(activity["activity_minutes"]),
@@ -1100,6 +1104,7 @@ class MySQLStore:
                 protein_g DOUBLE NOT NULL,
                 fat_g DOUBLE NOT NULL DEFAULT 0,
                 carbs_g DOUBLE NOT NULL DEFAULT 0,
+                water_ml INT NOT NULL DEFAULT 0,
                 notes TEXT NOT NULL,
                 INDEX idx_meals_user_occurred_at (user_id, occurred_at)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
@@ -1116,6 +1121,7 @@ class MySQLStore:
                 protein_g DOUBLE NOT NULL,
                 fat_g DOUBLE NOT NULL,
                 carbs_g DOUBLE NOT NULL,
+                water_ml INT NOT NULL DEFAULT 0,
                 confidence DOUBLE NOT NULL,
                 photo_file_id VARCHAR(255) NOT NULL,
                 photo_unique_id VARCHAR(255) NOT NULL,
@@ -1242,8 +1248,10 @@ class MySQLStore:
     def _apply_schema_migrations(self) -> None:
         self._ensure_column("meals", "fat_g", "ALTER TABLE meals ADD COLUMN fat_g DOUBLE NOT NULL DEFAULT 0 AFTER protein_g")
         self._ensure_column("meals", "carbs_g", "ALTER TABLE meals ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g")
+        self._ensure_column("meals", "water_ml", "ALTER TABLE meals ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g")
         self._ensure_column("meal_photo_drafts", "fat_g", "ALTER TABLE meal_photo_drafts ADD COLUMN fat_g DOUBLE NOT NULL DEFAULT 0 AFTER protein_g")
         self._ensure_column("meal_photo_drafts", "carbs_g", "ALTER TABLE meal_photo_drafts ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g")
+        self._ensure_column("meal_photo_drafts", "water_ml", "ALTER TABLE meal_photo_drafts ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g")
 
         self._ensure_column(
             "health_goals",
@@ -1583,6 +1591,7 @@ class MySQLStore:
                 protein_g=item["protein_g"],
                 fat_g=item["fat_g"],
                 carbs_g=item["carbs_g"],
+                water_ml=int(item.get("water_ml", 0)),
             )
             for item in json.loads(row["items_json"])
         ]
@@ -1596,6 +1605,7 @@ class MySQLStore:
             protein_g=float(row["protein_g"]),
             fat_g=float(row["fat_g"]),
             carbs_g=float(row["carbs_g"]),
+            water_ml=int(row.get("water_ml", 0)),
             confidence=float(row["confidence"]),
             photo_file_id=row["photo_file_id"],
             photo_unique_id=row["photo_unique_id"],
@@ -1632,5 +1642,6 @@ class MySQLStore:
             protein_g=float(row["protein_g"]),
             fat_g=float(row["fat_g"]),
             carbs_g=float(row["carbs_g"]),
+            water_ml=int(row.get("water_ml", 0)),
             notes=row["notes"],
         )

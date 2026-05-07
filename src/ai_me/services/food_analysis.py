@@ -17,6 +17,7 @@ class MealAnalysis:
     carbs_g: float
     confidence: float
     items: List[FoodItemEstimate]
+    water_ml: int = 0
 
 
 class FoodPhotoAnalyzer(Protocol):
@@ -43,9 +44,11 @@ class OpenAIFoodPhotoAnalyzer:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         input_text = (
             "Analyze this food photo. Return strict JSON with keys: "
-            "title, summary, calories, protein_g, fat_g, carbs_g, confidence, items. "
-            "Each item must include title, portion_text, calories, protein_g, fat_g, carbs_g. "
+            "title, summary, calories, protein_g, fat_g, carbs_g, water_ml, confidence, items. "
+            "Each item must include title, portion_text, calories, protein_g, fat_g, carbs_g, water_ml. "
             "Return title, summary, item titles, and portion_text in Russian. "
+            "If the meal contains water, tea, coffee, soup, juice, soda, or another drink, "
+            "estimate drink volume in water_ml conservatively. If there is no drink, return 0. "
             "Estimate conservatively. If unclear, lower confidence. "
             "Caption context: %s" % (caption or "none")
         )
@@ -103,9 +106,11 @@ class OpenAIFoodPhotoAnalyzer:
                     protein_g=float(item["protein_g"]),
                     fat_g=float(item["fat_g"]),
                     carbs_g=float(item["carbs_g"]),
+                    water_ml=int(item.get("water_ml", 0)),
                 )
                 for item in data.get("items", [])
             ],
+            water_ml=int(data.get("water_ml", 0)),
         )
 
     @staticmethod
@@ -150,6 +155,7 @@ class OpenAIFoodPhotoAnalyzer:
                 "protein_g": {"type": "number"},
                 "fat_g": {"type": "number"},
                 "carbs_g": {"type": "number"},
+                "water_ml": {"type": "integer"},
             },
             "required": [
                 "title",
@@ -158,6 +164,7 @@ class OpenAIFoodPhotoAnalyzer:
                 "protein_g",
                 "fat_g",
                 "carbs_g",
+                "water_ml",
             ],
         }
         return {
@@ -170,6 +177,7 @@ class OpenAIFoodPhotoAnalyzer:
                 "protein_g": {"type": "number"},
                 "fat_g": {"type": "number"},
                 "carbs_g": {"type": "number"},
+                "water_ml": {"type": "integer"},
                 "confidence": {"type": "number"},
                 "items": {
                     "type": "array",
@@ -183,6 +191,7 @@ class OpenAIFoodPhotoAnalyzer:
                 "protein_g",
                 "fat_g",
                 "carbs_g",
+                "water_ml",
                 "confidence",
                 "items",
             ],

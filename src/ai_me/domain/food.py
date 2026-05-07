@@ -18,6 +18,7 @@ class FoodItemEstimate:
     protein_g: float
     fat_g: float
     carbs_g: float
+    water_ml: int = 0
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class MealPhotoDraft:
     status: MealDraftStatus = MealDraftStatus.PENDING
     source: str = "telegram_photo"
     items: List[FoodItemEstimate] = field(default_factory=list)
+    water_ml: int = 0
 
 
 @dataclass(frozen=True)

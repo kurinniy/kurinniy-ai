@@ -61,7 +61,9 @@ class MySQLStoreMigrationTest(unittest.TestCase):
 
         executed_sql = [query for query, _ in store.executed]
         self.assertIn("ALTER TABLE meals ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g", executed_sql)
+        self.assertIn("ALTER TABLE meals ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g", executed_sql)
         self.assertIn("ALTER TABLE meals ADD COLUMN user_id BIGINT NULL AFTER entry_id", executed_sql)
+        self.assertIn("ALTER TABLE meal_photo_drafts ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g", executed_sql)
         self.assertIn("ALTER TABLE finance_transactions ADD COLUMN user_id BIGINT NULL AFTER transaction_key", executed_sql)
         self.assertIn(
             "CREATE UNIQUE INDEX uk_decision_user_key ON decision_log (user_id, decision_key)",
@@ -98,4 +100,3 @@ class MySQLStoreMigrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

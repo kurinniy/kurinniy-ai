@@ -21,6 +21,7 @@ class MealEntry:
     protein_g: float
     fat_g: float = 0.0
     carbs_g: float = 0.0
+    water_ml: int = 0
     notes: str = ""
 
 

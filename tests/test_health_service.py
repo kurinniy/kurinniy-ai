@@ -45,7 +45,17 @@ class StubFoodPhotoAnalyzer:
                     fat_g=1,
                     carbs_g=63,
                 ),
+                FoodItemEstimate(
+                    title="Вода",
+                    portion_text="500 мл",
+                    calories=0,
+                    protein_g=0,
+                    fat_g=0,
+                    carbs_g=0,
+                    water_ml=500,
+                ),
             ],
+            water_ml=500,
         )
 
 
@@ -279,7 +289,32 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(summary.protein_g, 38)
         self.assertEqual(summary.fat_g, 18)
         self.assertEqual(summary.carbs_g, 71)
+        self.assertEqual(summary.water_ml, 500)
         self.assertEqual(drafts, [])
+
+    def test_meal_water_is_added_to_daily_water_counter(self) -> None:
+        self.service.log_water(
+            self.user.user_id,
+            WaterEntry(
+                entry_id="water-1",
+                occurred_at=datetime(2026, 5, 6, 9, 0),
+                amount_ml=300,
+            ),
+        )
+        draft = self.service.create_meal_draft_from_photo(
+            self.user.user_id,
+            photo_file_id="telegram-photo-1",
+            photo_unique_id="unique-1",
+            image_bytes=b"fake-jpeg-data",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 19, 0),
+            caption="Dinner with water",
+        )
+
+        self.service.confirm_meal_draft(self.user.user_id, draft.draft_id)
+        summary = self.service.get_daily_summary(self.user.user_id, self.target_date)
+
+        self.assertEqual(summary.water_ml, 800)
 
     def test_registration_with_invite_creates_second_user_and_keeps_data_isolated(self) -> None:
         invite = self.service.create_invite(self.user.user_id, days_valid=7, max_uses=1, now=datetime(2026, 5, 6, 10, 0))
