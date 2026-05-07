@@ -47,6 +47,7 @@ class TelegramHealthBot:
     def run_forever(self) -> None:
         self._ensure_polling_mode()
         self._sync_bot_commands()
+        self._sync_mini_app_menu_button()
         logger.info("Telegram long polling started environment=%s", self.settings.environment_name)
         offset = None
         while True:
@@ -697,6 +698,11 @@ class TelegramHealthBot:
             "Окружение: %s" % self.settings.environment_name,
             format_version_line(),
             format_release_date_line(),
+            (
+                "Mini App: откройте через кнопку меню «Открыть приложение»."
+                if self.settings.mini_app_url
+                else "Mini App: пока не настроен в этом окружении."
+            ),
             "Команды:",
             "/whoami",
             "Отправь фото еды, чтобы создать черновик приема пищи.",
@@ -1091,6 +1097,26 @@ class TelegramHealthBot:
             )
         except Exception as exc:  # pragma: no cover
             logger.warning("Bot command sync failed: %s", exc)
+
+    def _sync_mini_app_menu_button(self) -> None:
+        if not self.settings.mini_app_url:
+            return
+        try:
+            self._telegram_api(
+                "setChatMenuButton",
+                {
+                    "menu_button": json.dumps(
+                        {
+                            "type": "web_app",
+                            "text": "Открыть приложение",
+                            "web_app": {"url": self.settings.mini_app_url},
+                        },
+                        ensure_ascii=False,
+                    )
+                },
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Mini App menu button sync failed: %s", exc)
 
     @classmethod
     def _normalize_command_text(cls, text: str) -> str:

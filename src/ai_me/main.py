@@ -18,6 +18,17 @@ def main() -> None:
         settings.runtime_mode,
     )
     service = build_health_service(settings)
+    if settings.runtime_mode == "web":
+        try:
+            import uvicorn
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("Web runtime dependencies are not installed. Add uvicorn.") from exc
+        from ai_me.web.app import create_web_app
+
+        app = create_web_app(settings=settings, service=service)
+        uvicorn.run(app, host=settings.web.host, port=settings.web.port)
+        return
+
     bot = TelegramHealthBot(service=service, settings=settings.telegram)
     if settings.runtime_mode == "digest_worker":
         worker = DigestSchedulerWorker(

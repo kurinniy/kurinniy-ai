@@ -98,6 +98,9 @@ class HealthService:
     def list_users(self, status: Optional[UserStatus] = None) -> List[AppUser]:
         return self.store.list_users(status=status)
 
+    def get_user_by_telegram_user_id(self, telegram_user_id: int) -> Optional[AppUser]:
+        return self.store.get_user_by_telegram_user_id(telegram_user_id)
+
     def list_users_with_google_drive_enabled(self) -> List[AppUser]:
         users = self.store.list_users_with_google_drive_enabled()
         return [user for user in users if user.status == UserStatus.ACTIVE]

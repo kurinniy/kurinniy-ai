@@ -68,6 +68,7 @@ class TelegramSettings:
     timezone_name: str = "UTC"
     environment_name: str = "production"
     registration_mode: str = "invite_only"
+    mini_app_url: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "TelegramSettings":
@@ -93,6 +94,7 @@ class TelegramSettings:
             timezone_name=timezone_name,
             environment_name=environment_name,
             registration_mode="invite_only",
+            mini_app_url=env.get("MINI_APP_URL", "").strip(),
         )
 
 
@@ -114,10 +116,32 @@ class GoogleDriveSettings:
 
 
 @dataclass(frozen=True)
+class WebSettings:
+    host: str = "0.0.0.0"
+    port: int = 8000
+    public_url: str = ""
+    session_secret: str = ""
+    session_ttl_seconds: int = 86400
+    init_data_ttl_seconds: int = 3600
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> "WebSettings":
+        return cls(
+            host=env.get("WEB_HOST", "0.0.0.0").strip() or "0.0.0.0",
+            port=int(env.get("PORT") or env.get("WEB_PORT") or "8000"),
+            public_url=(env.get("MINI_APP_URL", "").strip() or env.get("WEB_PUBLIC_URL", "").strip()),
+            session_secret=env.get("WEBAPP_SESSION_SECRET", "").strip(),
+            session_ttl_seconds=int(env.get("WEBAPP_SESSION_TTL_SECONDS", "86400")),
+            init_data_ttl_seconds=int(env.get("WEBAPP_INIT_DATA_TTL_SECONDS", "3600")),
+        )
+
+
+@dataclass(frozen=True)
 class AppSettings:
     database: DatabaseSettings
     telegram: TelegramSettings
     google_drive: GoogleDriveSettings
+    web: WebSettings
     environment_name: str = "production"
     runtime_mode: str = "bot"
     scheduler_poll_interval_seconds: int = 60
@@ -131,6 +155,7 @@ class AppSettings:
             database=DatabaseSettings.from_env(source),
             telegram=TelegramSettings.from_env(source),
             google_drive=GoogleDriveSettings.from_env(source),
+            web=WebSettings.from_env(source),
             environment_name=source.get("APP_ENV", "production").strip() or "production",
             runtime_mode=(source.get("APP_RUNTIME_MODE", "bot").strip() or "bot"),
             scheduler_poll_interval_seconds=int(source.get("DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS", "60")),

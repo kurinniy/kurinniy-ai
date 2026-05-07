@@ -405,6 +405,7 @@ class TelegramHealthBotTest(unittest.TestCase):
                 timezone_name="Europe/Moscow",
                 environment_name="staging",
                 registration_mode="invite_only",
+                mini_app_url="https://staging-mini-app.example.com",
             ),
         )
 
@@ -427,6 +428,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[42])
         self.assertIn("Версия: 0.2", response)
         self.assertIn("Дата релиза: 2026-05-07", response)
+        self.assertIn("Mini App: откройте через кнопку меню", response)
         self.assertIn("/connect_drive <folder_url>", response)
         self.assertIn("/drive_status", response)
         self.assertNotIn("/water", response)
@@ -640,6 +642,22 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(commands[12]["command"], "digest_preview")
         self.assertEqual(commands[13]["command"], "weekly_digest_preview")
         self.assertEqual(commands[16]["command"], "create_invite")
+
+    def test_sync_mini_app_menu_button_registers_web_app(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._sync_mini_app_menu_button()
+
+        self.assertEqual(calls[0][0], "setChatMenuButton")
+        menu_button = json.loads(calls[0][1]["menu_button"])
+        self.assertEqual(menu_button["type"], "web_app")
+        self.assertEqual(menu_button["text"], "Открыть приложение")
+        self.assertEqual(menu_button["web_app"]["url"], "https://staging-mini-app.example.com")
 
     def test_document_imports_tbank_csv_in_user_scope(self) -> None:
         calls = []

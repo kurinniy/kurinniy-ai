@@ -39,12 +39,14 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(settings.telegram.timezone_name, "Europe/Moscow")
         self.assertEqual(settings.telegram.environment_name, "staging")
         self.assertEqual(settings.telegram.registration_mode, "invite_only")
+        self.assertEqual(settings.telegram.mini_app_url, "")
         self.assertEqual(settings.environment_name, "staging")
         self.assertEqual(settings.runtime_mode, "digest_worker")
         self.assertEqual(settings.scheduler_poll_interval_seconds, 45)
         self.assertEqual(settings.food_vision_api_key, "sk-test")
         self.assertEqual(settings.food_vision_model, "gpt-test")
         self.assertFalse(settings.google_drive.enabled)
+        self.assertEqual(settings.web.port, 8000)
 
     def test_telegram_settings_require_token(self) -> None:
         with self.assertRaises(ValueError):
@@ -78,6 +80,27 @@ class ConfigTest(unittest.TestCase):
         )
         self.assertTrue(settings.google_drive.enabled)
         self.assertEqual(settings.google_drive.service_account_json, '{"type":"service_account"}')
+
+    def test_web_settings_can_be_loaded_from_env(self) -> None:
+        settings = AppSettings.from_env(
+            {
+                "MYSQLHOST": "mysql.railway.internal",
+                "MYSQLPORT": "3306",
+                "MYSQLDATABASE": "railway",
+                "MYSQLUSER": "root",
+                "MYSQLPASSWORD": "secret",
+                "TELEGRAM_BOT_TOKEN": "123:abc",
+                "APP_RUNTIME_MODE": "web",
+                "WEB_PORT": "9000",
+                "MINI_APP_URL": "https://mini.example.com",
+                "WEBAPP_SESSION_SECRET": "session-secret",
+            }
+        )
+        self.assertEqual(settings.runtime_mode, "web")
+        self.assertEqual(settings.web.port, 9000)
+        self.assertEqual(settings.web.public_url, "https://mini.example.com")
+        self.assertEqual(settings.telegram.mini_app_url, "https://mini.example.com")
+        self.assertEqual(settings.web.session_secret, "session-secret")
 
 
 if __name__ == "__main__":
