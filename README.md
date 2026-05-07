@@ -42,6 +42,7 @@ Required:
 
 Optional:
 
+- `APP_ENV`: defaults to `production`; use `staging` for a staging bot/deploy.
 - `ALLOWED_TELEGRAM_USER_IDS`: comma-separated Telegram user ids allowed to use the bot.
 - `APP_TIMEZONE`: for example `Europe/Moscow`.
 - `TELEGRAM_POLLING_TIMEOUT_SECONDS`: defaults to `30`.
@@ -49,6 +50,7 @@ Optional:
 - `OPENAI_MODEL`: required for food photo analysis.
 
 For a copy-paste starting point, use [.env.example](/Users/kurinniy/Documents/Projects/ai-me/.env.example).
+For staging, use [.env.staging.example](/Users/kurinniy/Documents/Projects/ai-me/.env.staging.example).
 
 ## Run The Bot
 
@@ -97,6 +99,25 @@ Fallback commands:
 This repo includes a `Dockerfile`, so Railway can build and run the Telegram worker as a long-lived service. The app does not need a public inbound URL while it uses Telegram long polling.
 
 At startup the bot proactively clears any existing Telegram webhook before entering long polling mode, which makes migration from a webhook setup less error-prone.
+
+## Staging Setup
+
+Use a separate staging bot and a separate staging MySQL database.
+
+Recommended setup:
+
+1. Create a second Telegram bot in `@BotFather` for staging.
+2. Create a second Railway project or a second isolated service group for staging.
+3. Attach a separate MySQL service to staging.
+4. Set `APP_ENV=staging`.
+5. Set the staging bot token in `TELEGRAM_BOT_TOKEN`.
+6. Point staging at the staging MySQL database.
+
+Important:
+
+- Do not reuse the production `TELEGRAM_BOT_TOKEN` in staging. Two long-polling workers on the same bot token will conflict on `getUpdates`.
+- Do not reuse the production database in staging.
+- `/whoami` and `/help` show the current environment name, so it is easy to verify which bot you are talking to.
 
 ## Next Step
 

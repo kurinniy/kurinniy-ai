@@ -45,7 +45,7 @@ class TelegramHealthBot:
     def run_forever(self) -> None:
         self._ensure_polling_mode()
         self._sync_bot_commands()
-        logger.info("Telegram long polling started")
+        logger.info("Telegram long polling started environment=%s", self.settings.environment_name)
         offset = None
         while True:
             try:
@@ -252,6 +252,7 @@ class TelegramHealthBot:
     def _handle_whoami(self, chat_id: Optional[int], user_id: Optional[int]) -> str:
         lines = [
             "Данные Telegram",
+            "окружение=%s" % self.settings.environment_name,
             "user_id=%s" % (user_id if user_id is not None else "неизвестно"),
             "chat_id=%s" % (chat_id if chat_id is not None else "неизвестно"),
         ]
@@ -496,6 +497,8 @@ class TelegramHealthBot:
 
     def _help_text(self) -> str:
         return (
+            "Окружение: %s\n" % self.settings.environment_name
+            + 
             "Команды:\n"
             "/whoami\n"
             "Отправь фото еды, чтобы создать черновик приема пищи.\n"

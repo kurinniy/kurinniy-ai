@@ -11,6 +11,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     settings = AppSettings.from_env()
+    logging.getLogger(__name__).info("Starting ai-me environment=%s", settings.environment_name)
     service = build_health_service(settings)
     bot = TelegramHealthBot(service=service, settings=settings.telegram)
     bot.run_forever()

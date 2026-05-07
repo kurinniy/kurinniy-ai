@@ -64,6 +64,7 @@ class TelegramSettings:
     polling_timeout_seconds: int = 30
     allowed_user_ids: FrozenSet[int] = frozenset()
     timezone_name: str = "UTC"
+    environment_name: str = "production"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "TelegramSettings":
@@ -74,11 +75,13 @@ class TelegramSettings:
         allowed_user_ids = _parse_int_set(env.get("ALLOWED_TELEGRAM_USER_IDS"))
         timeout = int(env.get("TELEGRAM_POLLING_TIMEOUT_SECONDS", "30"))
         timezone_name = env.get("APP_TIMEZONE", "UTC")
+        environment_name = env.get("APP_ENV", "production").strip() or "production"
         return cls(
             bot_token=bot_token,
             polling_timeout_seconds=timeout,
             allowed_user_ids=allowed_user_ids,
             timezone_name=timezone_name,
+            environment_name=environment_name,
         )
 
 
@@ -86,6 +89,7 @@ class TelegramSettings:
 class AppSettings:
     database: DatabaseSettings
     telegram: TelegramSettings
+    environment_name: str = "production"
     food_vision_api_key: str = ""
     food_vision_model: str = ""
 
@@ -95,6 +99,7 @@ class AppSettings:
         return cls(
             database=DatabaseSettings.from_env(source),
             telegram=TelegramSettings.from_env(source),
+            environment_name=source.get("APP_ENV", "production").strip() or "production",
             food_vision_api_key=source.get("OPENAI_API_KEY", "").strip(),
             food_vision_model=(source.get("OPENAI_MODEL", "").strip() or "gpt-4.1-mini"),
         )

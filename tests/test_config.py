@@ -17,6 +17,7 @@ class ConfigTest(unittest.TestCase):
     def test_app_settings_can_be_loaded_from_railway_style_env(self) -> None:
         settings = AppSettings.from_env(
             {
+                "APP_ENV": "staging",
                 "MYSQLHOST": "mysql.railway.internal",
                 "MYSQLPORT": "3306",
                 "MYSQLDATABASE": "railway",
@@ -32,6 +33,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(settings.database.host, "mysql.railway.internal")
         self.assertEqual(settings.telegram.allowed_user_ids, frozenset({11, 42}))
         self.assertEqual(settings.telegram.timezone_name, "Europe/Moscow")
+        self.assertEqual(settings.telegram.environment_name, "staging")
+        self.assertEqual(settings.environment_name, "staging")
         self.assertEqual(settings.food_vision_api_key, "sk-test")
         self.assertEqual(settings.food_vision_model, "gpt-test")
 

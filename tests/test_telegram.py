@@ -147,18 +147,21 @@ class TelegramHealthBotTest(unittest.TestCase):
                 bot_token="123:abc",
                 allowed_user_ids=frozenset(),
                 timezone_name="Europe/Moscow",
+                environment_name="staging",
             ),
         )
 
     def test_whoami_command_exposes_ids(self) -> None:
         response = self.bot._route_command("/whoami", chat_id=777, user_id=42)
         self.assertIn("Данные Telegram", response)
+        self.assertIn("окружение=staging", response)
         self.assertIn("user_id=42", response)
         self.assertIn("chat_id=777", response)
         self.assertIn("белый_список=выключен", response)
 
     def test_help_lists_whoami_command(self) -> None:
         response = self.bot._route_command("/help")
+        self.assertIn("Окружение: staging", response)
         self.assertIn("Команды:", response)
         self.assertIn("/whoami", response)
         self.assertIn("Отправь фото еды", response)
