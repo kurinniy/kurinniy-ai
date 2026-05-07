@@ -7,7 +7,7 @@ from ai_me.config import TelegramSettings
 from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDigestHighlight, WeeklyFoodDigest
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft
-from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry
+from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, StepProgressInsight
 from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
@@ -306,6 +306,16 @@ class DummyHealthService:
                 carbs_g=71,
             )
         ]
+
+    def build_step_progress_insight(self, user_id, reference_date):
+        return StepProgressInsight(
+            reference_date=reference_date,
+            steps=6200,
+            target_steps=10000,
+            average_steps_30d=5400.0,
+            days_with_data_30d=30,
+            comment="Это на 15% выше вашей средней за последние 30 дней. До цели не хватило 3800 шагов.",
+        )
 
     def list_decisions(self, user_id, status=None, target_date=None):
         return []
@@ -795,6 +805,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Еда:", response)
         self.assertIn("12:00 | Курица с рисом", response)
         self.assertIn("Б 38.0 / Ж 18.0 / У 71.0", response)
+        self.assertIn("Шаги за вчера (2026-05-05): 6200 / 10000", response)
+        self.assertIn("30-дневная средняя: 5400.0", response)
+        self.assertIn("Комментарий по шагам:", response)
 
     def test_admin_can_create_invite(self) -> None:
         response = self.bot._route_command("/create_invite 10 2", app_user=self.service.users_by_telegram_id[42])

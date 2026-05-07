@@ -557,6 +557,7 @@ class TelegramHealthBot:
             target_date = self._local_today()
         self.service.evaluate_day(app_user.user_id, target_date, now=self._local_now())
         summary = self.service.get_daily_summary(app_user.user_id, target_date)
+        yesterday_steps = self.service.build_step_progress_insight(app_user.user_id, target_date - timedelta(days=1))
         meals = self.service.list_meals(app_user.user_id, target_date)
         response = (
             "Сводка за %s\n"
@@ -604,6 +605,19 @@ class TelegramHealthBot:
             response += "\nЕда:\n%s" % "\n".join(meal_lines)
         else:
             response += "\nЕда:\n- Нет записанных приемов пищи"
+        response += (
+            "\nШаги за вчера (%s): %s / %s"
+            % (
+                yesterday_steps.reference_date.isoformat(),
+                yesterday_steps.steps,
+                yesterday_steps.target_steps,
+            )
+        )
+        if yesterday_steps.average_steps_30d is not None:
+            response += "\n30-дневная средняя: %.1f" % yesterday_steps.average_steps_30d
+        else:
+            response += "\n30-дневная средняя: нет данных"
+        response += "\nКомментарий по шагам: %s" % yesterday_steps.comment
         return response
 
     def _handle_decisions(self, app_user: AppUser, args: List[str]) -> str:

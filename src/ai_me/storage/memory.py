@@ -331,6 +331,14 @@ class InMemoryStore:
                 return
         entries.append(entry)
 
+    def list_activity_entries(self, user_id: int, date_from: date, date_to: date) -> List[ActivityEntry]:
+        entries = [
+            entry
+            for entry in self._activity_entries.get(user_id, [])
+            if date_from <= entry.occurred_at.date() <= date_to
+        ]
+        return sorted(entries, key=lambda item: item.occurred_at)
+
     def build_health_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
         meals = [entry for entry in self._meals.get(user_id, []) if entry.occurred_at.date() == target_date]
         water_entries = [

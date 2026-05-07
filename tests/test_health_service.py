@@ -151,6 +151,30 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(summary.latest_weight_kg, 81.4)
         self.assertEqual(summary.goals.water_ml, 2400)
 
+    def test_build_step_progress_insight_compares_with_30_day_average_and_target(self) -> None:
+        for offset, steps in enumerate([5000, 7000, 6500, 8000]):
+            current_date = date(2026, 5, 2 + offset)
+            self.service.log_activity(
+                self.user.user_id,
+                ActivityEntry(
+                    entry_id="activity-%s" % offset,
+                    occurred_at=datetime.combine(current_date, datetime.min.time()).replace(hour=18),
+                    title="Walk",
+                    duration_minutes=45,
+                    steps=steps,
+                ),
+            )
+
+        insight = self.service.build_step_progress_insight(self.user.user_id, date(2026, 5, 5))
+
+        self.assertEqual(insight.reference_date, date(2026, 5, 5))
+        self.assertEqual(insight.steps, 8000)
+        self.assertEqual(insight.target_steps, 10000)
+        self.assertEqual(insight.average_steps_30d, 6625.0)
+        self.assertEqual(insight.days_with_data_30d, 4)
+        self.assertIn("выше вашей средней", insight.comment)
+        self.assertIn("До цели не хватило 2000 шагов", insight.comment)
+
     def test_evaluate_day_creates_idempotent_decisions(self) -> None:
         self.service.log_meal(
             self.user.user_id,

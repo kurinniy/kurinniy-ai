@@ -39,6 +39,7 @@ from ai_me.domain.health import (
     DailyHealthSummary,
     MealEntry,
     SleepEntry,
+    StepProgressInsight,
     WaterEntry,
     WeightEntry,
 )
@@ -473,6 +474,35 @@ class HealthService:
     def get_daily_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
         return self.store.build_health_summary(user_id, target_date)
 
+    def build_step_progress_insight(self, user_id: int, reference_date: date) -> StepProgressInsight:
+        summary = self.get_daily_summary(user_id, reference_date)
+        window_start = reference_date - timedelta(days=29)
+        entries = self.store.list_activity_entries(user_id, date_from=window_start, date_to=reference_date)
+        steps_by_day: Dict[date, int] = {}
+        for entry in entries:
+            entry_date = entry.occurred_at.date()
+            steps_by_day[entry_date] = steps_by_day.get(entry_date, 0) + entry.steps
+
+        days_with_data = len(steps_by_day)
+        average_steps_30d: Optional[float] = None
+        if days_with_data > 0:
+            average_steps_30d = round(sum(steps_by_day.values()) / days_with_data, 1)
+
+        comment = self._build_step_progress_comment(
+            steps=summary.steps,
+            target_steps=summary.goals.steps,
+            average_steps_30d=average_steps_30d,
+            days_with_data_30d=days_with_data,
+        )
+        return StepProgressInsight(
+            reference_date=reference_date,
+            steps=summary.steps,
+            target_steps=summary.goals.steps,
+            average_steps_30d=average_steps_30d,
+            days_with_data_30d=days_with_data,
+            comment=comment,
+        )
+
     def list_meals(self, user_id: int, target_date: date) -> List[MealEntry]:
         return self.store.list_meals(user_id, target_date)
 
@@ -509,6 +539,33 @@ class HealthService:
 
     def get_finance_monthly_summary(self, user_id: int, month_start: date) -> FinanceMonthlySummary:
         return self.store.build_finance_monthly_summary(user_id, month_start)
+
+    @staticmethod
+    def _build_step_progress_comment(
+        *,
+        steps: int,
+        target_steps: int,
+        average_steps_30d: Optional[float],
+        days_with_data_30d: int,
+    ) -> str:
+        target_delta = steps - target_steps
+        if target_delta >= 0:
+            target_text = "Цель по шагам выполнена с запасом %s." % target_delta
+        else:
+            target_text = "До цели не хватило %s шагов." % abs(target_delta)
+
+        if average_steps_30d is None or days_with_data_30d < 3 or average_steps_30d <= 0:
+            return "%s Пока недостаточно данных для сравнения с 30-дневной средней." % target_text
+
+        average_delta = steps - average_steps_30d
+        average_delta_pct = round(abs(average_delta) / average_steps_30d * 100)
+        if average_delta > 0:
+            average_text = "Это на %s%% выше вашей средней за последние 30 дней." % average_delta_pct
+        elif average_delta < 0:
+            average_text = "Это на %s%% ниже вашей средней за последние 30 дней." % average_delta_pct
+        else:
+            average_text = "Это ровно на уровне вашей средней за последние 30 дней."
+        return "%s %s" % (average_text, target_text)
 
     def _require_meal_draft(self, user_id: int, draft_id: str, expected_status: MealDraftStatus) -> MealPhotoDraft:
         draft = self.store.get_meal_draft(user_id, draft_id)

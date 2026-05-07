@@ -730,6 +730,21 @@ class MySQLStore:
             ),
         )
 
+    def list_activity_entries(self, user_id: int, date_from: date, date_to: date) -> List[ActivityEntry]:
+        period_start = datetime.combine(date_from, time.min)
+        period_end = datetime.combine(date_to, time.max)
+        rows = self._fetchall(
+            """
+            SELECT *
+            FROM activity_entries
+            WHERE user_id = %s
+              AND occurred_at BETWEEN %s AND %s
+            ORDER BY occurred_at ASC
+            """,
+            (user_id, period_start, period_end),
+        )
+        return [self._to_activity_entry(row) for row in rows]
+
     def build_health_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
         day_start = datetime.combine(target_date, time.min)
         day_end = datetime.combine(target_date, time.max)
@@ -1544,6 +1559,18 @@ class MySQLStore:
             context_date=row["context_date"],
             status=DecisionStatus(row["status"]),
             payload=json.loads(row["payload"]),
+        )
+
+    @staticmethod
+    def _to_activity_entry(row: dict) -> ActivityEntry:
+        return ActivityEntry(
+            entry_id=row["entry_id"],
+            occurred_at=row["occurred_at"],
+            title=row["title"],
+            duration_minutes=int(row["duration_minutes"]),
+            steps=int(row["steps"]),
+            calories_burned=int(row["calories_burned"]),
+            intensity=row["intensity"] or "moderate",
         )
 
     @staticmethod

@@ -156,6 +156,9 @@ class HealthStore(Protocol):
     def add_activity(self, user_id: int, entry: ActivityEntry) -> None:
         ...
 
+    def list_activity_entries(self, user_id: int, date_from: date, date_to: date) -> List[ActivityEntry]:
+        ...
+
     def build_health_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
         ...
 

@@ -9,7 +9,7 @@ class DailyHealthGoals:
     water_ml: int = 2000
     protein_g: int = 120
     sleep_hours: float = 8.0
-    steps: int = 8000
+    steps: int = 10000
 
 
 @dataclass(frozen=True)
@@ -77,3 +77,13 @@ class DailyHealthSummary:
     activity_minutes: int
     latest_weight_kg: Optional[float]
     goals: DailyHealthGoals
+
+
+@dataclass(frozen=True)
+class StepProgressInsight:
+    reference_date: date
+    steps: int
+    target_steps: int
+    average_steps_30d: Optional[float]
+    days_with_data_30d: int
+    comment: str
