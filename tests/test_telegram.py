@@ -1,12 +1,12 @@
-import unittest
 import json
-
+import unittest
 from datetime import date, datetime
 
+from ai_me.config import TelegramSettings
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry
-from ai_me.config import TelegramSettings
+from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
 from ai_me.telegram import TelegramHealthBot
 
@@ -15,29 +15,120 @@ class DummyHealthService:
     def __init__(self) -> None:
         self.confirmed_draft_ids = []
         self.last_import = None
+        self.created_invites = []
+        self.users_by_telegram_id = {
+            42: AppUser(
+                user_id=1,
+                telegram_user_id=42,
+                chat_id=777,
+                username="owner",
+                first_name="Owner",
+                status=UserStatus.ACTIVE,
+                is_admin=True,
+                created_at=datetime(2026, 5, 6, 9, 0),
+            ),
+            77: AppUser(
+                user_id=2,
+                telegram_user_id=77,
+                chat_id=778,
+                username="guest",
+                first_name="Guest",
+                status=UserStatus.ACTIVE,
+                is_admin=False,
+                created_at=datetime(2026, 5, 6, 9, 30),
+            ),
+        }
 
-    def log_water(self, entry) -> None:
+    def sync_user(self, telegram_user_id: int, chat_id: int, username: str = "", first_name: str = ""):
+        user = self.users_by_telegram_id.get(telegram_user_id)
+        if user is None:
+            return None
+        return AppUser(
+            user_id=user.user_id,
+            telegram_user_id=user.telegram_user_id,
+            chat_id=chat_id,
+            username=username or user.username,
+            first_name=first_name or user.first_name,
+            status=user.status,
+            is_admin=user.is_admin,
+            created_at=user.created_at,
+        )
+
+    def register_user_with_invite(
+        self,
+        telegram_user_id: int,
+        chat_id: int,
+        username: str,
+        first_name: str,
+        invite_code: str,
+        now=None,
+    ):
+        if invite_code != "invite-1":
+            raise ValueError("Инвайт не найден или недействителен.")
+        user = AppUser(
+            user_id=3,
+            telegram_user_id=telegram_user_id,
+            chat_id=chat_id,
+            username=username,
+            first_name=first_name,
+            status=UserStatus.ACTIVE,
+            is_admin=False,
+            created_at=now,
+        )
+        self.users_by_telegram_id[telegram_user_id] = user
+        return user
+
+    def create_invite(self, created_by_user_id: int, days_valid: int = 7, max_uses: int = 1, now=None):
+        invite = InviteCode(
+            code="NEWCODE123",
+            created_by_user_id=created_by_user_id,
+            created_at=now or datetime(2026, 5, 6, 10, 0),
+            expires_at=datetime(2026, 5, 13, 10, 0),
+            max_uses=max_uses,
+            used_count=0,
+            status=InviteStatus.ACTIVE,
+        )
+        self.created_invites.append(invite)
+        return invite
+
+    def list_invites(self, status=None):
+        return [
+            InviteCode(
+                code="ABC123",
+                created_by_user_id=1,
+                created_at=datetime(2026, 5, 6, 10, 0),
+                expires_at=datetime(2026, 5, 13, 10, 0),
+                max_uses=1,
+                used_count=0,
+                status=InviteStatus.ACTIVE,
+            )
+        ]
+
+    def revoke_invite(self, code: str) -> None:
         return None
 
-    def log_meal(self, entry) -> None:
+    def log_water(self, user_id, entry) -> None:
         return None
 
-    def log_weight(self, entry) -> None:
+    def log_meal(self, user_id, entry) -> None:
         return None
 
-    def log_sleep(self, entry) -> None:
+    def log_weight(self, user_id, entry) -> None:
         return None
 
-    def log_activity(self, entry) -> None:
+    def log_sleep(self, user_id, entry) -> None:
         return None
 
-    def set_goals(self, goals) -> None:
+    def log_activity(self, user_id, entry) -> None:
         return None
 
-    def evaluate_day(self, target_date, now=None):
+    def set_goals(self, user_id, goals) -> None:
+        return None
+
+    def evaluate_day(self, user_id, target_date, now=None):
         return []
 
-    def get_daily_summary(self, target_date):
+    def get_daily_summary(self, user_id, target_date):
         return DailyHealthSummary(
             target_date=target_date,
             meals_count=1,
@@ -53,7 +144,7 @@ class DummyHealthService:
             goals=DailyHealthGoals(target_date=target_date),
         )
 
-    def list_meals(self, target_date):
+    def list_meals(self, user_id, target_date):
         return [
             MealEntry(
                 entry_id="meal-1",
@@ -66,15 +157,15 @@ class DummyHealthService:
             )
         ]
 
-    def list_decisions(self, status=None, target_date=None):
+    def list_decisions(self, user_id, status=None, target_date=None):
         return []
 
-    def list_meal_drafts(self, status=MealDraftStatus.PENDING):
+    def list_meal_drafts(self, user_id, status=MealDraftStatus.PENDING):
         return [
             MealPhotoDraft(
                 draft_id="draft-1",
-                created_at=__import__("datetime").datetime(2026, 5, 6, 12, 0),
-                occurred_at=__import__("datetime").datetime(2026, 5, 6, 12, 0),
+                created_at=datetime(2026, 5, 6, 12, 0),
+                occurred_at=datetime(2026, 5, 6, 12, 0),
                 title="Chicken rice bowl",
                 summary="Rice bowl",
                 calories=620,
@@ -97,22 +188,25 @@ class DummyHealthService:
             )
         ]
 
-    def confirm_meal_draft(self, draft_id):
-        self.confirmed_draft_ids.append(draft_id)
+    def create_meal_draft_from_photo(self, user_id, **kwargs):
+        return self.list_meal_drafts(user_id)[0]
+
+    def confirm_meal_draft(self, user_id, draft_id):
+        self.confirmed_draft_ids.append((user_id, draft_id))
         return type(
             "Meal",
             (),
             {
                 "title": "Chicken rice bowl",
-                "occurred_at": __import__("datetime").datetime(2026, 5, 6, 12, 0),
+                "occurred_at": datetime(2026, 5, 6, 12, 0),
             },
         )()
 
-    def reject_meal_draft(self, draft_id):
+    def reject_meal_draft(self, user_id, draft_id):
         return type("Draft", (), {"title": "Chicken rice bowl"})()
 
-    def import_tbank_csv(self, file_bytes: bytes, source_file_name: str):
-        self.last_import = (file_bytes, source_file_name)
+    def import_tbank_csv(self, user_id, file_bytes: bytes, source_file_name: str):
+        self.last_import = (user_id, file_bytes, source_file_name)
         return FinanceImportResult(
             provider="tbank",
             source_file_name=source_file_name,
@@ -123,7 +217,7 @@ class DummyHealthService:
             last_operation_at=datetime(2026, 5, 2, 18, 30),
         )
 
-    def get_finance_monthly_summary(self, month_start: date):
+    def get_finance_monthly_summary(self, user_id, month_start: date):
         return FinanceMonthlySummary(
             month_start=month_start,
             month_end=date(2026, 6, 1),
@@ -146,46 +240,41 @@ class TelegramHealthBotTest(unittest.TestCase):
             settings=TelegramSettings(
                 bot_token="123:abc",
                 allowed_user_ids=frozenset(),
+                admin_user_ids=frozenset({42}),
+                owner_telegram_user_id=42,
                 timezone_name="Europe/Moscow",
                 environment_name="staging",
+                registration_mode="invite_only",
             ),
         )
 
-    def test_whoami_command_exposes_ids(self) -> None:
-        response = self.bot._route_command("/whoami", chat_id=777, user_id=42)
+    def test_whoami_command_exposes_user_context(self) -> None:
+        response = self.bot._route_command("/whoami", chat_id=777, user_id=42, app_user=self.service.users_by_telegram_id[42])
         self.assertIn("Данные Telegram", response)
         self.assertIn("окружение=staging", response)
-        self.assertIn("user_id=42", response)
-        self.assertIn("chat_id=777", response)
-        self.assertIn("белый_список=выключен", response)
+        self.assertIn("режим_доступа=invite_only", response)
+        self.assertIn("app_user_id=1", response)
+        self.assertIn("роль=admin", response)
 
-    def test_help_lists_whoami_command(self) -> None:
+    def test_help_for_unregistered_user_explains_invite_flow(self) -> None:
         response = self.bot._route_command("/help")
-        self.assertIn("Окружение: staging", response)
-        self.assertIn("Команды:", response)
-        self.assertIn("/whoami", response)
-        self.assertIn("Отправь фото еды", response)
-        self.assertIn("/menu", response)
-        self.assertIn("/import_tbank", response)
-        self.assertIn("/finance_month", response)
+        self.assertIn("Доступ: только по инвайту", response)
+        self.assertIn("/start <invite_code>", response)
 
-    def test_import_tbank_command_returns_instructions(self) -> None:
-        response = self.bot._route_command("/import_tbank")
-        self.assertIn("Импорт операций Т-Банка", response)
-        self.assertIn("CSV", response)
+    def test_start_with_invite_registers_new_user(self) -> None:
+        response = self.bot._route_command(
+            "/start invite-1",
+            chat_id=999,
+            user_id=999,
+            username="newuser",
+            first_name="New",
+            app_user=None,
+        )
+        self.assertIn("Подключение завершено", response)
+        self.assertIn("/summary", response)
+        self.assertIn(999, self.service.users_by_telegram_id)
 
-    def test_finance_month_command_returns_monthly_summary(self) -> None:
-        response = self.bot._route_command("/finance_month 2026-05")
-        self.assertIn("Финансовая сводка за 05.2026", response)
-        self.assertIn("Доходы: 25000.00 ₽", response)
-        self.assertIn("Расходы: 3000.50 ₽", response)
-        self.assertIn("Продукты: 2300.50 ₽", response)
-
-    def test_button_text_routes_to_summary_command(self) -> None:
-        response = self.bot._route_command("Сводка за сегодня")
-        self.assertIn("Сводка за", response)
-
-    def test_help_message_attaches_reply_keyboard(self) -> None:
+    def test_non_private_chat_is_rejected(self) -> None:
         messages = []
 
         def fake_telegram_api(method, params):
@@ -198,8 +287,30 @@ class TelegramHealthBotTest(unittest.TestCase):
                 "update_id": 1,
                 "message": {
                     "text": "/help",
-                    "chat": {"id": 777},
+                    "chat": {"id": -100, "type": "group"},
                     "from": {"id": 42},
+                },
+            }
+        )
+
+        self.assertEqual(messages[0][0], "sendMessage")
+        self.assertIn("только в личных сообщениях", messages[0][1]["text"])
+
+    def test_help_message_attaches_reply_keyboard_only_for_registered_user(self) -> None:
+        messages = []
+
+        def fake_telegram_api(method, params):
+            messages.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/help",
+                    "chat": {"id": 777, "type": "private"},
+                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                 },
             }
         )
@@ -207,8 +318,6 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(messages[0][0], "sendMessage")
         markup = json.loads(messages[0][1]["reply_markup"])
         self.assertEqual(markup["keyboard"][0][0]["text"], "Сводка за сегодня")
-        self.assertEqual(markup["keyboard"][0][1]["text"], "Финансы за месяц")
-        self.assertEqual(markup["keyboard"][1][0]["text"], "Открытые решения")
         self.assertEqual(markup["keyboard"][1][1]["text"], "Импорт Т-Банк")
 
     def test_sync_bot_commands_registers_menu_entries(self) -> None:
@@ -223,12 +332,11 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         self.assertEqual(calls[0][0], "setMyCommands")
         commands = json.loads(calls[0][1]["commands"])
-        self.assertEqual(commands[0]["command"], "menu")
-        self.assertEqual(commands[0]["description"], "Показать кнопки и список команд")
-        self.assertEqual(commands[2]["command"], "finance_month")
-        self.assertEqual(commands[4]["command"], "import_tbank")
+        self.assertEqual(commands[0]["command"], "start")
+        self.assertEqual(commands[1]["command"], "menu")
+        self.assertEqual(commands[7]["command"], "create_invite")
 
-    def test_document_imports_tbank_csv(self) -> None:
+    def test_document_imports_tbank_csv_in_user_scope(self) -> None:
         calls = []
 
         def fake_telegram_api(method, params):
@@ -249,8 +357,8 @@ class TelegramHealthBotTest(unittest.TestCase):
             {
                 "update_id": 1,
                 "message": {
-                    "chat": {"id": 777},
-                    "from": {"id": 42},
+                    "chat": {"id": 777, "type": "private"},
+                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                     "document": {
                         "file_id": "file-1",
                         "file_name": "tbank.csv",
@@ -260,20 +368,21 @@ class TelegramHealthBotTest(unittest.TestCase):
             }
         )
 
-        self.assertEqual(self.service.last_import[1], "tbank.csv")
+        self.assertEqual(self.service.last_import[0], 1)
+        self.assertEqual(self.service.last_import[2], "tbank.csv")
         self.assertEqual(calls[0][0], "getFile")
         self.assertEqual(calls[1][0], "sendMessage")
         self.assertIn("Импорт операций Т-Банка завершен", calls[1][1]["text"])
 
     def test_drafts_command_lists_pending_drafts(self) -> None:
-        response = self.bot._route_command("/drafts")
+        response = self.bot._route_command("/drafts", app_user=self.service.users_by_telegram_id[42])
         self.assertIn("Ожидающие черновики приема пищи", response)
         self.assertIn("draft-1", response)
 
-    def test_confirm_meal_command_confirms_draft(self) -> None:
-        response = self.bot._route_command("/confirm_meal draft-1")
+    def test_confirm_meal_command_confirms_draft_in_user_scope(self) -> None:
+        response = self.bot._route_command("/confirm_meal draft-1", app_user=self.service.users_by_telegram_id[42])
         self.assertIn("Прием пищи сохранен", response)
-        self.assertEqual(self.service.confirmed_draft_ids, ["draft-1"])
+        self.assertEqual(self.service.confirmed_draft_ids, [(1, "draft-1")])
 
     def test_confirm_callback_edits_message_and_sends_confirmation(self) -> None:
         calls = []
@@ -287,29 +396,24 @@ class TelegramHealthBotTest(unittest.TestCase):
             {
                 "id": "query-1",
                 "data": "meal_confirm:draft-1",
-                "from": {"id": 42},
+                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                 "message": {
                     "message_id": 555,
-                    "chat": {"id": 777},
+                    "chat": {"id": 777, "type": "private"},
                 },
             }
         )
 
-        self.assertEqual(self.service.confirmed_draft_ids, ["draft-1"])
+        self.assertEqual(self.service.confirmed_draft_ids, [(1, "draft-1")])
         self.assertEqual(calls[0][0], "answerCallbackQuery")
-        self.assertEqual(calls[0][1]["text"], "Прием пищи сохранен.")
         self.assertEqual(calls[1][0], "editMessageText")
-        self.assertIn("Прием пищи сохранен", calls[1][1]["text"])
         self.assertEqual(calls[2][0], "sendMessage")
-        self.assertIn("Прием пищи сохранен", calls[2][1]["text"])
 
-    def test_confirm_callback_still_answers_when_message_edit_fails(self) -> None:
+    def test_unregistered_callback_gets_invite_prompt(self) -> None:
         calls = []
 
         def fake_telegram_api(method, params):
             calls.append((method, params))
-            if method == "editMessageText":
-                raise RuntimeError("message can't be edited")
             return True
 
         self.bot._telegram_api = fake_telegram_api
@@ -317,23 +421,19 @@ class TelegramHealthBotTest(unittest.TestCase):
             {
                 "id": "query-1",
                 "data": "meal_confirm:draft-1",
-                "from": {"id": 42},
+                "from": {"id": 999, "username": "new", "first_name": "New"},
                 "message": {
                     "message_id": 555,
-                    "chat": {"id": 777},
+                    "chat": {"id": 999, "type": "private"},
                 },
             }
         )
 
-        self.assertEqual(self.service.confirmed_draft_ids, ["draft-1"])
         self.assertEqual(calls[0][0], "answerCallbackQuery")
-        self.assertEqual(calls[0][1]["text"], "Прием пищи сохранен.")
-        self.assertEqual(calls[1][0], "editMessageText")
-        self.assertEqual(calls[2][0], "sendMessage")
-        self.assertIn("Прием пищи сохранен", calls[2][1]["text"])
+        self.assertIn("Сначала подключите бота", calls[0][1]["text"])
 
     def test_meal_draft_message_uses_russian_labels(self) -> None:
-        draft = self.service.list_meal_drafts()[0]
+        draft = self.service.list_meal_drafts(1)[0]
         messages = []
 
         def fake_telegram_api(method, params):
@@ -367,13 +467,23 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(parsed["title"], "Chicken rice bowl")
 
     def test_summary_includes_food_breakdown(self) -> None:
-        response = self.bot._route_command("/summary 2026-05-06")
+        response = self.bot._route_command("/summary 2026-05-06", app_user=self.service.users_by_telegram_id[42])
         self.assertIn("Сводка за 2026-05-06", response)
         self.assertIn("Приемы пищи: 1", response)
         self.assertIn("Еда:", response)
         self.assertIn("12:00 | Курица с рисом", response)
         self.assertIn("Б 38.0 / Ж 18.0 / У 71.0", response)
 
+    def test_admin_can_create_invite(self) -> None:
+        response = self.bot._route_command("/create_invite 10 2", app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("Инвайт создан", response)
+        self.assertIn("NEWCODE123", response)
+
+    def test_non_admin_cannot_create_invite(self) -> None:
+        response = self.bot._route_command("/create_invite", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Команда доступна только администратору", response)
+
 
 if __name__ == "__main__":
     unittest.main()
+

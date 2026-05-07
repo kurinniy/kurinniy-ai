@@ -63,8 +63,11 @@ class TelegramSettings:
     bot_token: str
     polling_timeout_seconds: int = 30
     allowed_user_ids: FrozenSet[int] = frozenset()
+    admin_user_ids: FrozenSet[int] = frozenset()
+    owner_telegram_user_id: int = 96445950
     timezone_name: str = "UTC"
     environment_name: str = "production"
+    registration_mode: str = "invite_only"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "TelegramSettings":
@@ -76,12 +79,20 @@ class TelegramSettings:
         timeout = int(env.get("TELEGRAM_POLLING_TIMEOUT_SECONDS", "30"))
         timezone_name = env.get("APP_TIMEZONE", "UTC")
         environment_name = env.get("APP_ENV", "production").strip() or "production"
+        owner_telegram_user_id = int(env.get("OWNER_TELEGRAM_USER_ID", "96445950"))
+        admin_user_ids = _parse_int_set(env.get("ADMIN_TELEGRAM_USER_IDS"))
+        if not admin_user_ids:
+            admin_user_ids = allowed_user_ids
+        admin_user_ids = frozenset(set(admin_user_ids) | {owner_telegram_user_id})
         return cls(
             bot_token=bot_token,
             polling_timeout_seconds=timeout,
             allowed_user_ids=allowed_user_ids,
+            admin_user_ids=admin_user_ids,
+            owner_telegram_user_id=owner_telegram_user_id,
             timezone_name=timezone_name,
             environment_name=environment_name,
+            registration_mode="invite_only",
         )
 
 

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional
 
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
@@ -13,50 +13,152 @@ from ai_me.domain.health import (
     WaterEntry,
     WeightEntry,
 )
+from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
 
 
 class InMemoryStore:
     def __init__(self) -> None:
-        self._goals: Dict[date, DailyHealthGoals] = {}
-        self._meals: List[MealEntry] = []
-        self._meal_drafts: Dict[str, MealPhotoDraft] = {}
-        self._water_entries: List[WaterEntry] = []
-        self._sleep_entries: List[SleepEntry] = []
-        self._weight_entries: List[WeightEntry] = []
-        self._activity_entries: List[ActivityEntry] = []
-        self._finance_transactions_by_key: Dict[str, FinanceTransaction] = {}
-        self._decisions_by_id: Dict[str, DecisionLogEntry] = {}
-        self._decision_ids_by_key: Dict[str, str] = {}
+        self._next_user_id = 1
+        self._users_by_id: Dict[int, AppUser] = {}
+        self._user_ids_by_telegram_id: Dict[int, int] = {}
+        self._invites_by_code: Dict[str, InviteCode] = {}
+        self._goals: Dict[int, Dict[date, DailyHealthGoals]] = {}
+        self._meals: Dict[int, List[MealEntry]] = {}
+        self._meal_drafts: Dict[int, Dict[str, MealPhotoDraft]] = {}
+        self._water_entries: Dict[int, List[WaterEntry]] = {}
+        self._sleep_entries: Dict[int, List[SleepEntry]] = {}
+        self._weight_entries: Dict[int, List[WeightEntry]] = {}
+        self._activity_entries: Dict[int, List[ActivityEntry]] = {}
+        self._finance_transactions_by_key: Dict[int, Dict[str, FinanceTransaction]] = {}
+        self._decisions_by_id: Dict[int, Dict[str, DecisionLogEntry]] = {}
+        self._decision_ids_by_key: Dict[int, Dict[str, str]] = {}
 
     def close(self) -> None:
         return None
 
-    def set_health_goals(self, goals: DailyHealthGoals) -> None:
-        self._goals[goals.target_date] = goals
+    def get_user_by_telegram_user_id(self, telegram_user_id: int) -> Optional[AppUser]:
+        user_id = self._user_ids_by_telegram_id.get(telegram_user_id)
+        return self._users_by_id.get(user_id) if user_id is not None else None
 
-    def get_health_goals(self, target_date: date) -> DailyHealthGoals:
-        return self._goals.get(target_date, DailyHealthGoals(target_date=target_date))
+    def create_user(
+        self,
+        telegram_user_id: int,
+        chat_id: int,
+        username: str,
+        first_name: str,
+        status: UserStatus,
+        is_admin: bool,
+    ) -> AppUser:
+        existing = self.get_user_by_telegram_user_id(telegram_user_id)
+        if existing is not None:
+            updated = AppUser(
+                user_id=existing.user_id,
+                telegram_user_id=telegram_user_id,
+                chat_id=chat_id,
+                username=username,
+                first_name=first_name,
+                status=status,
+                is_admin=is_admin,
+                created_at=existing.created_at,
+            )
+            self._users_by_id[existing.user_id] = updated
+            return updated
+        user = AppUser(
+            user_id=self._next_user_id,
+            telegram_user_id=telegram_user_id,
+            chat_id=chat_id,
+            username=username,
+            first_name=first_name,
+            status=status,
+            is_admin=is_admin,
+            created_at=datetime.now(),
+        )
+        self._next_user_id += 1
+        self._users_by_id[user.user_id] = user
+        self._user_ids_by_telegram_id[telegram_user_id] = user.user_id
+        return user
 
-    def add_meal(self, entry: MealEntry) -> None:
-        self._meals.append(entry)
+    def update_user_profile(self, user: AppUser, chat_id: int, username: str, first_name: str) -> AppUser:
+        updated = AppUser(
+            user_id=user.user_id,
+            telegram_user_id=user.telegram_user_id,
+            chat_id=chat_id,
+            username=username,
+            first_name=first_name,
+            status=user.status,
+            is_admin=user.is_admin,
+            created_at=user.created_at,
+        )
+        self._users_by_id[user.user_id] = updated
+        return updated
 
-    def list_meals(self, target_date: date) -> List[MealEntry]:
-        meals = [entry for entry in self._meals if entry.occurred_at.date() == target_date]
+    def create_invite(self, invite: InviteCode) -> InviteCode:
+        self._invites_by_code[invite.code] = invite
+        return invite
+
+    def get_invite(self, code: str) -> Optional[InviteCode]:
+        return self._invites_by_code.get(code)
+
+    def list_invites(self, status: Optional[InviteStatus] = None) -> List[InviteCode]:
+        invites = list(self._invites_by_code.values())
+        if status is not None:
+            invites = [invite for invite in invites if invite.status == status]
+        return sorted(invites, key=lambda item: item.created_at, reverse=True)
+
+    def increment_invite_usage(self, code: str, status: InviteStatus) -> None:
+        invite = self._invites_by_code[code]
+        self._invites_by_code[code] = InviteCode(
+            code=invite.code,
+            created_by_user_id=invite.created_by_user_id,
+            created_at=invite.created_at,
+            expires_at=invite.expires_at,
+            max_uses=invite.max_uses,
+            used_count=invite.used_count + 1,
+            status=status,
+        )
+
+    def update_invite_status(self, code: str, status: InviteStatus) -> None:
+        invite = self._invites_by_code[code]
+        self._invites_by_code[code] = InviteCode(
+            code=invite.code,
+            created_by_user_id=invite.created_by_user_id,
+            created_at=invite.created_at,
+            expires_at=invite.expires_at,
+            max_uses=invite.max_uses,
+            used_count=invite.used_count,
+            status=status,
+        )
+
+    def set_health_goals(self, user_id: int, goals: DailyHealthGoals) -> None:
+        self._goals.setdefault(user_id, {})[goals.target_date] = goals
+
+    def get_health_goals(self, user_id: int, target_date: date) -> DailyHealthGoals:
+        return self._goals.get(user_id, {}).get(target_date, DailyHealthGoals(target_date=target_date))
+
+    def add_meal(self, user_id: int, entry: MealEntry) -> None:
+        self._meals.setdefault(user_id, []).append(entry)
+
+    def list_meals(self, user_id: int, target_date: date) -> List[MealEntry]:
+        meals = [entry for entry in self._meals.get(user_id, []) if entry.occurred_at.date() == target_date]
         return sorted(meals, key=lambda item: item.occurred_at)
 
-    def create_meal_draft(self, draft: MealPhotoDraft) -> None:
-        self._meal_drafts[draft.draft_id] = draft
+    def create_meal_draft(self, user_id: int, draft: MealPhotoDraft) -> None:
+        self._meal_drafts.setdefault(user_id, {})[draft.draft_id] = draft
 
-    def get_meal_draft(self, draft_id: str) -> Optional[MealPhotoDraft]:
-        return self._meal_drafts.get(draft_id)
+    def get_meal_draft(self, user_id: int, draft_id: str) -> Optional[MealPhotoDraft]:
+        return self._meal_drafts.get(user_id, {}).get(draft_id)
 
-    def list_meal_drafts(self, status: MealDraftStatus) -> List[MealPhotoDraft]:
-        drafts = [draft for draft in self._meal_drafts.values() if draft.status == status]
+    def list_meal_drafts(self, user_id: int, status: MealDraftStatus) -> List[MealPhotoDraft]:
+        drafts = [
+            draft
+            for draft in self._meal_drafts.get(user_id, {}).values()
+            if draft.status == status
+        ]
         return sorted(drafts, key=lambda item: item.created_at)
 
-    def update_meal_draft_status(self, draft_id: str, status: MealDraftStatus) -> None:
-        current = self._meal_drafts[draft_id]
-        self._meal_drafts[draft_id] = MealPhotoDraft(
+    def update_meal_draft_status(self, user_id: int, draft_id: str, status: MealDraftStatus) -> None:
+        current = self._meal_drafts[user_id][draft_id]
+        self._meal_drafts[user_id][draft_id] = MealPhotoDraft(
             draft_id=current.draft_id,
             created_at=current.created_at,
             occurred_at=current.occurred_at,
@@ -74,26 +176,30 @@ class InMemoryStore:
             items=current.items,
         )
 
-    def add_water(self, entry: WaterEntry) -> None:
-        self._water_entries.append(entry)
+    def add_water(self, user_id: int, entry: WaterEntry) -> None:
+        self._water_entries.setdefault(user_id, []).append(entry)
 
-    def add_sleep(self, entry: SleepEntry) -> None:
-        self._sleep_entries.append(entry)
+    def add_sleep(self, user_id: int, entry: SleepEntry) -> None:
+        self._sleep_entries.setdefault(user_id, []).append(entry)
 
-    def add_weight(self, entry: WeightEntry) -> None:
-        self._weight_entries.append(entry)
+    def add_weight(self, user_id: int, entry: WeightEntry) -> None:
+        self._weight_entries.setdefault(user_id, []).append(entry)
 
-    def add_activity(self, entry: ActivityEntry) -> None:
-        self._activity_entries.append(entry)
+    def add_activity(self, user_id: int, entry: ActivityEntry) -> None:
+        self._activity_entries.setdefault(user_id, []).append(entry)
 
-    def build_health_summary(self, target_date: date) -> DailyHealthSummary:
-        meals = [entry for entry in self._meals if entry.occurred_at.date() == target_date]
-        water_entries = [entry for entry in self._water_entries if entry.occurred_at.date() == target_date]
-        sleep_entries = [entry for entry in self._sleep_entries if entry.end_at.date() == target_date]
-        activity_entries = [
-            entry for entry in self._activity_entries if entry.occurred_at.date() == target_date
+    def build_health_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
+        meals = [entry for entry in self._meals.get(user_id, []) if entry.occurred_at.date() == target_date]
+        water_entries = [
+            entry for entry in self._water_entries.get(user_id, []) if entry.occurred_at.date() == target_date
         ]
-        weight_entries = [entry for entry in self._weight_entries if entry.occurred_at.date() == target_date]
+        sleep_entries = [entry for entry in self._sleep_entries.get(user_id, []) if entry.end_at.date() == target_date]
+        activity_entries = [
+            entry for entry in self._activity_entries.get(user_id, []) if entry.occurred_at.date() == target_date
+        ]
+        weight_entries = [
+            entry for entry in self._weight_entries.get(user_id, []) if entry.occurred_at.date() == target_date
+        ]
 
         latest_weight = sorted(weight_entries, key=lambda item: item.occurred_at)[-1].weight_kg if weight_entries else None
 
@@ -109,34 +215,37 @@ class InMemoryStore:
             steps=sum(entry.steps for entry in activity_entries),
             activity_minutes=sum(entry.duration_minutes for entry in activity_entries),
             latest_weight_kg=latest_weight,
-            goals=self.get_health_goals(target_date),
+            goals=self.get_health_goals(user_id, target_date),
         )
 
-    def upsert_decisions(self, decisions: Iterable[DecisionLogEntry]) -> List[DecisionLogEntry]:
+    def upsert_decisions(self, user_id: int, decisions: Iterable[DecisionLogEntry]) -> List[DecisionLogEntry]:
+        decision_map = self._decisions_by_id.setdefault(user_id, {})
+        decision_keys = self._decision_ids_by_key.setdefault(user_id, {})
         inserted = []
         for decision in decisions:
-            if decision.decision_key in self._decision_ids_by_key:
+            if decision.decision_key in decision_keys:
                 continue
-            self._decisions_by_id[decision.decision_id] = decision
-            self._decision_ids_by_key[decision.decision_key] = decision.decision_id
+            decision_map[decision.decision_id] = decision
+            decision_keys[decision.decision_key] = decision.decision_id
             inserted.append(decision)
         return inserted
 
     def list_decisions(
         self,
+        user_id: int,
         status: Optional[DecisionStatus] = None,
         context_date: Optional[date] = None,
     ) -> List[DecisionLogEntry]:
-        decisions = list(self._decisions_by_id.values())
+        decisions = list(self._decisions_by_id.get(user_id, {}).values())
         if status is not None:
             decisions = [item for item in decisions if item.status == status]
         if context_date is not None:
             decisions = [item for item in decisions if item.context_date == context_date]
         return sorted(decisions, key=lambda item: item.created_at)
 
-    def update_decision_status(self, decision_id: str, status: DecisionStatus) -> None:
-        current = self._decisions_by_id[decision_id]
-        self._decisions_by_id[decision_id] = DecisionLogEntry(
+    def update_decision_status(self, user_id: int, decision_id: str, status: DecisionStatus) -> None:
+        current = self._decisions_by_id[user_id][decision_id]
+        self._decisions_by_id[user_id][decision_id] = DecisionLogEntry(
             decision_id=current.decision_id,
             decision_key=current.decision_key,
             created_at=current.created_at,
@@ -149,23 +258,24 @@ class InMemoryStore:
             payload=current.payload,
         )
 
-    def upsert_finance_transactions(self, transactions: Iterable[FinanceTransaction]) -> int:
+    def upsert_finance_transactions(self, user_id: int, transactions: Iterable[FinanceTransaction]) -> int:
+        transactions_by_key = self._finance_transactions_by_key.setdefault(user_id, {})
         inserted = 0
         for transaction in transactions:
-            if transaction.transaction_key in self._finance_transactions_by_key:
+            if transaction.transaction_key in transactions_by_key:
                 continue
-            self._finance_transactions_by_key[transaction.transaction_key] = transaction
+            transactions_by_key[transaction.transaction_key] = transaction
             inserted += 1
         return inserted
 
-    def build_finance_monthly_summary(self, month_start: date) -> FinanceMonthlySummary:
+    def build_finance_monthly_summary(self, user_id: int, month_start: date) -> FinanceMonthlySummary:
         if month_start.month == 12:
             next_month = date(month_start.year + 1, 1, 1)
         else:
             next_month = date(month_start.year, month_start.month + 1, 1)
         month_transactions = [
             item
-            for item in self._finance_transactions_by_key.values()
+            for item in self._finance_transactions_by_key.get(user_id, {}).values()
             if month_start <= item.occurred_at.date() < next_month
         ]
         income_total = round(sum(item.amount for item in month_transactions if item.amount > 0), 2)

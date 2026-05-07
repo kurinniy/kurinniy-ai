@@ -1,5 +1,6 @@
 import unittest
 
+from ai_me.domain.user import UserStatus
 from ai_me.services.health_service import HealthService
 from ai_me.services.tbank_import import TBankCSVImporter
 from ai_me.storage.memory import InMemoryStore
@@ -57,14 +58,22 @@ class TBankImportServiceTest(unittest.TestCase):
     def test_import_tbank_csv_deduplicates_repeated_import(self) -> None:
         store = InMemoryStore()
         service = HealthService(store=store)
+        user = store.create_user(
+            telegram_user_id=96445950,
+            chat_id=96445950,
+            username="owner",
+            first_name="Owner",
+            status=UserStatus.ACTIVE,
+            is_admin=True,
+        )
         file_bytes = (
             "\ufeffДата операции;Время операции;Сумма платежа;Описание\n"
             "01.05.2026;09:15;-1500,50;Перекресток\n"
             "02.05.2026;18:30;25000;Зарплата\n"
         ).encode("utf-8")
 
-        first = service.import_tbank_csv(file_bytes=file_bytes, source_file_name="tbank.csv")
-        second = service.import_tbank_csv(file_bytes=file_bytes, source_file_name="tbank.csv")
+        first = service.import_tbank_csv(user.user_id, file_bytes=file_bytes, source_file_name="tbank.csv")
+        second = service.import_tbank_csv(user.user_id, file_bytes=file_bytes, source_file_name="tbank.csv")
 
         self.assertEqual(first.total_rows, 2)
         self.assertEqual(first.imported_rows, 2)
@@ -75,6 +84,14 @@ class TBankImportServiceTest(unittest.TestCase):
     def test_finance_monthly_summary_aggregates_income_expenses_and_categories(self) -> None:
         store = InMemoryStore()
         service = HealthService(store=store)
+        user = store.create_user(
+            telegram_user_id=96445950,
+            chat_id=96445950,
+            username="owner",
+            first_name="Owner",
+            status=UserStatus.ACTIVE,
+            is_admin=True,
+        )
         file_bytes = (
             "\ufeffДата операции;Время операции;Сумма платежа;Описание;Категория\n"
             "01.05.2026;09:15;-1500,50;Перекресток;Продукты\n"
@@ -83,8 +100,8 @@ class TBankImportServiceTest(unittest.TestCase):
             "04.05.2026;12:00;-800,00;Вкусвилл;Продукты\n"
         ).encode("utf-8")
 
-        service.import_tbank_csv(file_bytes=file_bytes, source_file_name="tbank.csv")
-        summary = service.get_finance_monthly_summary(__import__("datetime").date(2026, 5, 1))
+        service.import_tbank_csv(user.user_id, file_bytes=file_bytes, source_file_name="tbank.csv")
+        summary = service.get_finance_monthly_summary(user.user_id, __import__("datetime").date(2026, 5, 1))
 
         self.assertEqual(summary.transaction_count, 4)
         self.assertEqual(summary.income_total, 25000.0)

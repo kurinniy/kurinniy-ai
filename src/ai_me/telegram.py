@@ -8,9 +8,9 @@ from urllib import parse, request
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
 from ai_me.config import TelegramSettings
 from ai_me.domain.decision_log import DecisionStatus
+from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -19,6 +19,7 @@ from ai_me.domain.health import (
     WaterEntry,
     WeightEntry,
 )
+from ai_me.domain.user import AppUser, InviteStatus, UserStatus
 from ai_me.services.health_service import HealthService
 
 
@@ -70,27 +71,43 @@ class TelegramHealthBot:
         if not isinstance(message, dict):
             return
 
-        text = message.get("text")
-        caption = message.get("caption")
-        photo = message.get("photo")
-        document = message.get("document")
         chat = message.get("chat", {})
         user = message.get("from", {})
         chat_id = chat.get("id")
         user_id = user.get("id")
-        if not isinstance(chat_id, int):
-            logger.warning("Skipping update without valid chat_id: %s", update)
+        if not isinstance(chat_id, int) or not isinstance(user_id, int):
+            logger.warning("Skipping update without valid chat_id/user_id: %s", update)
+            return
+        if not self._is_private_chat(chat):
+            logger.warning("Rejected non-private chat update chat_id=%s chat_type=%s", chat_id, chat.get("type"))
+            self._send_message(chat_id, self._private_chat_only_text())
             return
 
-        if self.settings.allowed_user_ids and user_id not in self.settings.allowed_user_ids:
-            logger.warning("Rejected update from non-allowed user_id=%s chat_id=%s", user_id, chat_id)
-            self._send_message(chat_id, "Бот доступен только для разрешенных пользователей Telegram.")
+        username = self._telegram_string(user.get("username"))
+        first_name = self._telegram_string(user.get("first_name"))
+        app_user = self.service.sync_user(
+            telegram_user_id=user_id,
+            chat_id=chat_id,
+            username=username,
+            first_name=first_name,
+        )
+        if app_user is not None and app_user.status == UserStatus.BLOCKED:
+            self._send_message(chat_id, "Ваш доступ к боту заблокирован.")
             return
+
+        text = message.get("text")
+        caption = message.get("caption")
+        photo = message.get("photo")
+        document = message.get("document")
 
         if isinstance(photo, list) and photo:
             logger.info("Received photo message chat_id=%s user_id=%s", chat_id, user_id)
+            if app_user is None:
+                self._send_message(chat_id, self._registration_required_text())
+                return
             self._handle_photo_message(
                 chat_id=chat_id,
+                app_user=app_user,
                 photo=photo,
                 caption=caption if isinstance(caption, str) else "",
             )
@@ -98,18 +115,28 @@ class TelegramHealthBot:
 
         if isinstance(document, dict):
             logger.info("Received document message chat_id=%s user_id=%s", chat_id, user_id)
-            self._handle_document_message(chat_id=chat_id, document=document)
+            if app_user is None:
+                self._send_message(chat_id, self._registration_required_text())
+                return
+            self._handle_document_message(chat_id=chat_id, app_user=app_user, document=document)
             return
 
         if isinstance(text, str):
             logger.info("Received text command chat_id=%s user_id=%s text=%s", chat_id, user_id, text.strip())
             normalized_text = self._normalize_command_text(text.strip())
-            response = self._route_command(text=normalized_text, chat_id=chat_id, user_id=user_id)
+            response = self._route_command(
+                text=normalized_text,
+                chat_id=chat_id,
+                user_id=user_id,
+                username=username,
+                first_name=first_name,
+                app_user=app_user,
+            )
             if response:
                 self._send_message(
                     chat_id,
                     response,
-                    reply_markup=self._menu_reply_markup() if self._should_show_menu(normalized_text) else None,
+                    reply_markup=self._menu_reply_markup() if self._should_show_menu(normalized_text, app_user) else None,
                 )
 
     def _handle_callback_query(self, callback_query: Dict[str, object]) -> None:
@@ -121,9 +148,20 @@ class TelegramHealthBot:
         chat = message.get("chat", {})
         chat_id = chat.get("id")
         message_id = message.get("message_id")
-        if not isinstance(data, str) or not isinstance(query_id, str) or not isinstance(chat_id, int):
+        if not isinstance(data, str) or not isinstance(query_id, str) or not isinstance(chat_id, int) or not isinstance(user_id, int):
             logger.warning("Skipping malformed callback query: %s", callback_query)
             return
+        if not self._is_private_chat(chat):
+            self._answer_callback_query(query_id, "Бот работает только в личных сообщениях.")
+            return
+        username = self._telegram_string(user.get("username"))
+        first_name = self._telegram_string(user.get("first_name"))
+        app_user = self.service.sync_user(
+            telegram_user_id=user_id,
+            chat_id=chat_id,
+            username=username,
+            first_name=first_name,
+        )
         logger.info(
             "Received callback query_id=%s user_id=%s chat_id=%s message_id=%s data=%s",
             query_id,
@@ -132,16 +170,19 @@ class TelegramHealthBot:
             message_id,
             data,
         )
-        if self.settings.allowed_user_ids and user_id not in self.settings.allowed_user_ids:
-            logger.warning("Rejected callback from non-allowed user_id=%s", user_id)
-            self._answer_callback_query(query_id, "Доступ запрещен.")
+        if app_user is None:
+            logger.warning("Rejected callback from unregistered user_id=%s", user_id)
+            self._answer_callback_query(query_id, "Сначала подключите бота по инвайту.")
+            return
+        if app_user.status == UserStatus.BLOCKED:
+            self._answer_callback_query(query_id, "Ваш доступ к боту заблокирован.")
             return
 
         if data.startswith("meal_confirm:"):
             draft_id = data.split(":", 1)[1]
-            logger.info("Confirming meal draft_id=%s", draft_id)
+            logger.info("Confirming meal draft_id=%s user_id=%s", draft_id, app_user.user_id)
             try:
-                meal = self.service.confirm_meal_draft(draft_id)
+                meal = self.service.confirm_meal_draft(app_user.user_id, draft_id)
             except ValueError as exc:
                 logger.warning("Meal confirmation failed draft_id=%s error=%s", draft_id, exc)
                 self._answer_callback_query(query_id, str(exc))
@@ -158,7 +199,7 @@ class TelegramHealthBot:
                     )
                     % meal.title,
                 )
-            decisions = self.service.evaluate_day(meal.occurred_at.date(), now=self._local_now())
+            decisions = self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
             logger.info("Meal confirmed draft_id=%s title=%s", draft_id, meal.title)
             self._send_message(
                 chat_id,
@@ -168,9 +209,9 @@ class TelegramHealthBot:
 
         if data.startswith("meal_reject:"):
             draft_id = data.split(":", 1)[1]
-            logger.info("Rejecting meal draft_id=%s", draft_id)
+            logger.info("Rejecting meal draft_id=%s user_id=%s", draft_id, app_user.user_id)
             try:
-                draft = self.service.reject_meal_draft(draft_id)
+                draft = self.service.reject_meal_draft(app_user.user_id, draft_id)
             except ValueError as exc:
                 logger.warning("Meal rejection failed draft_id=%s error=%s", draft_id, exc)
                 self._answer_callback_query(query_id, str(exc))
@@ -199,6 +240,9 @@ class TelegramHealthBot:
         text: str,
         chat_id: Optional[int] = None,
         user_id: Optional[int] = None,
+        username: str = "",
+        first_name: str = "",
+        app_user: Optional[AppUser] = None,
     ) -> str:
         text = self._normalize_command_text(text)
         try:
@@ -212,62 +256,106 @@ class TelegramHealthBot:
         args = parts[1:]
         try:
             if command == "/start":
-                return self._help_text()
+                return self._handle_start(
+                    args=args,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    username=username,
+                    first_name=first_name,
+                    app_user=app_user,
+                )
             if command == "/help":
-                return self._help_text()
+                return self._help_text(app_user)
             if command == "/menu":
-                return self._help_text()
+                return self._help_text(app_user)
+            if command == "/whoami":
+                return self._handle_whoami(chat_id=chat_id, user_id=user_id, app_user=app_user)
+
+            if app_user is None:
+                return self._registration_required_text()
+
             if command == "/import_tbank":
                 return self._handle_import_tbank()
             if command == "/finance_month":
-                return self._handle_finance_month(args)
-            if command == "/whoami":
-                return self._handle_whoami(chat_id=chat_id, user_id=user_id)
+                return self._handle_finance_month(app_user, args)
             if command == "/confirm_meal":
-                return self._handle_confirm_meal(args)
+                return self._handle_confirm_meal(app_user, args)
             if command == "/reject_meal":
-                return self._handle_reject_meal(args)
+                return self._handle_reject_meal(app_user, args)
             if command == "/drafts":
-                return self._handle_drafts()
+                return self._handle_drafts(app_user)
             if command == "/water":
-                return self._handle_water(args)
+                return self._handle_water(app_user, args)
             if command == "/meal":
-                return self._handle_meal(args)
+                return self._handle_meal(app_user, args)
             if command == "/weight":
-                return self._handle_weight(args)
+                return self._handle_weight(app_user, args)
             if command == "/sleep":
-                return self._handle_sleep(args)
+                return self._handle_sleep(app_user, args)
             if command == "/activity":
-                return self._handle_activity(args)
+                return self._handle_activity(app_user, args)
             if command == "/goals":
-                return self._handle_goals(args)
+                return self._handle_goals(app_user, args)
             if command == "/summary":
-                return self._handle_summary(args)
+                return self._handle_summary(app_user, args)
             if command == "/decisions":
-                return self._handle_decisions(args)
+                return self._handle_decisions(app_user, args)
+            if command == "/create_invite":
+                return self._handle_create_invite(app_user, args)
+            if command == "/list_invites":
+                return self._handle_list_invites(app_user)
+            if command == "/revoke_invite":
+                return self._handle_revoke_invite(app_user, args)
         except ValueError as exc:
             return "Некорректные аргументы команды: %s" % exc
-        return "Неизвестная команда.\n\n%s" % self._help_text()
+        return "Неизвестная команда.\n\n%s" % self._help_text(app_user)
 
-    def _handle_whoami(self, chat_id: Optional[int], user_id: Optional[int]) -> str:
+    def _handle_start(
+        self,
+        args: List[str],
+        chat_id: Optional[int],
+        user_id: Optional[int],
+        username: str,
+        first_name: str,
+        app_user: Optional[AppUser],
+    ) -> str:
+        if app_user is not None:
+            return "Бот уже подключен.\n\n%s" % self._help_text(app_user)
+        if chat_id is None or user_id is None:
+            return self._registration_required_text()
+        if not args:
+            return self._registration_required_text()
+        invite_code = args[0].strip()
+        if not invite_code:
+            return self._registration_required_text()
+        registered_user = self.service.register_user_with_invite(
+            telegram_user_id=user_id,
+            chat_id=chat_id,
+            username=username,
+            first_name=first_name,
+            invite_code=invite_code,
+            now=self._local_now(),
+        )
+        return (
+            "Подключение завершено.\n"
+            "Ваш аккаунт активирован.\n\n%s"
+        ) % self._help_text(registered_user)
+
+    def _handle_whoami(self, chat_id: Optional[int], user_id: Optional[int], app_user: Optional[AppUser]) -> str:
         lines = [
             "Данные Telegram",
             "окружение=%s" % self.settings.environment_name,
             "user_id=%s" % (user_id if user_id is not None else "неизвестно"),
             "chat_id=%s" % (chat_id if chat_id is not None else "неизвестно"),
+            "режим_доступа=%s" % self.settings.registration_mode,
         ]
-        if self.settings.allowed_user_ids:
-            lines.append("белый_список=включен")
+        if app_user is None:
+            lines.append("статус_аккаунта=не_подключен")
         else:
-            lines.append("белый_список=выключен")
+            lines.append("app_user_id=%s" % app_user.user_id)
+            lines.append("статус_аккаунта=%s" % app_user.status.value)
+            lines.append("роль=%s" % ("admin" if app_user.is_admin else "user"))
         return "\n".join(lines)
-
-    def _handle_confirm_meal(self, args: List[str]) -> str:
-        if len(args) != 1:
-            return "Использование: /confirm_meal <draft_id>"
-        meal = self.service.confirm_meal_draft(args[0])
-        decisions = self.service.evaluate_day(meal.occurred_at.date(), now=self._local_now())
-        return "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions))
 
     @staticmethod
     def _handle_import_tbank() -> str:
@@ -280,14 +368,14 @@ class TelegramHealthBot:
             "После загрузки я импортирую операции и покажу результат."
         )
 
-    def _handle_finance_month(self, args: List[str]) -> str:
+    def _handle_finance_month(self, app_user: AppUser, args: List[str]) -> str:
         if args:
             year, month = args[0].split("-", 1)
             month_start = date(int(year), int(month), 1)
         else:
             today = self._local_today()
             month_start = date(today.year, today.month, 1)
-        summary = self.service.get_finance_monthly_summary(month_start)
+        summary = self.service.get_finance_monthly_summary(app_user.user_id, month_start)
         lines = [
             "Финансовая сводка за %s" % month_start.strftime("%m.%Y"),
             "Операций: %s" % summary.transaction_count,
@@ -303,14 +391,21 @@ class TelegramHealthBot:
             lines.append("Расходов за этот месяц пока нет.")
         return "\n".join(lines)
 
-    def _handle_reject_meal(self, args: List[str]) -> str:
+    def _handle_confirm_meal(self, app_user: AppUser, args: List[str]) -> str:
+        if len(args) != 1:
+            return "Использование: /confirm_meal <draft_id>"
+        meal = self.service.confirm_meal_draft(app_user.user_id, args[0])
+        decisions = self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
+        return "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions))
+
+    def _handle_reject_meal(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) != 1:
             return "Использование: /reject_meal <draft_id>"
-        draft = self.service.reject_meal_draft(args[0])
+        draft = self.service.reject_meal_draft(app_user.user_id, args[0])
         return "Черновик приема пищи отклонен: %s." % draft.title
 
-    def _handle_drafts(self) -> str:
-        drafts = self.service.list_meal_drafts(status=MealDraftStatus.PENDING)
+    def _handle_drafts(self, app_user: AppUser) -> str:
+        drafts = self.service.list_meal_drafts(app_user.user_id, status=MealDraftStatus.PENDING)
         if not drafts:
             return "Нет ожидающих черновиков приема пищи."
         lines = ["Ожидающие черновики приема пищи:"]
@@ -321,22 +416,23 @@ class TelegramHealthBot:
             )
         return "\n".join(lines)
 
-    def _handle_water(self, args: List[str]) -> str:
+    def _handle_water(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) != 1:
             return "Использование: /water <ml>"
         amount_ml = int(args[0])
         now = self._local_now()
         self.service.log_water(
+            app_user.user_id,
             WaterEntry(
                 entry_id=str(uuid4()),
                 occurred_at=now,
                 amount_ml=amount_ml,
-            )
+            ),
         )
-        decisions = self.service.evaluate_day(now.date(), now=now)
+        decisions = self.service.evaluate_day(app_user.user_id, now.date(), now=now)
         return "Записано воды: %s мл.\n%s" % (amount_ml, self._format_new_decisions(decisions))
 
-    def _handle_meal(self, args: List[str]) -> str:
+    def _handle_meal(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) < 3:
             return 'Использование: /meal <calories> <protein_g> <title>. Пример: /meal 650 45 "Курица с рисом"'
         calories = int(args[0])
@@ -344,48 +440,51 @@ class TelegramHealthBot:
         title = " ".join(args[2:])
         now = self._local_now()
         self.service.log_meal(
+            app_user.user_id,
             MealEntry(
                 entry_id=str(uuid4()),
                 occurred_at=now,
                 title=title,
                 calories=calories,
                 protein_g=protein_g,
-            )
+            ),
         )
-        decisions = self.service.evaluate_day(now.date(), now=now)
+        decisions = self.service.evaluate_day(app_user.user_id, now.date(), now=now)
         return "Прием пищи записан: %s.\n%s" % (title, self._format_new_decisions(decisions))
 
-    def _handle_weight(self, args: List[str]) -> str:
+    def _handle_weight(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) != 1:
             return "Использование: /weight <kg>"
         weight_kg = float(args[0])
         now = self._local_now()
         self.service.log_weight(
+            app_user.user_id,
             WeightEntry(
                 entry_id=str(uuid4()),
                 occurred_at=now,
                 weight_kg=weight_kg,
-            )
+            ),
         )
         return "Вес записан: %.1f кг." % weight_kg
 
-    def _handle_sleep(self, args: List[str]) -> str:
+    def _handle_sleep(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) != 1:
             return "Использование: /sleep <hours>"
         duration_hours = float(args[0])
         end_at = self._local_now()
         start_at = end_at - timedelta(hours=duration_hours)
         self.service.log_sleep(
+            app_user.user_id,
             SleepEntry(
                 entry_id=str(uuid4()),
                 start_at=start_at,
                 end_at=end_at,
-            )
+            ),
         )
-        decisions = self.service.evaluate_day(end_at.date(), now=end_at)
+        decisions = self.service.evaluate_day(app_user.user_id, end_at.date(), now=end_at)
         return "Сон записан: %.2f ч.\n%s" % (duration_hours, self._format_new_decisions(decisions))
 
-    def _handle_activity(self, args: List[str]) -> str:
+    def _handle_activity(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) < 3:
             return 'Использование: /activity <minutes> <steps> <title>. Пример: /activity 45 6000 "Вечерняя прогулка"'
         duration_minutes = int(args[0])
@@ -393,18 +492,19 @@ class TelegramHealthBot:
         title = " ".join(args[2:])
         now = self._local_now()
         self.service.log_activity(
+            app_user.user_id,
             ActivityEntry(
                 entry_id=str(uuid4()),
                 occurred_at=now,
                 title=title,
                 duration_minutes=duration_minutes,
                 steps=steps,
-            )
+            ),
         )
-        decisions = self.service.evaluate_day(now.date(), now=now)
+        decisions = self.service.evaluate_day(app_user.user_id, now.date(), now=now)
         return "Активность записана: %s.\n%s" % (title, self._format_new_decisions(decisions))
 
-    def _handle_goals(self, args: List[str]) -> str:
+    def _handle_goals(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) != 4:
             return "Использование: /goals <water_ml> <protein_g> <sleep_hours> <steps>"
         today = self._local_today()
@@ -415,20 +515,20 @@ class TelegramHealthBot:
             sleep_hours=float(args[2]),
             steps=int(args[3]),
         )
-        self.service.set_goals(goals)
+        self.service.set_goals(app_user.user_id, goals)
         return (
             "Цели обновлены на %s:\nвода=%s мл, белок=%s г, сон=%.1f ч, шаги=%s"
             % (today.isoformat(), goals.water_ml, goals.protein_g, goals.sleep_hours, goals.steps)
         )
 
-    def _handle_summary(self, args: List[str]) -> str:
+    def _handle_summary(self, app_user: AppUser, args: List[str]) -> str:
         if args:
             target_date = date.fromisoformat(args[0])
         else:
             target_date = self._local_today()
-        self.service.evaluate_day(target_date, now=self._local_now())
-        summary = self.service.get_daily_summary(target_date)
-        meals = self.service.list_meals(target_date)
+        self.service.evaluate_day(app_user.user_id, target_date, now=self._local_now())
+        summary = self.service.get_daily_summary(app_user.user_id, target_date)
+        meals = self.service.list_meals(app_user.user_id, target_date)
         response = (
             "Сводка за %s\n"
             "Приемы пищи: %s\n"
@@ -477,13 +577,14 @@ class TelegramHealthBot:
             response += "\nЕда:\n- Нет записанных приемов пищи"
         return response
 
-    def _handle_decisions(self, args: List[str]) -> str:
+    def _handle_decisions(self, app_user: AppUser, args: List[str]) -> str:
         if args:
             target_date = date.fromisoformat(args[0])
         else:
             target_date = self._local_today()
-        self.service.evaluate_day(target_date, now=self._local_now())
+        self.service.evaluate_day(app_user.user_id, target_date, now=self._local_now())
         decisions = self.service.list_decisions(
+            app_user.user_id,
             status=DecisionStatus.OPEN,
             target_date=target_date,
         )
@@ -495,28 +596,89 @@ class TelegramHealthBot:
             lines.append("- [%s] %s" % (decision.kind.value, decision.title))
         return "\n".join(lines)
 
-    def _help_text(self) -> str:
-        return (
-            "Окружение: %s\n" % self.settings.environment_name
-            + 
-            "Команды:\n"
-            "/whoami\n"
-            "Отправь фото еды, чтобы создать черновик приема пищи.\n"
-            "/menu\n"
-            "/import_tbank\n"
-            "/finance_month [YYYY-MM]\n"
-            "/confirm_meal <draft_id>\n"
-            "/reject_meal <draft_id>\n"
-            "/drafts\n"
-            "/water <ml>\n"
-            '/meal <calories> <protein_g> <title>  Пример: /meal 650 45 "Курица с рисом"\n'
-            "/weight <kg>\n"
-            "/sleep <hours>\n"
-            '/activity <minutes> <steps> <title>  Пример: /activity 45 6000 "Вечерняя прогулка"\n'
-            "/goals <water_ml> <protein_g> <sleep_hours> <steps>\n"
-            "/summary [YYYY-MM-DD]\n"
-            "/decisions [YYYY-MM-DD]"
+    def _handle_create_invite(self, app_user: AppUser, args: List[str]) -> str:
+        self._ensure_admin(app_user)
+        days_valid = int(args[0]) if len(args) >= 1 else 7
+        max_uses = int(args[1]) if len(args) >= 2 else 1
+        invite = self.service.create_invite(
+            created_by_user_id=app_user.user_id,
+            days_valid=days_valid,
+            max_uses=max_uses,
+            now=self._local_now(),
         )
+        expires_at = invite.expires_at.strftime("%d.%m.%Y %H:%M") if invite.expires_at else "без срока"
+        return (
+            "Инвайт создан\n"
+            "Код: %s\n"
+            "Действует до: %s\n"
+            "Использований: %s"
+        ) % (invite.code, expires_at, invite.max_uses)
+
+    def _handle_list_invites(self, app_user: AppUser) -> str:
+        self._ensure_admin(app_user)
+        invites = self.service.list_invites()
+        if not invites:
+            return "Инвайтов пока нет."
+        lines = ["Инвайты:"]
+        for invite in invites[:20]:
+            expires_at = invite.expires_at.strftime("%d.%m.%Y %H:%M") if invite.expires_at else "без срока"
+            lines.append(
+                "- %s | %s | %s/%s | до %s"
+                % (invite.code, invite.status.value, invite.used_count, invite.max_uses, expires_at)
+            )
+        return "\n".join(lines)
+
+    def _handle_revoke_invite(self, app_user: AppUser, args: List[str]) -> str:
+        self._ensure_admin(app_user)
+        if len(args) != 1:
+            return "Использование: /revoke_invite <code>"
+        self.service.revoke_invite(args[0])
+        return "Инвайт отозван: %s" % args[0]
+
+    def _help_text(self, app_user: Optional[AppUser]) -> str:
+        if app_user is None:
+            return (
+                "Окружение: %s\n" % self.settings.environment_name
+                + "Доступ: только по инвайту, только в личных сообщениях.\n"
+                + "Чтобы подключиться, отправьте команду:\n"
+                + "/start <invite_code>\n\n"
+                + "Доступные команды без подключения:\n"
+                + "/start <invite_code>\n"
+                + "/whoami\n"
+                + "/help"
+            )
+
+        commands = [
+            "Окружение: %s" % self.settings.environment_name,
+            "Команды:",
+            "/whoami",
+            "Отправь фото еды, чтобы создать черновик приема пищи.",
+            "/menu",
+            "/import_tbank",
+            "/finance_month [YYYY-MM]",
+            "/confirm_meal <draft_id>",
+            "/reject_meal <draft_id>",
+            "/drafts",
+            "/water <ml>",
+            '/meal <calories> <protein_g> <title>  Пример: /meal 650 45 "Курица с рисом"',
+            "/weight <kg>",
+            "/sleep <hours>",
+            '/activity <minutes> <steps> <title>  Пример: /activity 45 6000 "Вечерняя прогулка"',
+            "/goals <water_ml> <protein_g> <sleep_hours> <steps>",
+            "/summary [YYYY-MM-DD]",
+            "/decisions [YYYY-MM-DD]",
+        ]
+        if app_user.is_admin:
+            commands.extend(
+                [
+                    "",
+                    "Админ-команды:",
+                    "/create_invite [days_valid] [max_uses]",
+                    "/list_invites",
+                    "/revoke_invite <code>",
+                ]
+            )
+        return "\n".join(commands)
 
     def _format_new_decisions(self, decisions: Iterable) -> str:
         decision_list = list(decisions)
@@ -621,7 +783,8 @@ class TelegramHealthBot:
                                 },
                             ]
                         ]
-                    }
+                    },
+                    ensure_ascii=False,
                 ),
             },
         )
@@ -635,7 +798,7 @@ class TelegramHealthBot:
             },
         )
 
-    def _handle_photo_message(self, chat_id: int, photo: List[dict], caption: str) -> None:
+    def _handle_photo_message(self, chat_id: int, app_user: AppUser, photo: List[dict], caption: str) -> None:
         largest_photo = max(photo, key=lambda item: item.get("file_size", 0))
         file_id = largest_photo.get("file_id")
         file_unique_id = largest_photo.get("file_unique_id")
@@ -650,6 +813,7 @@ class TelegramHealthBot:
                 raise ValueError("Telegram не вернул путь к файлу")
             image_bytes = self._download_telegram_file(file_path)
             draft = self.service.create_meal_draft_from_photo(
+                app_user.user_id,
                 photo_file_id=file_id,
                 photo_unique_id=file_unique_id,
                 image_bytes=image_bytes,
@@ -665,7 +829,7 @@ class TelegramHealthBot:
         logger.info("Food photo analyzed successfully chat_id=%s draft_id=%s", chat_id, draft.draft_id)
         self._send_meal_draft(chat_id, draft)
 
-    def _handle_document_message(self, chat_id: int, document: Dict[str, object]) -> None:
+    def _handle_document_message(self, chat_id: int, app_user: AppUser, document: Dict[str, object]) -> None:
         file_id = document.get("file_id")
         file_name = document.get("file_name")
         mime_type = document.get("mime_type")
@@ -686,6 +850,7 @@ class TelegramHealthBot:
                 raise ValueError("Telegram не вернул путь к файлу")
             file_bytes = self._download_telegram_file(file_path)
             result = self.service.import_tbank_csv(
+                app_user.user_id,
                 file_bytes=file_bytes,
                 source_file_name=file_name if isinstance(file_name, str) else "tbank.csv",
             )
@@ -709,12 +874,15 @@ class TelegramHealthBot:
 
     def _sync_bot_commands(self) -> None:
         commands = [
+            {"command": "start", "description": "Подключить бота по инвайту"},
             {"command": "menu", "description": "Показать кнопки и список команд"},
             {"command": "summary", "description": "Сводка за сегодня"},
             {"command": "finance_month", "description": "Финансовая сводка за месяц"},
             {"command": "decisions", "description": "Открытые решения"},
             {"command": "import_tbank", "description": "Импорт CSV из Т-Банка"},
             {"command": "drafts", "description": "Черновики приема пищи"},
+            {"command": "create_invite", "description": "Создать инвайт (admin)"},
+            {"command": "list_invites", "description": "Список инвайтов (admin)"},
             {"command": "whoami", "description": "Мои Telegram ID"},
             {"command": "help", "description": "Справка по командам"},
         ]
@@ -733,8 +901,8 @@ class TelegramHealthBot:
         return cls.BUTTON_TO_COMMAND.get(text, text)
 
     @staticmethod
-    def _should_show_menu(text: str) -> bool:
-        return text in {"/start", "/help", "/menu"}
+    def _should_show_menu(text: str, app_user: Optional[AppUser]) -> bool:
+        return app_user is not None and text in {"/start", "/help", "/menu"}
 
     @classmethod
     def _menu_reply_markup(cls) -> str:
@@ -751,6 +919,14 @@ class TelegramHealthBot:
             },
             ensure_ascii=False,
         )
+
+    @staticmethod
+    def _is_private_chat(chat: Dict[str, object]) -> bool:
+        return chat.get("type") == "private" or "type" not in chat
+
+    @staticmethod
+    def _telegram_string(value: object) -> str:
+        return str(value).strip() if isinstance(value, str) else ""
 
     @staticmethod
     def _is_supported_tbank_file(file_name: object, mime_type: object) -> bool:
@@ -779,6 +955,21 @@ class TelegramHealthBot:
                 )
             )
         return "\n".join(lines)
+
+    def _registration_required_text(self) -> str:
+        return (
+            "Бот доступен только по инвайту и только в личных сообщениях.\n"
+            "Отправьте команду /start <invite_code>, чтобы подключиться."
+        )
+
+    @staticmethod
+    def _private_chat_only_text() -> str:
+        return "Бот работает только в личных сообщениях."
+
+    @staticmethod
+    def _ensure_admin(app_user: AppUser) -> None:
+        if not app_user.is_admin:
+            raise ValueError("Команда доступна только администратору.")
 
     def _telegram_api(self, method: str, params: Dict[str, object]):
         encoded = parse.urlencode(params).encode()
@@ -811,3 +1002,4 @@ class TelegramHealthBot:
         if lower_path.endswith(".webp"):
             return "image/webp"
         return "image/jpeg"
+

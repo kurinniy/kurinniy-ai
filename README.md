@@ -6,6 +6,7 @@ Current stage of a personal assistant system focused on three concrete capabilit
 - `DecisionLog`: stores assistant recommendations, alerts, and confirmation requests derived from those signals.
 - `Telegram Interface`: accepts health events over Telegram using long polling.
 - `Food Pipeline`: accepts food photos, creates a meal draft, and logs it after confirmation.
+- `Multi-user Access`: supports invite-only onboarding for multiple Telegram users in private chats.
 
 The current implementation is intentionally small, but now targets a deployable setup for Railway:
 
@@ -43,7 +44,9 @@ Required:
 Optional:
 
 - `APP_ENV`: defaults to `production`; use `staging` for a staging bot/deploy.
-- `ALLOWED_TELEGRAM_USER_IDS`: comma-separated Telegram user ids allowed to use the bot.
+- `OWNER_TELEGRAM_USER_ID`: Telegram user id, which receives existing single-user data during migration. Defaults to `96445950`.
+- `ADMIN_TELEGRAM_USER_IDS`: comma-separated Telegram user ids that can create and revoke invites.
+- `ALLOWED_TELEGRAM_USER_IDS`: legacy fallback for admin ids.
 - `APP_TIMEZONE`: for example `Europe/Moscow`.
 - `TELEGRAM_POLLING_TIMEOUT_SECONDS`: defaults to `30`.
 - `OPENAI_API_KEY`: required for food photo analysis.
@@ -58,14 +61,17 @@ For staging, use [.env.staging.example](/Users/kurinniy/Documents/Projects/ai-me
 PYTHONPATH=src python3 -m ai_me.main
 ```
 
-## First Bot Boot
+## Access Model
 
-1. Start the bot without `ALLOWED_TELEGRAM_USER_IDS`.
-2. Send `/whoami` to the bot from your Telegram account.
-3. Copy the returned `user_id` into `ALLOWED_TELEGRAM_USER_IDS`.
-4. Redeploy or restart the service.
+The bot now works only in `private chats` and uses `invite-only` onboarding.
 
-This keeps the first boot simple and lets you lock the bot down immediately after you identify your Telegram account.
+Boot sequence:
+
+1. Set `OWNER_TELEGRAM_USER_ID` for the current owner account.
+2. Deploy the bot.
+3. The store creates that owner user automatically and migrates legacy single-user rows onto that owner.
+4. Open the bot from the owner account and create invites with `/create_invite`.
+5. New users connect with `/start <invite_code>`.
 
 ## Food Photo Flow
 
@@ -85,14 +91,17 @@ Fallback commands:
 - Set health goals for a date from Telegram.
 - Log meals, water intake, sleep, weight, and activity from Telegram.
 - Create meal drafts from Telegram food photos.
+- Support multiple Telegram users with isolated data by `user_id`.
+- Register new users only by invite code.
+- Reject group chats and work only in Telegram private chats.
+- Create, list, and revoke invite codes from admin accounts.
 - Build a daily health summary from raw events.
-- Expose `user_id` and `chat_id` through `/whoami` for first-run setup.
+- Expose Telegram and internal account data through `/whoami`.
 - Generate idempotent decisions for common cases:
   - low water intake late in the day;
   - low protein intake after lunch;
   - poor sleep before planned activity.
 - Track decision lifecycle with statuses such as `open`, `accepted`, and `executed`.
-- Restrict the bot to a known Telegram user list when needed.
 
 ## Railway Notes
 
@@ -118,11 +127,3 @@ Important:
 - Do not reuse the production `TELEGRAM_BOT_TOKEN` in staging. Two long-polling workers on the same bot token will conflict on `getUpdates`.
 - Do not reuse the production database in staging.
 - `/whoami` and `/help` show the current environment name, so it is easy to verify which bot you are talking to.
-
-## Next Step
-
-The next practical slice is to add:
-
-- user profiles instead of a single shared health stream;
-- scheduled daily brief generation;
-- admin commands to resolve or dismiss decisions from Telegram.
