@@ -17,3 +17,11 @@
 ## Unreleased
 
 - Изменения в работе, которые еще не были выложены в production.
+
+## 2026-05-07
+
+- Версия или commit: `be9ddfe`
+- Добавлен multi-user режим с invite-only onboarding для Telegram-бота.
+- Добавлены пользователи, инвайты, private-chat only режим и admin-команды для управления инвайтами.
+- Данные health, food drafts, decisions и finance переведены на изоляцию по `user_id`.
+- Добавлена автомиграция MySQL-схемы с привязкой legacy-данных к owner-аккаунту `96445950`.
