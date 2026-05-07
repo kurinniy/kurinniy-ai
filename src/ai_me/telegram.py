@@ -4,7 +4,7 @@ import shlex
 import time
 from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional
-from urllib import parse, request
+from urllib import error as urlerror, parse, request
 from zoneinfo import ZoneInfo
 
 from ai_me.config import TelegramSettings
@@ -180,13 +180,13 @@ class TelegramHealthBot:
         if data.startswith("meal_confirm:"):
             draft_id = data.split(":", 1)[1]
             logger.info("Confirming meal draft_id=%s user_id=%s", draft_id, app_user.user_id)
+            self._try_answer_callback_query(query_id, "Сохраняю прием пищи...")
             try:
                 meal = self.service.confirm_meal_draft(app_user.user_id, draft_id)
             except ValueError as exc:
                 logger.warning("Meal confirmation failed draft_id=%s error=%s", draft_id, exc)
-                self._answer_callback_query(query_id, str(exc))
+                self._send_message(chat_id, "Не удалось сохранить прием пищи: %s" % exc)
                 return
-            self._answer_callback_query(query_id, "Прием пищи сохранен.")
             if isinstance(message_id, int):
                 self._try_edit_message_text(
                     chat_id=chat_id,
@@ -209,13 +209,13 @@ class TelegramHealthBot:
         if data.startswith("meal_reject:"):
             draft_id = data.split(":", 1)[1]
             logger.info("Rejecting meal draft_id=%s user_id=%s", draft_id, app_user.user_id)
+            self._try_answer_callback_query(query_id, "Отклоняю черновик...")
             try:
                 draft = self.service.reject_meal_draft(app_user.user_id, draft_id)
             except ValueError as exc:
                 logger.warning("Meal rejection failed draft_id=%s error=%s", draft_id, exc)
-                self._answer_callback_query(query_id, str(exc))
+                self._send_message(chat_id, "Не удалось отклонить черновик: %s" % exc)
                 return
-            self._answer_callback_query(query_id, "Черновик отклонен.")
             if isinstance(message_id, int):
                 self._try_edit_message_text(
                     chat_id=chat_id,
@@ -852,6 +852,12 @@ class TelegramHealthBot:
             },
         )
 
+    def _try_answer_callback_query(self, callback_query_id: str, text: str) -> None:
+        try:
+            self._answer_callback_query(callback_query_id, text)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Callback answer failed callback_query_id=%s error=%s", callback_query_id, exc)
+
     def _handle_photo_message(self, chat_id: int, app_user: AppUser, photo: List[dict], caption: str) -> None:
         largest_photo = max(photo, key=lambda item: item.get("file_size", 0))
         file_id = largest_photo.get("file_id")
@@ -1033,8 +1039,13 @@ class TelegramHealthBot:
     def _telegram_api(self, method: str, params: Dict[str, object]):
         encoded = parse.urlencode(params).encode()
         req = request.Request(self.base_url + method, data=encoded)
-        with request.urlopen(req, timeout=self.settings.polling_timeout_seconds + 10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        try:
+            with request.urlopen(req, timeout=self.settings.polling_timeout_seconds + 10) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urlerror.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            logger.error("Telegram API HTTP error method=%s status=%s body=%s", method, exc.code, body)
+            raise
         if not payload.get("ok"):
             logger.error("Telegram API error method=%s payload=%s", method, payload)
             raise RuntimeError("Telegram API error for %s: %s" % (method, payload))
@@ -1079,8 +1090,13 @@ class TelegramHealthBot:
             data=b"".join(body_chunks),
             headers={"Content-Type": "multipart/form-data; boundary=%s" % boundary},
         )
-        with request.urlopen(req, timeout=self.settings.polling_timeout_seconds + 20) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        try:
+            with request.urlopen(req, timeout=self.settings.polling_timeout_seconds + 20) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urlerror.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            logger.error("Telegram multipart HTTP error method=%s status=%s body=%s", method, exc.code, body)
+            raise
         if not payload.get("ok"):
             logger.error("Telegram multipart API error method=%s payload=%s", method, payload)
             raise RuntimeError("Telegram API error for %s: %s" % (method, payload))

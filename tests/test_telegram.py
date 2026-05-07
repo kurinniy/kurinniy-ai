@@ -619,6 +619,33 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[1][0], "editMessageText")
         self.assertEqual(calls[2][0], "sendMessage")
 
+    def test_confirm_callback_continues_when_callback_answer_fails(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            if method == "answerCallbackQuery":
+                raise RuntimeError("telegram 400")
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "meal_confirm:draft-1",
+                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 777, "type": "private"},
+                },
+            }
+        )
+
+        self.assertEqual(self.service.confirmed_draft_ids, [(1, "draft-1")])
+        self.assertEqual(calls[0][0], "answerCallbackQuery")
+        self.assertEqual(calls[1][0], "editMessageText")
+        self.assertEqual(calls[2][0], "sendMessage")
+
     def test_unregistered_callback_gets_invite_prompt(self) -> None:
         calls = []
 
