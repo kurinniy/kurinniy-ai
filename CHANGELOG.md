@@ -20,6 +20,14 @@
 
 ## 2026-05-07
 
+- Версия или commit: `0e5a3b7`
+- Добавлен framework для daily и weekly food digest с хранением фото еды и генерацией мозаики.
+- Добавлены preview-команды digest в Telegram и отправка digest как пары сообщений: фото и текст.
+- Добавлен отдельный digest worker c расписанием на `08:00`, идемпотентной отправкой через `digest_runs` и режимом запуска `APP_RUNTIME_MODE=digest_worker`.
+- Обновлены конфигурация и документация Railway для запуска отдельного worker-service в staging и production.
+
+## 2026-05-07
+
 - Версия или commit: `e707b56`
 - Удалены ручные Telegram-команды `/water`, `/meal`, `/weight`, `/sleep`, `/activity`, `/goals`.
 - Обновлены help-текст и документация бота под photo-first и import-first сценарии.
