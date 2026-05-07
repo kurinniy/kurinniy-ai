@@ -101,6 +101,8 @@ class AppSettings:
     database: DatabaseSettings
     telegram: TelegramSettings
     environment_name: str = "production"
+    runtime_mode: str = "bot"
+    scheduler_poll_interval_seconds: int = 60
     food_vision_api_key: str = ""
     food_vision_model: str = ""
 
@@ -111,6 +113,8 @@ class AppSettings:
             database=DatabaseSettings.from_env(source),
             telegram=TelegramSettings.from_env(source),
             environment_name=source.get("APP_ENV", "production").strip() or "production",
+            runtime_mode=(source.get("APP_RUNTIME_MODE", "bot").strip() or "bot"),
+            scheduler_poll_interval_seconds=int(source.get("DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS", "60")),
             food_vision_api_key=source.get("OPENAI_API_KEY", "").strip(),
             food_vision_model=(source.get("OPENAI_MODEL", "").strip() or "gpt-4.1-mini"),
         )

@@ -44,6 +44,8 @@ Required:
 Optional:
 
 - `APP_ENV`: defaults to `production`; use `staging` for a staging bot/deploy.
+- `APP_RUNTIME_MODE`: `bot` or `digest_worker`; defaults to `bot`.
+- `DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS`: defaults to `60`.
 - `OWNER_TELEGRAM_USER_ID`: Telegram user id, which receives existing single-user data during migration. Defaults to `96445950`.
 - `ADMIN_TELEGRAM_USER_IDS`: comma-separated Telegram user ids that can create and revoke invites.
 - `ALLOWED_TELEGRAM_USER_IDS`: legacy fallback for admin ids.
@@ -60,6 +62,19 @@ For staging, use [.env.staging.example](/Users/kurinniy/Documents/Projects/ai-me
 ```bash
 PYTHONPATH=src python3 -m ai_me.main
 ```
+
+## Run The Digest Worker
+
+```bash
+APP_RUNTIME_MODE=digest_worker PYTHONPATH=src python3 -m ai_me.main
+```
+
+The digest worker:
+
+- checks active users every `DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS`;
+- sends `daily digest` after `08:00` in the user's timezone for yesterday;
+- sends `weekly digest` on Monday after `08:00` for the previous Monday-Sunday window;
+- uses `digest_runs` to avoid duplicate sends once a digest is marked `sent` or `skipped`.
 
 ## Access Model
 
@@ -106,6 +121,12 @@ Fallback commands:
 This repo includes a `Dockerfile`, so Railway can build and run the Telegram worker as a long-lived service. The app does not need a public inbound URL while it uses Telegram long polling.
 
 At startup the bot proactively clears any existing Telegram webhook before entering long polling mode, which makes migration from a webhook setup less error-prone.
+
+For automatic digests, run a second Railway service from the same repo with:
+
+- the same MySQL database as the bot for that environment;
+- the same Telegram bot token for that environment;
+- `APP_RUNTIME_MODE=digest_worker`.
 
 ## Staging Setup
 

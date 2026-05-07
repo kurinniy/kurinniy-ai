@@ -21,6 +21,9 @@ class HealthStore(Protocol):
     def close(self) -> None:
         ...
 
+    def list_users(self, status: Optional[UserStatus] = None) -> List[AppUser]:
+        ...
+
     def get_user_by_telegram_user_id(self, telegram_user_id: int) -> Optional[AppUser]:
         ...
 

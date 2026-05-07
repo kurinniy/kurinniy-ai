@@ -26,6 +26,8 @@ class ConfigTest(unittest.TestCase):
                 "TELEGRAM_BOT_TOKEN": "123:abc",
                 "ALLOWED_TELEGRAM_USER_IDS": "11, 42",
                 "APP_TIMEZONE": "Europe/Moscow",
+                "APP_RUNTIME_MODE": "digest_worker",
+                "DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS": "45",
                 "OPENAI_API_KEY": "sk-test",
                 "OPENAI_MODEL": "gpt-test",
             }
@@ -38,6 +40,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(settings.telegram.environment_name, "staging")
         self.assertEqual(settings.telegram.registration_mode, "invite_only")
         self.assertEqual(settings.environment_name, "staging")
+        self.assertEqual(settings.runtime_mode, "digest_worker")
+        self.assertEqual(settings.scheduler_poll_interval_seconds, 45)
         self.assertEqual(settings.food_vision_api_key, "sk-test")
         self.assertEqual(settings.food_vision_model, "gpt-test")
 

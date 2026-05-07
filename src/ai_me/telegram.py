@@ -647,14 +647,14 @@ class TelegramHealthBot:
             params["offset"] = offset
         return self._telegram_api("getUpdates", params)
 
-    def _send_message(self, chat_id: int, text: str, reply_markup: Optional[str] = None) -> None:
+    def _send_message(self, chat_id: int, text: str, reply_markup: Optional[str] = None):
         params = {
             "chat_id": chat_id,
             "text": text,
         }
         if reply_markup is not None:
             params["reply_markup"] = reply_markup
-        self._telegram_api("sendMessage", params)
+        return self._telegram_api("sendMessage", params)
 
     def _send_photo_bytes(
         self,
@@ -663,11 +663,11 @@ class TelegramHealthBot:
         *,
         filename: str = "digest.jpg",
         caption: Optional[str] = None,
-    ) -> None:
+    ):
         params: Dict[str, object] = {"chat_id": chat_id}
         if caption:
             params["caption"] = caption
-        self._telegram_api_multipart(
+        return self._telegram_api_multipart(
             "sendPhoto",
             params=params,
             file_field_name="photo",
@@ -761,18 +761,8 @@ class TelegramHealthBot:
 
     def _send_daily_digest_preview(self, chat_id: int, app_user: AppUser, args: List[str]) -> None:
         target_date = date.fromisoformat(args[0]) if args else (self._local_today() - timedelta(days=1))
-        digest = self.service.build_daily_food_digest(app_user.user_id, target_date)
-        if digest is None:
+        if self.send_daily_digest(chat_id=chat_id, user_id=app_user.user_id, digest_date=target_date, preview=True) is None:
             self._send_message(chat_id, "Для %s нет подтвержденных фото-блюд для daily digest." % target_date.isoformat())
-            return
-        mosaic_bytes = self.digest_renderer.render_daily_mosaic(digest)
-        if mosaic_bytes is not None:
-            self._send_photo_bytes(
-                chat_id,
-                mosaic_bytes,
-                filename="daily-digest-%s.jpg" % target_date.isoformat(),
-            )
-        self._send_message(chat_id, self._format_daily_digest_text(digest, preview=True))
 
     def _send_weekly_digest_preview(self, chat_id: int, app_user: AppUser, args: List[str]) -> None:
         if args:
@@ -780,22 +770,59 @@ class TelegramHealthBot:
         else:
             base_date = self._local_today() - timedelta(days=7)
         week_start = base_date - timedelta(days=base_date.weekday())
-        digest = self.service.build_weekly_food_digest(app_user.user_id, week_start)
-        if digest is None:
+        if self.send_weekly_digest(chat_id=chat_id, user_id=app_user.user_id, week_start=week_start, preview=True) is None:
             self._send_message(
                 chat_id,
                 "Для недели %s — %s нет подтвержденных фото-блюд для weekly digest."
                 % (week_start.isoformat(), (week_start + timedelta(days=6)).isoformat()),
             )
-            return
+
+    def send_daily_digest(self, chat_id: int, user_id: int, digest_date: date, preview: bool = False) -> Optional[Dict[str, object]]:
+        digest = self.service.build_daily_food_digest(user_id, digest_date)
+        if digest is None:
+            return None
+        photo_result = None
+        mosaic_bytes = self.digest_renderer.render_daily_mosaic(digest)
+        if mosaic_bytes is not None:
+            photo_result = self._send_photo_bytes(
+                chat_id,
+                mosaic_bytes,
+                filename="daily-digest-%s.jpg" % digest_date.isoformat(),
+            )
+        text_result = self._send_message(chat_id, self._format_daily_digest_text(digest, preview=preview))
+        payload: Dict[str, object] = {
+            "digest_type": "daily",
+            "digest_date": digest_date.isoformat(),
+        }
+        if isinstance(photo_result, dict):
+            payload["photo_message_id"] = photo_result.get("message_id", "")
+        if isinstance(text_result, dict):
+            payload["text_message_id"] = text_result.get("message_id", "")
+        return payload
+
+    def send_weekly_digest(self, chat_id: int, user_id: int, week_start: date, preview: bool = False) -> Optional[Dict[str, object]]:
+        digest = self.service.build_weekly_food_digest(user_id, week_start)
+        if digest is None:
+            return None
+        photo_result = None
         mosaic_bytes = self.digest_renderer.render_weekly_mosaic(digest)
         if mosaic_bytes is not None:
-            self._send_photo_bytes(
+            photo_result = self._send_photo_bytes(
                 chat_id,
                 mosaic_bytes,
                 filename="weekly-digest-%s.jpg" % week_start.isoformat(),
             )
-        self._send_message(chat_id, self._format_weekly_digest_text(digest, preview=True))
+        text_result = self._send_message(chat_id, self._format_weekly_digest_text(digest, preview=preview))
+        payload: Dict[str, object] = {
+            "digest_type": "weekly",
+            "week_start": digest.week_start.isoformat(),
+            "week_end": digest.week_end.isoformat(),
+        }
+        if isinstance(photo_result, dict):
+            payload["photo_message_id"] = photo_result.get("message_id", "")
+        if isinstance(text_result, dict):
+            payload["text_message_id"] = text_result.get("message_id", "")
+        return payload
 
     @staticmethod
     def _format_daily_digest_text(digest: DailyFoodDigest, preview: bool = False) -> str:

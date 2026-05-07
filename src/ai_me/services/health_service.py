@@ -75,6 +75,9 @@ class HealthService:
             return self.store.update_user_profile(user, chat_id=chat_id, username=username, first_name=first_name)
         return user
 
+    def list_users(self, status: Optional[UserStatus] = None) -> List[AppUser]:
+        return self.store.list_users(status=status)
+
     def register_user_with_invite(
         self,
         telegram_user_id: int,
@@ -174,6 +177,7 @@ class HealthService:
         digest_date: date,
         status: DigestStatus = DigestStatus.PENDING,
         now: Optional[datetime] = None,
+        scheduled_for: Optional[datetime] = None,
     ) -> DigestRun:
         return self.store.create_digest_run(
             DigestRun(
@@ -183,6 +187,7 @@ class HealthService:
                 digest_date=digest_date,
                 status=status,
                 created_at=now or datetime.now(),
+                scheduled_for=scheduled_for,
             )
         )
 
@@ -193,6 +198,22 @@ class HealthService:
         status: Optional[DigestStatus] = None,
     ) -> List[DigestRun]:
         return self.store.list_digest_runs(user_id, digest_type=digest_type, status=status)
+
+    def update_digest_run(
+        self,
+        run_id: str,
+        status: DigestStatus,
+        sent_at: Optional[datetime] = None,
+        error_message: str = "",
+        payload: Optional[dict] = None,
+    ) -> None:
+        self.store.update_digest_run(
+            run_id,
+            status=status,
+            sent_at=sent_at,
+            error_message=error_message,
+            payload=payload,
+        )
 
     def build_daily_food_digest(self, user_id: int, digest_date: date) -> Optional[DailyFoodDigest]:
         meals = self._list_photo_meals_for_date(user_id, digest_date)

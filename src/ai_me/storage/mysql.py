@@ -60,6 +60,16 @@ class MySQLStore:
     def close(self) -> None:
         return None
 
+    def list_users(self, status: Optional[UserStatus] = None) -> List[AppUser]:
+        query = "SELECT * FROM users"
+        params = []
+        if status is not None:
+            query += " WHERE status = %s"
+            params.append(status.value)
+        query += " ORDER BY user_id ASC"
+        rows = self._fetchall(query, tuple(params))
+        return [self._to_user(row) for row in rows]
+
     def get_user_by_telegram_user_id(self, telegram_user_id: int) -> Optional[AppUser]:
         row = self._fetchone(
             "SELECT * FROM users WHERE telegram_user_id = %s",

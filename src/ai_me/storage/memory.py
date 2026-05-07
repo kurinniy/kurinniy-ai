@@ -40,6 +40,12 @@ class InMemoryStore:
     def close(self) -> None:
         return None
 
+    def list_users(self, status: Optional[UserStatus] = None) -> List[AppUser]:
+        users = list(self._users_by_id.values())
+        if status is not None:
+            users = [user for user in users if user.status == status]
+        return sorted(users, key=lambda item: item.user_id)
+
     def get_user_by_telegram_user_id(self, telegram_user_id: int) -> Optional[AppUser]:
         user_id = self._user_ids_by_telegram_id.get(telegram_user_id)
         return self._users_by_id.get(user_id) if user_id is not None else None
