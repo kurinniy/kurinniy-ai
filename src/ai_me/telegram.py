@@ -14,6 +14,7 @@ from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
 from ai_me.domain.user import AppUser, InviteStatus, UserStatus
 from ai_me.services.digest_renderer import DigestImageRenderer
 from ai_me.services.health_service import HealthService
+from ai_me.version import format_release_date_line, format_version_line
 
 
 logger = logging.getLogger(__name__)
@@ -590,6 +591,8 @@ class TelegramHealthBot:
         if app_user is None:
             return (
                 "Окружение: %s\n" % self.settings.environment_name
+                + "%s\n" % format_version_line()
+                + "%s\n" % format_release_date_line()
                 + "Доступ: только по инвайту, только в личных сообщениях.\n"
                 + "Чтобы подключиться, отправьте команду:\n"
                 + "/start <invite_code>\n\n"
@@ -601,6 +604,8 @@ class TelegramHealthBot:
 
         commands = [
             "Окружение: %s" % self.settings.environment_name,
+            format_version_line(),
+            format_release_date_line(),
             "Команды:",
             "/whoami",
             "Отправь фото еды, чтобы создать черновик приема пищи.",
