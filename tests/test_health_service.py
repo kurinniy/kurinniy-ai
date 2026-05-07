@@ -373,7 +373,9 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(len(digest.meals), 1)
         self.assertEqual(digest.total_calories, 620)
         self.assertEqual([trend.days for trend in digest.trend_windows], [7, 14, 30])
-        self.assertIn("Относительно 7 дней", digest.commentary)
+        self.assertEqual(digest.commentary_data.meal_pattern.largest_meal.title, "Chicken rice bowl")
+        self.assertGreaterEqual(len(digest.commentary_data.comparisons), 3)
+        self.assertIn("7-дневной базы", digest.commentary)
 
     def test_build_weekly_food_digest_selects_highlights(self) -> None:
         for offset in range(7):
@@ -395,6 +397,8 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(digest.total_meals, 7)
         self.assertEqual(len(digest.highlights), 7)
         self.assertTrue(any(item.meal is not None for item in digest.highlights))
+        self.assertEqual(digest.commentary_data.days_with_meals, 7)
+        self.assertTrue(digest.commentary_data.patterns.most_variable_macro in {"белок", "жиры", "углеводы"})
         self.assertIn("Самое выделяющееся блюдо недели", digest.commentary)
 
 
