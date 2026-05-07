@@ -20,6 +20,13 @@
 
 ## 2026-05-07
 
+- Версия или commit: `8f596fa`
+- Улучшена структура комментариев для daily и weekly digest.
+- В digest добавлены структурированные commentary data: comparisons, meal pattern, macro balance, streaks, weekly patterns, consistency и highlight summary.
+- Rule-based тексты daily и weekly digest теперь строятся на основе этих метрик и дают более содержательные аналитические выводы.
+
+## 2026-05-07
+
 - Версия или commit: `0e5a3b7`
 - Добавлен framework для daily и weekly food digest с хранением фото еды и генерацией мозаики.
 - Добавлены preview-команды digest в Telegram и отправка digest как пары сообщений: фото и текст.
