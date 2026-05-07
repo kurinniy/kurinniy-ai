@@ -55,12 +55,6 @@ export type DashboardPayload = {
     status: string;
     context_date: string;
   }>;
-  drive: {
-    connected: boolean;
-    enabled: boolean;
-    folder_id: string;
-    folder_url: string;
-  };
 };
 
 export type AuthResponse = {

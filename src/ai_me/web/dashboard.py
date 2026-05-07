@@ -18,7 +18,6 @@ def build_dashboard_payload(
     summary = service.get_daily_summary(app_user.user_id, target_date)
     meals = service.list_meals(app_user.user_id, target_date)
     decisions = service.list_decisions(app_user.user_id, status=DecisionStatus.OPEN, target_date=target_date)
-    drive_settings = service.get_google_drive_settings(app_user.user_id)
     step_progress = service.build_step_progress_insight(app_user.user_id, target_date - timedelta(days=1))
 
     return {
@@ -46,12 +45,6 @@ def build_dashboard_payload(
             }
             for decision in decisions
         ],
-        "drive": {
-            "connected": drive_settings is not None,
-            "enabled": drive_settings.enabled if drive_settings is not None else False,
-            "folder_id": drive_settings.folder_id if drive_settings is not None else "",
-            "folder_url": drive_settings.folder_url if drive_settings is not None else "",
-        },
     }
 
 

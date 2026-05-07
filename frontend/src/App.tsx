@@ -104,10 +104,6 @@ export function App() {
         <MealList dashboard={dashboard} />
       </Section>
 
-      <Section title="Google Drive">
-        <DriveCard dashboard={dashboard} />
-      </Section>
-
       <Section title="Открытые решения">
         <DecisionList dashboard={dashboard} />
       </Section>
@@ -261,25 +257,6 @@ function MealList({ dashboard }: { dashboard: DashboardPayload }) {
           </div>
         </div>
       ))}
-    </div>
-  );
-}
-
-function DriveCard({ dashboard }: { dashboard: DashboardPayload }) {
-  if (!dashboard.drive.connected) {
-    return <StatusCard title="Google Drive" text="Папка ещё не подключена. Используйте команду /connect_drive в чате с ботом." />;
-  }
-  return (
-    <div className="card">
-      <div className="card__headline">
-        <span>{dashboard.drive.enabled ? "Импорт включён" : "Импорт выключен"}</span>
-        <span className="card__muted">{dashboard.drive.folder_id}</span>
-      </div>
-      <div className="card__text">
-        {dashboard.drive.enabled
-          ? "Новые JSON-файлы из подключённой папки будут импортироваться автоматически."
-          : "Подключение сохранено, но импорт сейчас выключен."}
-      </div>
     </div>
   );
 }

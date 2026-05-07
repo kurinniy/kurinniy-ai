@@ -3,7 +3,6 @@ from datetime import date, datetime
 
 from ai_me.domain.decision_log import DecisionKind, DecisionLogEntry, DecisionStatus
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, StepProgressInsight
-from ai_me.domain.health_import import UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, UserStatus
 from ai_me.web.dashboard import build_dashboard_payload
 
@@ -56,16 +55,6 @@ class DashboardServiceStub:
             )
         ]
 
-    def get_google_drive_settings(self, user_id: int):
-        return UserGoogleDriveSettings(
-            user_id=user_id,
-            folder_id="folder-123",
-            folder_url="https://drive.google.com/drive/folders/folder-123",
-            enabled=True,
-            created_at=datetime(2026, 5, 7, 8, 0),
-            updated_at=datetime(2026, 5, 7, 8, 0),
-        )
-
     def build_step_progress_insight(self, user_id: int, reference_date: date):
         return StepProgressInsight(
             reference_date=reference_date,
@@ -96,11 +85,10 @@ class WebDashboardTest(unittest.TestCase):
 
         self.assertIn("summary", payload)
         self.assertIn("decisions", payload)
-        self.assertIn("drive", payload)
+        self.assertNotIn("drive", payload)
         self.assertNotIn("finance", payload)
         self.assertNotIn("digest", payload)
         self.assertNotIn("drafts", payload)
-        self.assertNotIn("recent_imports", payload["drive"])
 
 
 if __name__ == "__main__":
