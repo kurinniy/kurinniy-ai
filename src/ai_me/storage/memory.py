@@ -14,6 +14,7 @@ from ai_me.domain.health import (
     WaterEntry,
     WeightEntry,
 )
+from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
 
 
@@ -24,6 +25,8 @@ class InMemoryStore:
         self._user_ids_by_telegram_id: Dict[int, int] = {}
         self._invites_by_code: Dict[str, InviteCode] = {}
         self._digest_settings_by_user: Dict[int, UserDigestSettings] = {}
+        self._google_drive_settings_by_user: Dict[int, UserGoogleDriveSettings] = {}
+        self._health_import_files_by_user: Dict[int, Dict[str, HealthImportFile]] = {}
         self._digest_runs_by_id: Dict[str, DigestRun] = {}
         self._goals: Dict[int, Dict[date, DailyHealthGoals]] = {}
         self._meals: Dict[int, List[MealEntry]] = {}
@@ -101,6 +104,55 @@ class InMemoryStore:
         )
         self._users_by_id[user.user_id] = updated
         return updated
+
+    def get_user_google_drive_settings(self, user_id: int) -> Optional[UserGoogleDriveSettings]:
+        return self._google_drive_settings_by_user.get(user_id)
+
+    def upsert_user_google_drive_settings(self, settings: UserGoogleDriveSettings) -> UserGoogleDriveSettings:
+        current = self._google_drive_settings_by_user.get(settings.user_id)
+        saved = UserGoogleDriveSettings(
+            user_id=settings.user_id,
+            folder_id=settings.folder_id,
+            folder_url=settings.folder_url,
+            enabled=settings.enabled,
+            created_at=current.created_at if current and current.created_at is not None else settings.created_at or datetime.now(),
+            updated_at=settings.updated_at or datetime.now(),
+        )
+        self._google_drive_settings_by_user[settings.user_id] = saved
+        return saved
+
+    def list_users_with_google_drive_enabled(self) -> List[AppUser]:
+        user_ids = [
+            user_id
+            for user_id, settings in self._google_drive_settings_by_user.items()
+            if settings.enabled
+        ]
+        users = [self._users_by_id[user_id] for user_id in user_ids if user_id in self._users_by_id]
+        return sorted(users, key=lambda item: item.user_id)
+
+    def create_health_import_file(self, imported_file: HealthImportFile) -> HealthImportFile:
+        key = "%s:%s" % (imported_file.provider.value, imported_file.external_file_id)
+        self._health_import_files_by_user.setdefault(imported_file.user_id, {})[key] = imported_file
+        return imported_file
+
+    def get_health_import_file(
+        self,
+        user_id: int,
+        provider: HealthImportProvider,
+        external_file_id: str,
+    ) -> Optional[HealthImportFile]:
+        key = "%s:%s" % (provider.value, external_file_id)
+        return self._health_import_files_by_user.get(user_id, {}).get(key)
+
+    def list_health_import_files(
+        self,
+        user_id: int,
+        provider: Optional[HealthImportProvider] = None,
+    ) -> List[HealthImportFile]:
+        files = list(self._health_import_files_by_user.get(user_id, {}).values())
+        if provider is not None:
+            files = [item for item in files if item.provider == provider]
+        return sorted(files, key=lambda item: (item.imported_at, item.file_name))
 
     def create_invite(self, invite: InviteCode) -> InviteCode:
         self._invites_by_code[invite.code] = invite
@@ -272,7 +324,12 @@ class InMemoryStore:
         self._weight_entries.setdefault(user_id, []).append(entry)
 
     def add_activity(self, user_id: int, entry: ActivityEntry) -> None:
-        self._activity_entries.setdefault(user_id, []).append(entry)
+        entries = self._activity_entries.setdefault(user_id, [])
+        for index, current in enumerate(entries):
+            if current.entry_id == entry.entry_id:
+                entries[index] = entry
+                return
+        entries.append(entry)
 
     def build_health_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
         meals = [entry for entry in self._meals.get(user_id, []) if entry.occurred_at.date() == target_date]

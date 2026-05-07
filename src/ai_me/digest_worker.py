@@ -37,7 +37,25 @@ class DigestSchedulerWorker:
         current_utc = now_utc or datetime.now(timezone.utc)
         users = self.service.list_users(status=UserStatus.ACTIVE)
         for user in users:
+            self._process_google_drive_import(user, current_utc=current_utc)
             self._process_user(user, current_utc=current_utc)
+
+    def _process_google_drive_import(self, user: AppUser, current_utc: datetime) -> None:
+        settings = self.service.get_google_drive_settings(user.user_id)
+        if settings is None or not settings.enabled:
+            return
+        result = self.service.import_google_drive_health_data(user.user_id, now=current_utc.replace(tzinfo=None))
+        if result.scanned_files == 0:
+            return
+        logger.info(
+            "Google Drive health import user_id=%s scanned=%s imported=%s skipped=%s failed=%s activity_entries=%s",
+            user.user_id,
+            result.scanned_files,
+            result.imported_files,
+            result.skipped_files,
+            result.failed_files,
+            result.activity_entries_count,
+        )
 
     def _process_user(self, user: AppUser, current_utc: datetime) -> None:
         settings = self.service.get_digest_settings(user.user_id)

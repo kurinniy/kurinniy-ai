@@ -97,9 +97,27 @@ class TelegramSettings:
 
 
 @dataclass(frozen=True)
+class GoogleDriveSettings:
+    service_account_json: str = ""
+    service_account_file: str = ""
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.service_account_json or self.service_account_file)
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> "GoogleDriveSettings":
+        return cls(
+            service_account_json=env.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip(),
+            service_account_file=env.get("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip(),
+        )
+
+
+@dataclass(frozen=True)
 class AppSettings:
     database: DatabaseSettings
     telegram: TelegramSettings
+    google_drive: GoogleDriveSettings
     environment_name: str = "production"
     runtime_mode: str = "bot"
     scheduler_poll_interval_seconds: int = 60
@@ -112,6 +130,7 @@ class AppSettings:
         return cls(
             database=DatabaseSettings.from_env(source),
             telegram=TelegramSettings.from_env(source),
+            google_drive=GoogleDriveSettings.from_env(source),
             environment_name=source.get("APP_ENV", "production").strip() or "production",
             runtime_mode=(source.get("APP_RUNTIME_MODE", "bot").strip() or "bot"),
             scheduler_poll_interval_seconds=int(source.get("DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS", "60")),

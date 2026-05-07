@@ -42,8 +42,10 @@ from ai_me.domain.health import (
     WaterEntry,
     WeightEntry,
 )
+from ai_me.domain.health_import import HealthImportProvider, HealthImportResult, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
 from ai_me.services.food_analysis import DisabledFoodPhotoAnalyzer, FoodPhotoAnalyzer
+from ai_me.services.google_drive_import import GoogleDriveHealthImportService
 from ai_me.services.rules import HealthDecisionEngine
 from ai_me.services.tbank_import import TBankCSVImporter
 from ai_me.storage.base import HealthStore
@@ -56,6 +58,7 @@ class HealthService:
         decision_engine: Optional[HealthDecisionEngine] = None,
         food_photo_analyzer: Optional[FoodPhotoAnalyzer] = None,
         tbank_csv_importer: Optional[TBankCSVImporter] = None,
+        google_drive_import_service: Optional[GoogleDriveHealthImportService] = None,
         admin_telegram_user_ids: FrozenSet[int] = frozenset(),
         default_timezone_name: str = "Europe/Moscow",
     ) -> None:
@@ -63,6 +66,7 @@ class HealthService:
         self.decision_engine = decision_engine or HealthDecisionEngine()
         self.food_photo_analyzer = food_photo_analyzer or DisabledFoodPhotoAnalyzer()
         self.tbank_csv_importer = tbank_csv_importer or TBankCSVImporter()
+        self.google_drive_import_service = google_drive_import_service or GoogleDriveHealthImportService(store=store)
         self.admin_telegram_user_ids = admin_telegram_user_ids
         self.default_timezone_name = default_timezone_name
 
@@ -92,6 +96,10 @@ class HealthService:
 
     def list_users(self, status: Optional[UserStatus] = None) -> List[AppUser]:
         return self.store.list_users(status=status)
+
+    def list_users_with_google_drive_enabled(self) -> List[AppUser]:
+        users = self.store.list_users_with_google_drive_enabled()
+        return [user for user in users if user.status == UserStatus.ACTIVE]
 
     def register_user_with_invite(
         self,
@@ -159,6 +167,33 @@ class HealthService:
         if invite is None:
             raise ValueError("Инвайт не найден: %s" % code)
         self.store.update_invite_status(code, InviteStatus.REVOKED)
+
+    def google_drive_is_configured(self) -> bool:
+        return self.google_drive_import_service.is_configured()
+
+    def connect_google_drive_folder(
+        self,
+        user_id: int,
+        folder_input: str,
+        now: Optional[datetime] = None,
+    ) -> UserGoogleDriveSettings:
+        return self.google_drive_import_service.connect_folder(user_id, folder_input=folder_input, now=now)
+
+    def get_google_drive_settings(self, user_id: int) -> Optional[UserGoogleDriveSettings]:
+        return self.google_drive_import_service.get_settings(user_id)
+
+    def set_google_drive_enabled(self, user_id: int, enabled: bool, now: Optional[datetime] = None) -> UserGoogleDriveSettings:
+        return self.google_drive_import_service.set_enabled(user_id, enabled=enabled, now=now)
+
+    def import_google_drive_health_data(self, user_id: int, now: Optional[datetime] = None) -> HealthImportResult:
+        return self.google_drive_import_service.import_new_files(user_id, now=now)
+
+    def list_health_import_files(
+        self,
+        user_id: int,
+        provider: Optional[HealthImportProvider] = None,
+    ):
+        return self.store.list_health_import_files(user_id, provider=provider)
 
     def get_digest_settings(self, user_id: int) -> UserDigestSettings:
         current = self.store.get_user_digest_settings(user_id)

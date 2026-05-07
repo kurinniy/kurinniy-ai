@@ -16,6 +16,7 @@ from ai_me.domain.health import (
     WaterEntry,
     WeightEntry,
 )
+from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
 
 try:
@@ -127,6 +128,144 @@ class MySQLStore:
         if updated is None:
             raise RuntimeError("Не удалось обновить профиль пользователя %s" % user.telegram_user_id)
         return updated
+
+    def get_user_google_drive_settings(self, user_id: int) -> Optional[UserGoogleDriveSettings]:
+        row = self._fetchone(
+            "SELECT * FROM user_google_drive_settings WHERE user_id = %s",
+            (user_id,),
+        )
+        return self._to_user_google_drive_settings(row) if row else None
+
+    def upsert_user_google_drive_settings(self, settings: UserGoogleDriveSettings) -> UserGoogleDriveSettings:
+        self._execute(
+            """
+            INSERT INTO user_google_drive_settings (
+                user_id,
+                folder_id,
+                folder_url,
+                enabled,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                folder_id = VALUES(folder_id),
+                folder_url = VALUES(folder_url),
+                enabled = VALUES(enabled),
+                updated_at = VALUES(updated_at)
+            """,
+            (
+                settings.user_id,
+                settings.folder_id,
+                settings.folder_url,
+                1 if settings.enabled else 0,
+                settings.created_at or datetime.now(),
+                settings.updated_at or datetime.now(),
+            ),
+        )
+        saved = self.get_user_google_drive_settings(settings.user_id)
+        if saved is None:
+            raise RuntimeError("Не удалось сохранить Google Drive settings для пользователя %s" % settings.user_id)
+        return saved
+
+    def list_users_with_google_drive_enabled(self) -> List[AppUser]:
+        rows = self._fetchall(
+            """
+            SELECT u.*
+            FROM users u
+            INNER JOIN user_google_drive_settings s ON s.user_id = u.user_id
+            WHERE s.enabled = 1
+            ORDER BY u.user_id ASC
+            """,
+            (),
+        )
+        return [self._to_user(row) for row in rows]
+
+    def create_health_import_file(self, imported_file: HealthImportFile) -> HealthImportFile:
+        self._execute(
+            """
+            INSERT INTO health_import_files (
+                import_id,
+                user_id,
+                provider,
+                external_file_id,
+                file_name,
+                file_date,
+                checksum,
+                status,
+                imported_at,
+                activity_entries_count,
+                sleep_entries_count,
+                weight_entries_count,
+                raw_metadata_json,
+                error_message
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                file_name = VALUES(file_name),
+                file_date = VALUES(file_date),
+                checksum = VALUES(checksum),
+                status = VALUES(status),
+                imported_at = VALUES(imported_at),
+                activity_entries_count = VALUES(activity_entries_count),
+                sleep_entries_count = VALUES(sleep_entries_count),
+                weight_entries_count = VALUES(weight_entries_count),
+                raw_metadata_json = VALUES(raw_metadata_json),
+                error_message = VALUES(error_message)
+            """,
+            (
+                imported_file.import_id,
+                imported_file.user_id,
+                imported_file.provider.value,
+                imported_file.external_file_id,
+                imported_file.file_name,
+                imported_file.file_date,
+                imported_file.checksum,
+                imported_file.status.value,
+                imported_file.imported_at,
+                imported_file.activity_entries_count,
+                imported_file.sleep_entries_count,
+                imported_file.weight_entries_count,
+                imported_file.raw_metadata_json,
+                imported_file.error_message,
+            ),
+        )
+        row = self._fetchone("SELECT * FROM health_import_files WHERE import_id = %s", (imported_file.import_id,))
+        if row is None:
+            raise RuntimeError("Не удалось сохранить health import file %s" % imported_file.import_id)
+        return self._to_health_import_file(row)
+
+    def get_health_import_file(
+        self,
+        user_id: int,
+        provider: HealthImportProvider,
+        external_file_id: str,
+    ) -> Optional[HealthImportFile]:
+        row = self._fetchone(
+            """
+            SELECT *
+            FROM health_import_files
+            WHERE user_id = %s
+              AND provider = %s
+              AND external_file_id = %s
+            """,
+            (user_id, provider.value, external_file_id),
+        )
+        return self._to_health_import_file(row) if row else None
+
+    def list_health_import_files(
+        self,
+        user_id: int,
+        provider: Optional[HealthImportProvider] = None,
+    ) -> List[HealthImportFile]:
+        query = "SELECT * FROM health_import_files WHERE user_id = %s"
+        params = [user_id]
+        if provider is not None:
+            query += " AND provider = %s"
+            params.append(provider.value)
+        query += " ORDER BY imported_at ASC, file_name ASC"
+        rows = self._fetchall(query, tuple(params))
+        return [self._to_health_import_file(row) for row in rows]
 
     def create_invite(self, invite: InviteCode) -> InviteCode:
         self._execute(
@@ -571,6 +710,13 @@ class MySQLStore:
                 intensity
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                occurred_at = VALUES(occurred_at),
+                title = VALUES(title),
+                duration_minutes = VALUES(duration_minutes),
+                steps = VALUES(steps),
+                calories_burned = VALUES(calories_burned),
+                intensity = VALUES(intensity)
             """,
             (
                 entry.entry_id,
@@ -868,6 +1014,17 @@ class MySQLStore:
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
             """,
             """
+            CREATE TABLE IF NOT EXISTS user_google_drive_settings (
+                user_id BIGINT NOT NULL PRIMARY KEY,
+                folder_id VARCHAR(255) NOT NULL,
+                folder_url TEXT NOT NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                created_at DATETIME(6) NOT NULL,
+                updated_at DATETIME(6) NOT NULL,
+                INDEX idx_google_drive_enabled (enabled)
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+            """,
+            """
             CREATE TABLE IF NOT EXISTS digest_runs (
                 run_id VARCHAR(64) NOT NULL PRIMARY KEY,
                 user_id BIGINT NOT NULL,
@@ -882,6 +1039,27 @@ class MySQLStore:
                 UNIQUE KEY uk_digest_user_type_date (user_id, digest_type, digest_date),
                 INDEX idx_digest_runs_user_status (user_id, status),
                 INDEX idx_digest_runs_user_date (user_id, digest_date)
+            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS health_import_files (
+                import_id VARCHAR(64) NOT NULL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                provider VARCHAR(32) NOT NULL,
+                external_file_id VARCHAR(255) NOT NULL,
+                file_name VARCHAR(255) NOT NULL,
+                file_date DATE NULL,
+                checksum VARCHAR(64) NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                imported_at DATETIME(6) NOT NULL,
+                activity_entries_count INT NOT NULL DEFAULT 0,
+                sleep_entries_count INT NOT NULL DEFAULT 0,
+                weight_entries_count INT NOT NULL DEFAULT 0,
+                raw_metadata_json LONGTEXT NOT NULL,
+                error_message TEXT NOT NULL,
+                UNIQUE KEY uk_health_import_user_provider_file (user_id, provider, external_file_id),
+                INDEX idx_health_import_user_provider (user_id, provider),
+                INDEX idx_health_import_user_file_date (user_id, file_date)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
             """,
             """
@@ -1309,6 +1487,17 @@ class MySQLStore:
         )
 
     @staticmethod
+    def _to_user_google_drive_settings(row: dict) -> UserGoogleDriveSettings:
+        return UserGoogleDriveSettings(
+            user_id=int(row["user_id"]),
+            folder_id=row["folder_id"],
+            folder_url=row["folder_url"],
+            enabled=bool(row["enabled"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
     def _to_digest_run(row: dict) -> DigestRun:
         return DigestRun(
             run_id=row["run_id"],
@@ -1321,6 +1510,25 @@ class MySQLStore:
             sent_at=row["sent_at"],
             error_message=row["error_message"] or "",
             payload=json.loads(row["payload_json"]) if row["payload_json"] else {},
+        )
+
+    @staticmethod
+    def _to_health_import_file(row: dict) -> HealthImportFile:
+        return HealthImportFile(
+            import_id=row["import_id"],
+            user_id=int(row["user_id"]),
+            provider=HealthImportProvider(row["provider"]),
+            external_file_id=row["external_file_id"],
+            file_name=row["file_name"],
+            file_date=row["file_date"],
+            checksum=row["checksum"],
+            status=HealthImportStatus(row["status"]),
+            imported_at=row["imported_at"],
+            activity_entries_count=int(row["activity_entries_count"]),
+            sleep_entries_count=int(row["sleep_entries_count"]),
+            weight_entries_count=int(row["weight_entries_count"]),
+            raw_metadata_json=row["raw_metadata_json"] or "",
+            error_message=row["error_message"] or "",
         )
 
     @staticmethod

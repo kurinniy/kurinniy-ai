@@ -14,6 +14,7 @@ from ai_me.domain.health import (
     WaterEntry,
     WeightEntry,
 )
+from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
 
 
@@ -39,6 +40,33 @@ class HealthStore(Protocol):
         ...
 
     def update_user_profile(self, user: AppUser, chat_id: int, username: str, first_name: str) -> AppUser:
+        ...
+
+    def get_user_google_drive_settings(self, user_id: int) -> Optional[UserGoogleDriveSettings]:
+        ...
+
+    def upsert_user_google_drive_settings(self, settings: UserGoogleDriveSettings) -> UserGoogleDriveSettings:
+        ...
+
+    def list_users_with_google_drive_enabled(self) -> List[AppUser]:
+        ...
+
+    def create_health_import_file(self, imported_file: HealthImportFile) -> HealthImportFile:
+        ...
+
+    def get_health_import_file(
+        self,
+        user_id: int,
+        provider: HealthImportProvider,
+        external_file_id: str,
+    ) -> Optional[HealthImportFile]:
+        ...
+
+    def list_health_import_files(
+        self,
+        user_id: int,
+        provider: Optional[HealthImportProvider] = None,
+    ) -> List[HealthImportFile]:
         ...
 
     def create_invite(self, invite: InviteCode) -> InviteCode:

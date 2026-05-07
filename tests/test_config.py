@@ -44,6 +44,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(settings.scheduler_poll_interval_seconds, 45)
         self.assertEqual(settings.food_vision_api_key, "sk-test")
         self.assertEqual(settings.food_vision_model, "gpt-test")
+        self.assertFalse(settings.google_drive.enabled)
 
     def test_telegram_settings_require_token(self) -> None:
         with self.assertRaises(ValueError):
@@ -62,6 +63,21 @@ class ConfigTest(unittest.TestCase):
             }
         )
         self.assertEqual(settings.food_vision_model, "gpt-4.1-mini")
+
+    def test_google_drive_settings_can_be_loaded_from_env(self) -> None:
+        settings = AppSettings.from_env(
+            {
+                "MYSQLHOST": "mysql.railway.internal",
+                "MYSQLPORT": "3306",
+                "MYSQLDATABASE": "railway",
+                "MYSQLUSER": "root",
+                "MYSQLPASSWORD": "secret",
+                "TELEGRAM_BOT_TOKEN": "123:abc",
+                "GOOGLE_SERVICE_ACCOUNT_JSON": '{"type":"service_account"}',
+            }
+        )
+        self.assertTrue(settings.google_drive.enabled)
+        self.assertEqual(settings.google_drive.service_account_json, '{"type":"service_account"}')
 
 
 if __name__ == "__main__":

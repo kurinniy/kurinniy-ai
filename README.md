@@ -7,6 +7,7 @@ Current stage of a personal assistant system focused on three concrete capabilit
 - `Telegram Interface`: accepts health events over Telegram using long polling.
 - `Food Pipeline`: accepts food photos, creates a meal draft, and logs it after confirmation.
 - `Multi-user Access`: supports invite-only onboarding for multiple Telegram users in private chats.
+- `Google Drive Health Import`: imports daily JSON exports with activity metrics from a user-specific Google Drive folder.
 
 The current implementation is intentionally small, but now targets a deployable setup for Railway:
 
@@ -53,6 +54,8 @@ Optional:
 - `TELEGRAM_POLLING_TIMEOUT_SECONDS`: defaults to `30`.
 - `OPENAI_API_KEY`: required for food photo analysis.
 - `OPENAI_MODEL`: required for food photo analysis.
+- `GOOGLE_SERVICE_ACCOUNT_JSON`: service account JSON for Google Drive access.
+- `GOOGLE_SERVICE_ACCOUNT_FILE`: optional path to a service account JSON file.
 
 For a copy-paste starting point, use [.env.example](/Users/kurinniy/Documents/Projects/ai-me/.env.example).
 For staging, use [.env.staging.example](/Users/kurinniy/Documents/Projects/ai-me/.env.staging.example).
@@ -72,9 +75,43 @@ APP_RUNTIME_MODE=digest_worker PYTHONPATH=src python3 -m ai_me.main
 The digest worker:
 
 - checks active users every `DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS`;
+- checks connected Google Drive folders for new health export files;
 - sends `daily digest` after `08:00` in the user's timezone for yesterday;
 - sends `weekly digest` on Monday after `08:00` for the previous Monday-Sunday window;
 - uses `digest_runs` to avoid duplicate sends once a digest is marked `sent` or `skipped`.
+
+## Google Drive Health Import
+
+The app can import daily activity exports from Google Drive.
+
+Current MVP support:
+
+- one Google Drive folder per user;
+- one JSON file per day;
+- imports activity metrics from `HealthAutoExport-YYYY-MM-DD.json`;
+- currently maps:
+  - `step_count`
+  - `walking_running_distance`
+  - `active_energy`
+  - `flights_climbed`
+- sleep metrics are not imported yet.
+
+Telegram flow:
+
+1. Share the Google Drive folder with the configured service account.
+2. In Telegram, connect the folder with:
+   - `/connect_drive <folder_url>`
+3. Check status with:
+   - `/drive_status`
+4. Enable or disable import with:
+   - `/drive_on`
+   - `/drive_off`
+
+Scheduler behavior:
+
+- the existing `digest_worker` also scans Google Drive folders;
+- new JSON files are imported automatically on the next worker pass;
+- imported files are tracked in `health_import_files` to avoid duplicates.
 
 ## Access Model
 

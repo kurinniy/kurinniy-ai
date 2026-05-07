@@ -24,6 +24,7 @@ class TelegramHealthBot:
     BUTTON_TO_COMMAND = {
         "Сводка за сегодня": "/summary",
         "Финансы за месяц": "/finance_month",
+        "Google Drive": "/drive_status",
         "Открытые решения": "/decisions",
         "Импорт Т-Банк": "/import_tbank",
         "Черновики еды": "/drafts",
@@ -278,6 +279,14 @@ class TelegramHealthBot:
                 return self._handle_import_tbank()
             if command == "/finance_month":
                 return self._handle_finance_month(app_user, args)
+            if command == "/connect_drive":
+                return self._handle_connect_drive(app_user, args)
+            if command == "/drive_status":
+                return self._handle_drive_status(app_user)
+            if command == "/drive_on":
+                return self._handle_drive_toggle(app_user, enabled=True)
+            if command == "/drive_off":
+                return self._handle_drive_toggle(app_user, enabled=False)
             if command == "/digest_status":
                 return self._handle_digest_status(app_user)
             if command == "/digest_on":
@@ -394,6 +403,70 @@ class TelegramHealthBot:
         else:
             lines.append("Расходов за этот месяц пока нет.")
         return "\n".join(lines)
+
+    def _handle_connect_drive(self, app_user: AppUser, args: List[str]) -> str:
+        if not self.service.google_drive_is_configured():
+            return "Интеграция с Google Drive пока не настроена на сервере."
+        if not args:
+            return (
+                "Подключение Google Drive\n"
+                "Пришлите ссылку на папку Google Drive или folder ID.\n"
+                "Папка должна быть открыта для service account, настроенного на сервере.\n\n"
+                "Пример:\n"
+                "/connect_drive https://drive.google.com/drive/folders/..."
+            )
+        settings = self.service.connect_google_drive_folder(
+            app_user.user_id,
+            folder_input=args[0],
+            now=self._local_now(),
+        )
+        return (
+            "Папка Google Drive подключена.\n"
+            "folder_id=%s\n"
+            "Импорт: %s"
+            % (
+                settings.folder_id,
+                "включен" if settings.enabled else "выключен",
+            )
+        )
+
+    def _handle_drive_status(self, app_user: AppUser) -> str:
+        settings = self.service.get_google_drive_settings(app_user.user_id)
+        if settings is None:
+            return (
+                "Google Drive не подключен.\n"
+                "Подключите папку командой:\n"
+                "/connect_drive <folder_url>"
+            )
+        import_files = self.service.list_health_import_files(app_user.user_id, provider=None)
+        last_import = import_files[-1] if import_files else None
+        lines = [
+            "Статус Google Drive",
+            "Импорт: %s" % ("включен" if settings.enabled else "выключен"),
+            "folder_id=%s" % settings.folder_id,
+        ]
+        if last_import is not None:
+            lines.append("Последний импорт: %s" % last_import.imported_at.strftime("%Y-%m-%d %H:%M"))
+            lines.append("Последний файл: %s" % last_import.file_name)
+            lines.append("Статус файла: %s" % last_import.status.value)
+        else:
+            lines.append("Импортов пока не было.")
+        return "\n".join(lines)
+
+    def _handle_drive_toggle(self, app_user: AppUser, enabled: bool) -> str:
+        settings = self.service.set_google_drive_enabled(
+            app_user.user_id,
+            enabled=enabled,
+            now=self._local_now(),
+        )
+        return (
+            "Импорт Google Drive %s.\n"
+            "folder_id=%s"
+            % (
+                "включен" if settings.enabled else "выключен",
+                settings.folder_id,
+            )
+        )
 
     def _handle_digest_status(self, app_user: AppUser) -> str:
         settings = self.service.get_digest_settings(app_user.user_id)
@@ -612,6 +685,10 @@ class TelegramHealthBot:
             "/menu",
             "/import_tbank",
             "/finance_month [YYYY-MM]",
+            "/connect_drive <folder_url>",
+            "/drive_status",
+            "/drive_on",
+            "/drive_off",
             "/digest_status",
             "/digest_on",
             "/digest_off",
@@ -970,6 +1047,10 @@ class TelegramHealthBot:
             {"command": "menu", "description": "Показать кнопки и список команд"},
             {"command": "summary", "description": "Сводка за сегодня"},
             {"command": "finance_month", "description": "Финансовая сводка за месяц"},
+            {"command": "connect_drive", "description": "Подключить папку Google Drive"},
+            {"command": "drive_status", "description": "Статус импорта Google Drive"},
+            {"command": "drive_on", "description": "Включить импорт Google Drive"},
+            {"command": "drive_off", "description": "Выключить импорт Google Drive"},
             {"command": "decisions", "description": "Открытые решения"},
             {"command": "digest_status", "description": "Статус ежедневных и недельных digest"},
             {"command": "digest_on", "description": "Включить ежедневные и недельные digest"},
@@ -1008,7 +1089,8 @@ class TelegramHealthBot:
                 "resize_keyboard": True,
                 "keyboard": [
                     [{"text": "Сводка за сегодня"}, {"text": "Финансы за месяц"}],
-                    [{"text": "Открытые решения"}, {"text": "Импорт Т-Банк"}],
+                    [{"text": "Google Drive"}, {"text": "Импорт Т-Банк"}],
+                    [{"text": "Открытые решения"}],
                     [{"text": "Черновики еды"}],
                     [{"text": "Кто я"}],
                     [{"text": "Помощь"}],

@@ -8,6 +8,7 @@ from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDiges
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry
+from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
 from ai_me.telegram import TelegramHealthBot
@@ -23,6 +24,8 @@ class DummyHealthService:
         self.confirmed_draft_ids = []
         self.last_import = None
         self.created_invites = []
+        self.drive_settings_by_user_id = {}
+        self.health_import_files_by_user_id = {}
         self.users_by_telegram_id = {
             42: AppUser(
                 user_id=1,
@@ -139,6 +142,40 @@ class DummyHealthService:
                 "weekly_digest_time": "08:00",
             },
         )()
+
+    def google_drive_is_configured(self):
+        return True
+
+    def connect_google_drive_folder(self, user_id, folder_input: str, now=None):
+        settings = UserGoogleDriveSettings(
+            user_id=user_id,
+            folder_id="folder-123",
+            folder_url=folder_input,
+            enabled=True,
+            created_at=now,
+            updated_at=now,
+        )
+        self.drive_settings_by_user_id[user_id] = settings
+        return settings
+
+    def get_google_drive_settings(self, user_id):
+        return self.drive_settings_by_user_id.get(user_id)
+
+    def set_google_drive_enabled(self, user_id, enabled: bool, now=None):
+        current = self.drive_settings_by_user_id[user_id]
+        settings = UserGoogleDriveSettings(
+            user_id=current.user_id,
+            folder_id=current.folder_id,
+            folder_url=current.folder_url,
+            enabled=enabled,
+            created_at=current.created_at,
+            updated_at=now,
+        )
+        self.drive_settings_by_user_id[user_id] = settings
+        return settings
+
+    def list_health_import_files(self, user_id, provider=None):
+        return self.health_import_files_by_user_id.get(user_id, [])
 
     def build_daily_food_digest(self, user_id, digest_date):
         media = MealMedia(
@@ -378,6 +415,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[42])
         self.assertIn("Версия: 0.1", response)
         self.assertIn("Дата релиза: 2026-05-07", response)
+        self.assertIn("/connect_drive <folder_url>", response)
+        self.assertIn("/drive_status", response)
         self.assertNotIn("/water", response)
         self.assertNotIn("/meal <calories>", response)
         self.assertNotIn("/weight", response)
@@ -403,6 +442,35 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Настройки digest", response)
         self.assertIn("Ежедневная сводка: включена в 08:00", response)
         self.assertIn("Недельная сводка: включена по понедельникам в 08:00", response)
+
+    def test_connect_drive_command_saves_folder_for_user(self) -> None:
+        response = self.bot._route_command(
+            "/connect_drive https://drive.google.com/drive/folders/folder-123",
+            app_user=self.service.users_by_telegram_id[42],
+        )
+        self.assertIn("Папка Google Drive подключена", response)
+        self.assertEqual(
+            self.service.drive_settings_by_user_id[1].folder_url,
+            "https://drive.google.com/drive/folders/folder-123",
+        )
+
+    def test_drive_status_reports_missing_folder_before_connect(self) -> None:
+        response = self.bot._route_command("/drive_status", app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("Google Drive не подключен", response)
+        self.assertIn("/connect_drive <folder_url>", response)
+
+    def test_drive_off_command_disables_import(self) -> None:
+        self.service.drive_settings_by_user_id[1] = UserGoogleDriveSettings(
+            user_id=1,
+            folder_id="folder-123",
+            folder_url="https://drive.google.com/drive/folders/folder-123",
+            enabled=True,
+            created_at=datetime(2026, 5, 7, 8, 0),
+            updated_at=datetime(2026, 5, 7, 8, 0),
+        )
+        response = self.bot._route_command("/drive_off", app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("Импорт Google Drive выключен", response)
+        self.assertFalse(self.service.drive_settings_by_user_id[1].enabled)
 
     def test_digest_off_command_disables_both_digests(self) -> None:
         response = self.bot._route_command("/digest_off", app_user=self.service.users_by_telegram_id[42])
@@ -527,6 +595,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(messages[0][0], "sendMessage")
         markup = json.loads(messages[0][1]["reply_markup"])
         self.assertEqual(markup["keyboard"][0][0]["text"], "Сводка за сегодня")
+        self.assertEqual(markup["keyboard"][1][0]["text"], "Google Drive")
         self.assertEqual(markup["keyboard"][1][1]["text"], "Импорт Т-Банк")
 
     def test_sync_bot_commands_registers_menu_entries(self) -> None:
@@ -543,12 +612,15 @@ class TelegramHealthBotTest(unittest.TestCase):
         commands = json.loads(calls[0][1]["commands"])
         self.assertEqual(commands[0]["command"], "start")
         self.assertEqual(commands[1]["command"], "menu")
-        self.assertEqual(commands[5]["command"], "digest_status")
-        self.assertEqual(commands[6]["command"], "digest_on")
-        self.assertEqual(commands[7]["command"], "digest_off")
-        self.assertEqual(commands[8]["command"], "digest_preview")
-        self.assertEqual(commands[9]["command"], "weekly_digest_preview")
-        self.assertEqual(commands[12]["command"], "create_invite")
+        self.assertEqual(commands[4]["command"], "connect_drive")
+        self.assertEqual(commands[5]["command"], "drive_status")
+        self.assertEqual(commands[8]["command"], "decisions")
+        self.assertEqual(commands[9]["command"], "digest_status")
+        self.assertEqual(commands[10]["command"], "digest_on")
+        self.assertEqual(commands[11]["command"], "digest_off")
+        self.assertEqual(commands[12]["command"], "digest_preview")
+        self.assertEqual(commands[13]["command"], "weekly_digest_preview")
+        self.assertEqual(commands[16]["command"], "create_invite")
 
     def test_document_imports_tbank_csv_in_user_scope(self) -> None:
         calls = []
