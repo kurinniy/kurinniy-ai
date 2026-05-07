@@ -2,23 +2,14 @@ import json
 import logging
 import shlex
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional
 from urllib import parse, request
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from ai_me.config import TelegramSettings
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
-from ai_me.domain.health import (
-    ActivityEntry,
-    DailyHealthGoals,
-    MealEntry,
-    SleepEntry,
-    WaterEntry,
-    WeightEntry,
-)
 from ai_me.domain.user import AppUser, InviteStatus, UserStatus
 from ai_me.services.health_service import HealthService
 
@@ -284,18 +275,6 @@ class TelegramHealthBot:
                 return self._handle_reject_meal(app_user, args)
             if command == "/drafts":
                 return self._handle_drafts(app_user)
-            if command == "/water":
-                return self._handle_water(app_user, args)
-            if command == "/meal":
-                return self._handle_meal(app_user, args)
-            if command == "/weight":
-                return self._handle_weight(app_user, args)
-            if command == "/sleep":
-                return self._handle_sleep(app_user, args)
-            if command == "/activity":
-                return self._handle_activity(app_user, args)
-            if command == "/goals":
-                return self._handle_goals(app_user, args)
             if command == "/summary":
                 return self._handle_summary(app_user, args)
             if command == "/decisions":
@@ -415,111 +394,6 @@ class TelegramHealthBot:
                 % (draft.title, draft.calories, draft.confidence, draft.draft_id)
             )
         return "\n".join(lines)
-
-    def _handle_water(self, app_user: AppUser, args: List[str]) -> str:
-        if len(args) != 1:
-            return "Использование: /water <ml>"
-        amount_ml = int(args[0])
-        now = self._local_now()
-        self.service.log_water(
-            app_user.user_id,
-            WaterEntry(
-                entry_id=str(uuid4()),
-                occurred_at=now,
-                amount_ml=amount_ml,
-            ),
-        )
-        decisions = self.service.evaluate_day(app_user.user_id, now.date(), now=now)
-        return "Записано воды: %s мл.\n%s" % (amount_ml, self._format_new_decisions(decisions))
-
-    def _handle_meal(self, app_user: AppUser, args: List[str]) -> str:
-        if len(args) < 3:
-            return 'Использование: /meal <calories> <protein_g> <title>. Пример: /meal 650 45 "Курица с рисом"'
-        calories = int(args[0])
-        protein_g = float(args[1])
-        title = " ".join(args[2:])
-        now = self._local_now()
-        self.service.log_meal(
-            app_user.user_id,
-            MealEntry(
-                entry_id=str(uuid4()),
-                occurred_at=now,
-                title=title,
-                calories=calories,
-                protein_g=protein_g,
-            ),
-        )
-        decisions = self.service.evaluate_day(app_user.user_id, now.date(), now=now)
-        return "Прием пищи записан: %s.\n%s" % (title, self._format_new_decisions(decisions))
-
-    def _handle_weight(self, app_user: AppUser, args: List[str]) -> str:
-        if len(args) != 1:
-            return "Использование: /weight <kg>"
-        weight_kg = float(args[0])
-        now = self._local_now()
-        self.service.log_weight(
-            app_user.user_id,
-            WeightEntry(
-                entry_id=str(uuid4()),
-                occurred_at=now,
-                weight_kg=weight_kg,
-            ),
-        )
-        return "Вес записан: %.1f кг." % weight_kg
-
-    def _handle_sleep(self, app_user: AppUser, args: List[str]) -> str:
-        if len(args) != 1:
-            return "Использование: /sleep <hours>"
-        duration_hours = float(args[0])
-        end_at = self._local_now()
-        start_at = end_at - timedelta(hours=duration_hours)
-        self.service.log_sleep(
-            app_user.user_id,
-            SleepEntry(
-                entry_id=str(uuid4()),
-                start_at=start_at,
-                end_at=end_at,
-            ),
-        )
-        decisions = self.service.evaluate_day(app_user.user_id, end_at.date(), now=end_at)
-        return "Сон записан: %.2f ч.\n%s" % (duration_hours, self._format_new_decisions(decisions))
-
-    def _handle_activity(self, app_user: AppUser, args: List[str]) -> str:
-        if len(args) < 3:
-            return 'Использование: /activity <minutes> <steps> <title>. Пример: /activity 45 6000 "Вечерняя прогулка"'
-        duration_minutes = int(args[0])
-        steps = int(args[1])
-        title = " ".join(args[2:])
-        now = self._local_now()
-        self.service.log_activity(
-            app_user.user_id,
-            ActivityEntry(
-                entry_id=str(uuid4()),
-                occurred_at=now,
-                title=title,
-                duration_minutes=duration_minutes,
-                steps=steps,
-            ),
-        )
-        decisions = self.service.evaluate_day(app_user.user_id, now.date(), now=now)
-        return "Активность записана: %s.\n%s" % (title, self._format_new_decisions(decisions))
-
-    def _handle_goals(self, app_user: AppUser, args: List[str]) -> str:
-        if len(args) != 4:
-            return "Использование: /goals <water_ml> <protein_g> <sleep_hours> <steps>"
-        today = self._local_today()
-        goals = DailyHealthGoals(
-            target_date=today,
-            water_ml=int(args[0]),
-            protein_g=int(args[1]),
-            sleep_hours=float(args[2]),
-            steps=int(args[3]),
-        )
-        self.service.set_goals(app_user.user_id, goals)
-        return (
-            "Цели обновлены на %s:\nвода=%s мл, белок=%s г, сон=%.1f ч, шаги=%s"
-            % (today.isoformat(), goals.water_ml, goals.protein_g, goals.sleep_hours, goals.steps)
-        )
 
     def _handle_summary(self, app_user: AppUser, args: List[str]) -> str:
         if args:
@@ -659,12 +533,6 @@ class TelegramHealthBot:
             "/confirm_meal <draft_id>",
             "/reject_meal <draft_id>",
             "/drafts",
-            "/water <ml>",
-            '/meal <calories> <protein_g> <title>  Пример: /meal 650 45 "Курица с рисом"',
-            "/weight <kg>",
-            "/sleep <hours>",
-            '/activity <minutes> <steps> <title>  Пример: /activity 45 6000 "Вечерняя прогулка"',
-            "/goals <water_ml> <protein_g> <sleep_hours> <steps>",
             "/summary [YYYY-MM-DD]",
             "/decisions [YYYY-MM-DD]",
         ]
@@ -1002,4 +870,3 @@ class TelegramHealthBot:
         if lower_path.endswith(".webp"):
             return "image/webp"
         return "image/jpeg"
-

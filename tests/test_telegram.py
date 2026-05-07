@@ -261,6 +261,15 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Доступ: только по инвайту", response)
         self.assertIn("/start <invite_code>", response)
 
+    def test_help_for_registered_user_does_not_list_removed_manual_health_commands(self) -> None:
+        response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[42])
+        self.assertNotIn("/water", response)
+        self.assertNotIn("/meal <calories>", response)
+        self.assertNotIn("/weight", response)
+        self.assertNotIn("/sleep", response)
+        self.assertNotIn("/activity", response)
+        self.assertNotIn("/goals", response)
+
     def test_start_with_invite_registers_new_user(self) -> None:
         response = self.bot._route_command(
             "/start invite-1",
@@ -483,7 +492,10 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/create_invite", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Команда доступна только администратору", response)
 
+    def test_removed_manual_health_command_is_unknown(self) -> None:
+        response = self.bot._route_command("/water 500", app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("Неизвестная команда", response)
+
 
 if __name__ == "__main__":
     unittest.main()
-

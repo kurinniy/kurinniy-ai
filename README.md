@@ -88,8 +88,6 @@ Fallback commands:
 
 ## Current Capabilities
 
-- Set health goals for a date from Telegram.
-- Log meals, water intake, sleep, weight, and activity from Telegram.
 - Create meal drafts from Telegram food photos.
 - Support multiple Telegram users with isolated data by `user_id`.
 - Register new users only by invite code.
