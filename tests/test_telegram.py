@@ -419,14 +419,14 @@ class TelegramHealthBotTest(unittest.TestCase):
 
     def test_help_for_unregistered_user_explains_invite_flow(self) -> None:
         response = self.bot._route_command("/help")
-        self.assertIn("Версия: 0.2", response)
+        self.assertIn("Версия: 0.3", response)
         self.assertIn("Дата релиза: 2026-05-07", response)
         self.assertIn("Доступ: только по инвайту", response)
         self.assertIn("/start <invite_code>", response)
 
     def test_help_for_registered_user_does_not_list_removed_manual_health_commands(self) -> None:
         response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[42])
-        self.assertIn("Версия: 0.2", response)
+        self.assertIn("Версия: 0.3", response)
         self.assertIn("Дата релиза: 2026-05-07", response)
         self.assertIn("Mini App: откройте через кнопку меню", response)
         self.assertIn("/connect_drive <folder_url>", response)

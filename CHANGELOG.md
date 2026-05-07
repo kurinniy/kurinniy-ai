@@ -20,6 +20,12 @@
 
 ## 2026-05-07
 
+- Версия или commit: `0.3`
+- Продуктовая версия обновлена до `0.3` после релиза Telegram Mini App и переработки `/summary`.
+- Добавлен обязательный release guard: production-релиз теперь должен обновлять `src/ai_me/version.py`, `frontend/package.json` и верхний релизный блок `CHANGELOG.md`.
+
+## 2026-05-07
+
 - Версия или commit: `477d233`
 - Добавлен foundation для Telegram Mini App: FastAPI backend, React/Vite frontend, аутентификация через Telegram Mini App `initData` и отдельный web runtime.
 - Бот теперь синхронизирует кнопку `Открыть приложение`, а Mini App открывается через отдельный Railway web-service.
