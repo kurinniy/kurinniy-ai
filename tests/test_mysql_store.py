@@ -60,6 +60,10 @@ class MySQLStoreMigrationTest(unittest.TestCase):
         store._apply_schema_migrations()
 
         executed_sql = [query for query, _ in store.executed]
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN admin_mode_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER is_admin",
+            executed_sql,
+        )
         self.assertIn("ALTER TABLE meals ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g", executed_sql)
         self.assertIn("ALTER TABLE meals ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g", executed_sql)
         self.assertIn("ALTER TABLE meals ADD COLUMN user_id BIGINT NULL AFTER entry_id", executed_sql)

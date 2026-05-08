@@ -89,14 +89,19 @@ class MySQLStore:
     ) -> AppUser:
         self._execute(
             """
-            INSERT INTO users (telegram_user_id, chat_id, username, first_name, status, is_admin, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO users (telegram_user_id, chat_id, username, first_name, status, is_admin, admin_mode_enabled, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 chat_id = VALUES(chat_id),
                 username = VALUES(username),
                 first_name = VALUES(first_name),
                 status = VALUES(status),
-                is_admin = VALUES(is_admin)
+                is_admin = VALUES(is_admin),
+                admin_mode_enabled = CASE
+                    WHEN VALUES(is_admin) = 0 THEN 0
+                    WHEN is_admin = 0 THEN 1
+                    ELSE admin_mode_enabled
+                END
             """,
             (
                 telegram_user_id,
@@ -104,6 +109,7 @@ class MySQLStore:
                 username,
                 first_name,
                 status.value,
+                1 if is_admin else 0,
                 1 if is_admin else 0,
                 datetime.now(),
             ),
@@ -128,6 +134,20 @@ class MySQLStore:
         if updated is None:
             raise RuntimeError("Не удалось обновить профиль пользователя %s" % user.telegram_user_id)
         return updated
+
+    def update_user_admin_mode(self, user_id: int, enabled: bool) -> AppUser:
+        self._execute(
+            """
+            UPDATE users
+            SET admin_mode_enabled = CASE WHEN is_admin = 1 THEN %s ELSE 0 END
+            WHERE user_id = %s
+            """,
+            (1 if enabled else 0, user_id),
+        )
+        row = self._fetchone("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        if row is None:
+            raise RuntimeError("Не удалось обновить режим администратора для пользователя %s" % user_id)
+        return self._to_user(row)
 
     def get_user_google_drive_settings(self, user_id: int) -> Optional[UserGoogleDriveSettings]:
         row = self._fetchone(
@@ -1004,6 +1024,7 @@ class MySQLStore:
                 first_name VARCHAR(255) NOT NULL DEFAULT '',
                 status VARCHAR(32) NOT NULL,
                 is_admin TINYINT(1) NOT NULL DEFAULT 0,
+                admin_mode_enabled TINYINT(1) NOT NULL DEFAULT 1,
                 created_at DATETIME(6) NOT NULL,
                 INDEX idx_users_status (status)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
@@ -1246,6 +1267,11 @@ class MySQLStore:
         self._ensure_owner_user_and_backfill()
 
     def _apply_schema_migrations(self) -> None:
+        self._ensure_column(
+            "users",
+            "admin_mode_enabled",
+            "ALTER TABLE users ADD COLUMN admin_mode_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER is_admin",
+        )
         self._ensure_column("meals", "fat_g", "ALTER TABLE meals ADD COLUMN fat_g DOUBLE NOT NULL DEFAULT 0 AFTER protein_g")
         self._ensure_column("meals", "carbs_g", "ALTER TABLE meals ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g")
         self._ensure_column("meals", "water_ml", "ALTER TABLE meals ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g")
@@ -1374,6 +1400,7 @@ class MySQLStore:
                 """
                 UPDATE users
                 SET is_admin = 1,
+                    admin_mode_enabled = 1,
                     status = %s
                 WHERE user_id = %s
                 """,
@@ -1482,6 +1509,7 @@ class MySQLStore:
             first_name=row["first_name"] or "",
             status=UserStatus(row["status"]),
             is_admin=bool(row["is_admin"]),
+            admin_mode_enabled=bool(row.get("admin_mode_enabled", 1)),
             created_at=row["created_at"],
         )
 

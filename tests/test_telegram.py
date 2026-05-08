@@ -48,6 +48,9 @@ class DummyHealthService:
             ),
         }
 
+    def get_user_by_telegram_user_id(self, telegram_user_id: int):
+        return self.users_by_telegram_id.get(telegram_user_id)
+
     def sync_user(self, telegram_user_id: int, chat_id: int, username: str = "", first_name: str = ""):
         user = self.users_by_telegram_id.get(telegram_user_id)
         if user is None:
@@ -60,6 +63,7 @@ class DummyHealthService:
             first_name=first_name or user.first_name,
             status=user.status,
             is_admin=user.is_admin,
+            admin_mode_enabled=user.admin_mode_enabled,
             created_at=user.created_at,
         )
 
@@ -83,6 +87,7 @@ class DummyHealthService:
                 first_name=first_name,
                 status=existing.status,
                 is_admin=existing.is_admin,
+                admin_mode_enabled=existing.admin_mode_enabled,
                 created_at=existing.created_at,
             )
             self.users_by_telegram_id[telegram_user_id] = user
@@ -99,6 +104,25 @@ class DummyHealthService:
         )
         self.users_by_telegram_id[telegram_user_id] = user
         return user
+
+    def set_admin_mode(self, user_id: int, enabled: bool):
+        for telegram_user_id, user in list(self.users_by_telegram_id.items()):
+            if user.user_id != user_id:
+                continue
+            updated = AppUser(
+                user_id=user.user_id,
+                telegram_user_id=user.telegram_user_id,
+                chat_id=user.chat_id,
+                username=user.username,
+                first_name=user.first_name,
+                status=user.status,
+                is_admin=user.is_admin,
+                admin_mode_enabled=enabled if user.is_admin else False,
+                created_at=user.created_at,
+            )
+            self.users_by_telegram_id[telegram_user_id] = updated
+            return updated
+        raise ValueError("Пользователь не найден.")
 
     def get_digest_settings(self, user_id):
         return type(
@@ -399,6 +423,24 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("режим_доступа=open", response)
         self.assertIn("app_user_id=1", response)
         self.assertIn("роль=admin", response)
+        self.assertIn("режим_админа=включен", response)
+
+    def test_admin_can_switch_to_user_mode_and_back(self) -> None:
+        response = self.bot._route_command("/user_mode", app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("Режим обычного пользователя включен", response)
+        self.assertFalse(self.service.users_by_telegram_id[42].has_admin_access)
+
+        whoami = self.bot._route_command("/whoami", chat_id=777, user_id=42, app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("роль=user", whoami)
+        self.assertIn("режим_админа=выключен", whoami)
+
+        response = self.bot._route_command("/admin_mode", app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("Режим администратора включен", response)
+        self.assertTrue(self.service.users_by_telegram_id[42].has_admin_access)
+
+    def test_regular_user_cannot_switch_mode(self) -> None:
+        response = self.bot._route_command("/user_mode", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("только администратору", response)
 
     def test_help_for_unregistered_user_explains_open_start_flow(self) -> None:
         response = self.bot._route_command("/help")
@@ -430,6 +472,14 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("/import_tbank", response)
         self.assertIn("/digest_status", response)
         self.assertIn("/drafts", response)
+
+    def test_help_for_admin_in_user_mode_hides_admin_features_but_keeps_switch_commands(self) -> None:
+        self.service.set_admin_mode(1, enabled=False)
+        response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[42])
+        self.assertNotIn("/finance_month", response)
+        self.assertNotIn("/connect_drive", response)
+        self.assertIn("/admin_mode", response)
+        self.assertIn("/user_mode", response)
 
     def test_start_registers_new_user_without_invite(self) -> None:
         response = self.bot._route_command(
@@ -652,6 +702,31 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(markup["keyboard"][1][0]["text"], "Google Drive")
         self.assertEqual(markup["keyboard"][1][1]["text"], "Импорт Т-Банк")
 
+    def test_user_mode_command_updates_reply_keyboard_immediately(self) -> None:
+        messages = []
+
+        def fake_telegram_api(method, params):
+            messages.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/user_mode",
+                    "chat": {"id": 777, "type": "private"},
+                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                },
+            }
+        )
+
+        markup = json.loads(messages[0][1]["reply_markup"])
+        flat = [button["text"] for row in markup["keyboard"] for button in row]
+        self.assertNotIn("Финансы за месяц", flat)
+        self.assertNotIn("Google Drive", flat)
+        self.assertIn("Сводка за сегодня", flat)
+
     def test_help_message_for_regular_user_hides_admin_buttons(self) -> None:
         messages = []
 
@@ -679,6 +754,32 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Сводка за сегодня", flat)
         self.assertIn("Черновики еды", flat)
 
+    def test_help_message_for_admin_in_user_mode_hides_admin_buttons(self) -> None:
+        self.service.set_admin_mode(1, enabled=False)
+        messages = []
+
+        def fake_telegram_api(method, params):
+            messages.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/help",
+                    "chat": {"id": 777, "type": "private"},
+                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                },
+            }
+        )
+
+        markup = json.loads(messages[0][1]["reply_markup"])
+        flat = [button["text"] for row in markup["keyboard"] for button in row]
+        self.assertNotIn("Финансы за месяц", flat)
+        self.assertNotIn("Google Drive", flat)
+        self.assertNotIn("Импорт Т-Банк", flat)
+
     def test_sync_bot_commands_registers_menu_entries(self) -> None:
         calls = []
 
@@ -691,18 +792,22 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         self.assertEqual(calls[0][0], "setMyCommands")
         commands = json.loads(calls[0][1]["commands"])
-        self.assertEqual(commands[0]["command"], "start")
-        self.assertEqual(commands[1]["command"], "menu")
-        self.assertEqual(commands[4]["command"], "connect_drive")
-        self.assertEqual(commands[5]["command"], "drive_status")
-        self.assertEqual(commands[8]["command"], "decisions")
-        self.assertEqual(commands[9]["command"], "digest_status")
-        self.assertEqual(commands[10]["command"], "digest_on")
-        self.assertEqual(commands[11]["command"], "digest_off")
-        self.assertEqual(commands[12]["command"], "digest_preview")
-        self.assertEqual(commands[13]["command"], "weekly_digest_preview")
-        self.assertEqual(commands[16]["command"], "whoami")
-        self.assertEqual(commands[17]["command"], "help")
+        command_names = [item["command"] for item in commands]
+        self.assertEqual(command_names[0], "start")
+        self.assertEqual(command_names[1], "menu")
+        self.assertIn("connect_drive", command_names)
+        self.assertIn("drive_status", command_names)
+        self.assertIn("decisions", command_names)
+        self.assertIn("digest_status", command_names)
+        self.assertIn("digest_on", command_names)
+        self.assertIn("digest_off", command_names)
+        self.assertIn("digest_preview", command_names)
+        self.assertIn("weekly_digest_preview", command_names)
+        self.assertIn("drafts", command_names)
+        self.assertIn("user_mode", command_names)
+        self.assertIn("admin_mode", command_names)
+        self.assertIn("whoami", command_names)
+        self.assertIn("help", command_names)
         self.assertFalse(any(item["command"] == "create_invite" for item in commands))
 
     def test_sync_mini_app_menu_button_registers_web_app(self) -> None:
@@ -925,6 +1030,11 @@ class TelegramHealthBotTest(unittest.TestCase):
 
     def test_finance_command_is_rejected_for_regular_user(self) -> None:
         response = self.bot._route_command("/finance_month", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("только администратору", response)
+
+    def test_finance_command_is_rejected_for_admin_in_user_mode(self) -> None:
+        self.service.set_admin_mode(1, enabled=False)
+        response = self.bot._route_command("/finance_month", app_user=self.service.users_by_telegram_id[42])
         self.assertIn("только администратору", response)
 
     def test_connect_drive_command_is_rejected_for_regular_user(self) -> None:

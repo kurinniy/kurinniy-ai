@@ -26,7 +26,9 @@ def build_dashboard_payload(
             "telegram_user_id": app_user.telegram_user_id,
             "username": app_user.username,
             "first_name": app_user.first_name,
-            "is_admin": app_user.is_admin,
+            "is_admin": app_user.has_admin_access,
+            "is_admin_account": app_user.is_admin,
+            "admin_mode_enabled": app_user.admin_mode_enabled,
             "status": app_user.status.value,
         },
         "version": {

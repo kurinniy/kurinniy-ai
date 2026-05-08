@@ -26,7 +26,12 @@ class AppUser:
     first_name: str = ""
     status: UserStatus = UserStatus.ACTIVE
     is_admin: bool = False
+    admin_mode_enabled: bool = True
     created_at: Optional[datetime] = None
+
+    @property
+    def has_admin_access(self) -> bool:
+        return self.is_admin and self.admin_mode_enabled
 
 
 @dataclass(frozen=True)
@@ -38,4 +43,3 @@ class InviteCode:
     max_uses: int = 1
     used_count: int = 0
     status: InviteStatus = InviteStatus.ACTIVE
-

@@ -72,6 +72,7 @@ class InMemoryStore:
                 first_name=first_name,
                 status=status,
                 is_admin=is_admin,
+                admin_mode_enabled=existing.admin_mode_enabled if is_admin else False,
                 created_at=existing.created_at,
             )
             self._users_by_id[existing.user_id] = updated
@@ -84,6 +85,7 @@ class InMemoryStore:
             first_name=first_name,
             status=status,
             is_admin=is_admin,
+            admin_mode_enabled=is_admin,
             created_at=datetime.now(),
         )
         self._next_user_id += 1
@@ -100,9 +102,26 @@ class InMemoryStore:
             first_name=first_name,
             status=user.status,
             is_admin=user.is_admin,
+            admin_mode_enabled=user.admin_mode_enabled,
             created_at=user.created_at,
         )
         self._users_by_id[user.user_id] = updated
+        return updated
+
+    def update_user_admin_mode(self, user_id: int, enabled: bool) -> AppUser:
+        user = self._users_by_id[user_id]
+        updated = AppUser(
+            user_id=user.user_id,
+            telegram_user_id=user.telegram_user_id,
+            chat_id=user.chat_id,
+            username=user.username,
+            first_name=user.first_name,
+            status=user.status,
+            is_admin=user.is_admin,
+            admin_mode_enabled=enabled if user.is_admin else False,
+            created_at=user.created_at,
+        )
+        self._users_by_id[user_id] = updated
         return updated
 
     def get_user_google_drive_settings(self, user_id: int) -> Optional[UserGoogleDriveSettings]:

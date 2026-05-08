@@ -102,6 +102,26 @@ class DigestSchedulerWorkerTest(unittest.TestCase):
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0].status, DigestStatus.SENT)
 
+    def test_run_once_hides_step_block_for_admin_in_user_mode(self) -> None:
+        self.store.upsert_user_digest_settings(
+            UserDigestSettings(
+                user_id=self.user.user_id,
+                timezone_name="Europe/Moscow",
+                daily_digest_enabled=True,
+                daily_digest_time="08:00",
+                weekly_digest_enabled=False,
+                weekly_digest_time="08:00",
+            )
+        )
+        self.store.update_user_admin_mode(self.user.user_id, enabled=False)
+
+        self.worker.run_once(now_utc=datetime(2026, 5, 7, 5, 10, tzinfo=timezone.utc))
+
+        self.assertEqual(self.bot.daily_calls, [(96445950, self.user.user_id, date(2026, 5, 6), False, False)])
+        runs = self.service.list_digest_runs(self.user.user_id, digest_type=DigestType.DAILY)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0].status, DigestStatus.SENT)
+
     def test_run_once_sends_weekly_digest_on_monday_morning(self) -> None:
         self.store.upsert_user_digest_settings(
             UserDigestSettings(

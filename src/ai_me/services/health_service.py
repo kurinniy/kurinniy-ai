@@ -101,6 +101,14 @@ class HealthService:
     def get_user_by_telegram_user_id(self, telegram_user_id: int) -> Optional[AppUser]:
         return self.store.get_user_by_telegram_user_id(telegram_user_id)
 
+    def set_admin_mode(self, user_id: int, enabled: bool) -> AppUser:
+        user = next((item for item in self.store.list_users() if item.user_id == user_id), None)
+        if user is None:
+            raise ValueError("Пользователь не найден.")
+        if not user.is_admin:
+            raise ValueError("Команда доступна только администратору.")
+        return self.store.update_user_admin_mode(user_id, enabled=enabled)
+
     def list_users_with_google_drive_enabled(self) -> List[AppUser]:
         users = self.store.list_users_with_google_drive_enabled()
         return [user for user in users if user.status == UserStatus.ACTIVE]

@@ -135,10 +135,11 @@ class TelegramHealthBot:
                 app_user=app_user,
             )
             if response:
+                reply_user = self.service.get_user_by_telegram_user_id(user_id) or app_user
                 self._send_message(
                     chat_id,
                     response,
-                    reply_markup=self._menu_reply_markup(app_user) if self._should_show_menu(normalized_text, app_user) else None,
+                    reply_markup=self._menu_reply_markup(reply_user) if self._should_show_menu(normalized_text, reply_user) else None,
                 )
 
     def _handle_callback_query(self, callback_query: Dict[str, object]) -> None:
@@ -291,6 +292,10 @@ class TelegramHealthBot:
                 return self._handle_drive_toggle(app_user, enabled=False)
             if command == "/digest_status":
                 return self._handle_digest_status(app_user)
+            if command == "/user_mode":
+                return self._handle_admin_mode(app_user, enabled=False)
+            if command == "/admin_mode":
+                return self._handle_admin_mode(app_user, enabled=True)
             if command == "/digest_on":
                 return self._handle_digest_toggle(app_user, enabled=True)
             if command == "/digest_off":
@@ -357,7 +362,9 @@ class TelegramHealthBot:
         else:
             lines.append("app_user_id=%s" % app_user.user_id)
             lines.append("статус_аккаунта=%s" % app_user.status.value)
-            lines.append("роль=%s" % ("admin" if app_user.is_admin else "user"))
+            lines.append("роль=%s" % ("admin" if app_user.has_admin_access else "user"))
+            if app_user.is_admin:
+                lines.append("режим_админа=%s" % ("включен" if app_user.admin_mode_enabled else "выключен"))
         return "\n".join(lines)
 
     @staticmethod
@@ -498,12 +505,20 @@ class TelegramHealthBot:
             )
         )
 
+    def _handle_admin_mode(self, app_user: AppUser, enabled: bool) -> str:
+        if not app_user.is_admin:
+            raise ValueError("Команда доступна только администратору.")
+        updated = self.service.set_admin_mode(app_user.user_id, enabled=enabled)
+        if enabled:
+            return "Режим администратора включен.\n\n%s" % self._help_text(updated)
+        return "Режим обычного пользователя включен.\n\n%s" % self._help_text(updated)
+
     def _handle_digest_preview(self, app_user: AppUser, args: List[str]) -> str:
         target_date = date.fromisoformat(args[0]) if args else (self._local_today() - timedelta(days=1))
         digest = self.service.build_daily_food_digest(app_user.user_id, target_date)
         if digest is None:
             return "Для %s нет подтвержденных фото-блюд для daily digest." % target_date.isoformat()
-        step_progress = self.service.build_step_progress_insight(app_user.user_id, target_date) if app_user.is_admin else None
+        step_progress = self.service.build_step_progress_insight(app_user.user_id, target_date) if app_user.has_admin_access else None
         return self._format_daily_digest_text(digest, preview=True, step_progress=step_progress)
 
     def _handle_weekly_digest_preview(self, app_user: AppUser, args: List[str]) -> str:
@@ -655,6 +670,13 @@ class TelegramHealthBot:
         if app_user.is_admin:
             commands.extend(
                 [
+                    "/user_mode",
+                    "/admin_mode",
+                ]
+            )
+        if app_user.has_admin_access:
+            commands.extend(
+                [
                     "/import_tbank",
                     "/finance_month [YYYY-MM]",
                     "/connect_drive <folder_url>",
@@ -801,7 +823,7 @@ class TelegramHealthBot:
             user_id=app_user.user_id,
             digest_date=target_date,
             preview=True,
-            include_step_insight=app_user.is_admin,
+            include_step_insight=app_user.has_admin_access,
         ) is None:
             self._send_message(chat_id, "Для %s нет подтвержденных фото-блюд для daily digest." % target_date.isoformat())
 
@@ -988,7 +1010,7 @@ class TelegramHealthBot:
         self._send_meal_draft(chat_id, draft)
 
     def _handle_document_message(self, chat_id: int, app_user: AppUser, document: Dict[str, object]) -> None:
-        if not app_user.is_admin:
+        if not app_user.has_admin_access:
             self._send_message(chat_id, "Загрузка CSV Т-Банка доступна только администратору.")
             return
         file_id = document.get("file_id")
@@ -1051,6 +1073,8 @@ class TelegramHealthBot:
             {"command": "weekly_digest_preview", "description": "Предпросмотр weekly digest"},
             {"command": "import_tbank", "description": "Импорт CSV из Т-Банка"},
             {"command": "drafts", "description": "Черновики приема пищи"},
+            {"command": "user_mode", "description": "Режим обычного пользователя (admin)"},
+            {"command": "admin_mode", "description": "Вернуть режим администратора (admin)"},
             {"command": "whoami", "description": "Мои Telegram ID"},
             {"command": "help", "description": "Справка по командам"},
         ]
@@ -1090,7 +1114,7 @@ class TelegramHealthBot:
 
     @staticmethod
     def _should_show_menu(text: str, app_user: Optional[AppUser]) -> bool:
-        return app_user is not None and text in {"/start", "/help", "/menu"}
+        return app_user is not None and text in {"/start", "/help", "/menu", "/user_mode", "/admin_mode"}
 
     @classmethod
     def _menu_reply_markup(cls, app_user: AppUser) -> str:
@@ -1101,7 +1125,7 @@ class TelegramHealthBot:
             [{"text": "Кто я"}],
             [{"text": "Помощь"}],
         ]
-        if app_user.is_admin:
+        if app_user.has_admin_access:
             keyboard = [
                 [{"text": "Сводка за сегодня"}, {"text": "Финансы за месяц"}],
                 [{"text": "Google Drive"}, {"text": "Импорт Т-Банк"}],
@@ -1166,7 +1190,7 @@ class TelegramHealthBot:
 
     @staticmethod
     def _ensure_admin(app_user: AppUser) -> None:
-        if not app_user.is_admin:
+        if not app_user.has_admin_access:
             raise ValueError("Этот раздел доступен только администратору.")
 
     def _telegram_api(self, method: str, params: Dict[str, object]):

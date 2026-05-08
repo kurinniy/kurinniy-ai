@@ -41,7 +41,7 @@ class DigestSchedulerWorker:
             self._process_user(user, current_utc=current_utc)
 
     def _process_google_drive_import(self, user: AppUser, current_utc: datetime) -> None:
-        if not user.is_admin:
+        if not user.has_admin_access:
             return
         settings = self.service.get_google_drive_settings(user.user_id)
         if settings is None or not settings.enabled:
@@ -103,7 +103,7 @@ class DigestSchedulerWorker:
                 chat_id=user.chat_id,
                 user_id=user.user_id,
                 digest_date=digest_date,
-                include_step_insight=user.is_admin,
+                include_step_insight=user.has_admin_access,
             ),
             completed_at=user_now,
         )
