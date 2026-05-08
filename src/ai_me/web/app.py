@@ -91,6 +91,8 @@ def create_web_app(settings: AppSettings, service: HealthService):
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         if app_user.status.value == "blocked":
             raise HTTPException(status_code=403, detail="blocked")
+        if not app_user.has_admin_access:
+            raise HTTPException(status_code=403, detail="mini_app_admin_required")
         return app_user
 
     def _resolve_current_user(authorization: Optional[str] = Header(default=None)):
@@ -110,6 +112,8 @@ def create_web_app(settings: AppSettings, service: HealthService):
             raise HTTPException(status_code=403, detail="registration_required")
         if app_user.user_id != session.user_id:
             raise HTTPException(status_code=401, detail="session_user_mismatch")
+        if not app_user.has_admin_access:
+            raise HTTPException(status_code=403, detail="mini_app_admin_required")
         return app_user
 
     @app.get("/healthz")

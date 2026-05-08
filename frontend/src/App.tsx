@@ -169,6 +169,9 @@ function mapApiError(detail: unknown): string {
   if (detail === "registration_required") {
     return "Аккаунт ещё не подключён. Сначала активируйте бота по инвайту в чате.";
   }
+  if (detail === "mini_app_admin_required") {
+    return "Mini App доступен только администратору.";
+  }
   if (detail === "blocked") {
     return "Доступ к приложению заблокирован.";
   }

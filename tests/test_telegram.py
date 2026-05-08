@@ -466,6 +466,7 @@ class TelegramHealthBotTest(unittest.TestCase):
 
     def test_help_for_regular_user_hides_admin_only_features(self) -> None:
         response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Mini App: доступен только администратору.", response)
         self.assertNotIn("/finance_month", response)
         self.assertNotIn("/connect_drive", response)
         self.assertNotIn("/drive_status", response)
@@ -591,10 +592,11 @@ class TelegramHealthBotTest(unittest.TestCase):
             }
         )
 
-        self.assertEqual(calls[0][0], "sendPhoto")
-        self.assertEqual(calls[1][0], "sendMessage")
-        self.assertIn("Daily digest preview за 2026-05-06", calls[1][1]["text"])
-        self.assertIn("Шаги за день: 6200 / 10000", calls[1][1]["text"])
+        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
+        self.assertEqual(business_calls[0][0], "sendPhoto")
+        self.assertEqual(business_calls[1][0], "sendMessage")
+        self.assertIn("Daily digest preview за 2026-05-06", business_calls[1][1]["text"])
+        self.assertIn("Шаги за день: 6200 / 10000", business_calls[1][1]["text"])
 
     def test_digest_preview_update_for_regular_user_hides_step_block(self) -> None:
         calls = []
@@ -621,10 +623,11 @@ class TelegramHealthBotTest(unittest.TestCase):
             }
         )
 
-        self.assertEqual(calls[0][0], "sendPhoto")
-        self.assertEqual(calls[1][0], "sendMessage")
-        self.assertNotIn("Шаги за день:", calls[1][1]["text"])
-        self.assertNotIn("Комментарий по шагам:", calls[1][1]["text"])
+        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
+        self.assertEqual(business_calls[0][0], "sendPhoto")
+        self.assertEqual(business_calls[1][0], "sendMessage")
+        self.assertNotIn("Шаги за день:", business_calls[1][1]["text"])
+        self.assertNotIn("Комментарий по шагам:", business_calls[1][1]["text"])
 
     def test_weekly_digest_preview_update_sends_mosaic_photo_and_text(self) -> None:
         calls = []
@@ -651,9 +654,10 @@ class TelegramHealthBotTest(unittest.TestCase):
             }
         )
 
-        self.assertEqual(calls[0][0], "sendPhoto")
-        self.assertEqual(calls[1][0], "sendMessage")
-        self.assertIn("Weekly digest preview", calls[1][1]["text"])
+        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
+        self.assertEqual(business_calls[0][0], "sendPhoto")
+        self.assertEqual(business_calls[1][0], "sendMessage")
+        self.assertIn("Weekly digest preview", business_calls[1][1]["text"])
 
     def test_non_private_chat_is_rejected(self) -> None:
         messages = []
@@ -696,8 +700,8 @@ class TelegramHealthBotTest(unittest.TestCase):
             }
         )
 
-        self.assertEqual(messages[0][0], "sendMessage")
-        markup = json.loads(messages[0][1]["reply_markup"])
+        send_message = next(item for item in messages if item[0] == "sendMessage")
+        markup = json.loads(send_message[1]["reply_markup"])
         self.assertEqual(markup["keyboard"][0][0]["text"], "Сводка за сегодня")
         self.assertEqual(markup["keyboard"][1][0]["text"], "Google Drive")
         self.assertEqual(markup["keyboard"][1][1]["text"], "Импорт Т-Банк")
@@ -721,7 +725,8 @@ class TelegramHealthBotTest(unittest.TestCase):
             }
         )
 
-        markup = json.loads(messages[0][1]["reply_markup"])
+        send_message = next(item for item in messages if item[0] == "sendMessage")
+        markup = json.loads(send_message[1]["reply_markup"])
         flat = [button["text"] for row in markup["keyboard"] for button in row]
         self.assertNotIn("Финансы за месяц", flat)
         self.assertNotIn("Google Drive", flat)
@@ -746,7 +751,8 @@ class TelegramHealthBotTest(unittest.TestCase):
             }
         )
 
-        markup = json.loads(messages[0][1]["reply_markup"])
+        send_message = next(item for item in messages if item[0] == "sendMessage")
+        markup = json.loads(send_message[1]["reply_markup"])
         flat = [button["text"] for row in markup["keyboard"] for button in row]
         self.assertNotIn("Финансы за месяц", flat)
         self.assertNotIn("Google Drive", flat)
@@ -774,7 +780,8 @@ class TelegramHealthBotTest(unittest.TestCase):
             }
         )
 
-        markup = json.loads(messages[0][1]["reply_markup"])
+        send_message = next(item for item in messages if item[0] == "sendMessage")
+        markup = json.loads(send_message[1]["reply_markup"])
         flat = [button["text"] for row in markup["keyboard"] for button in row]
         self.assertNotIn("Финансы за месяц", flat)
         self.assertNotIn("Google Drive", flat)
@@ -815,7 +822,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertFalse(any(item["command"] == "create_invite" for item in commands))
         self.assertEqual(command_names, [item["command"] for item in commands_ru])
 
-    def test_sync_mini_app_menu_button_registers_web_app(self) -> None:
+    def test_sync_mini_app_menu_button_registers_default_commands_globally(self) -> None:
         calls = []
 
         def fake_telegram_api(method, params):
@@ -827,9 +834,39 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         self.assertEqual(calls[0][0], "setChatMenuButton")
         menu_button = json.loads(calls[0][1]["menu_button"])
+        self.assertEqual(menu_button["type"], "commands")
+
+    def test_sync_mini_app_menu_button_registers_web_app_for_admin_chat(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._sync_mini_app_menu_button(chat_id=777, app_user=self.service.users_by_telegram_id[42])
+
+        self.assertEqual(calls[0][0], "setChatMenuButton")
+        self.assertEqual(calls[0][1]["chat_id"], 777)
+        menu_button = json.loads(calls[0][1]["menu_button"])
         self.assertEqual(menu_button["type"], "web_app")
         self.assertEqual(menu_button["text"], "Открыть приложение")
         self.assertEqual(menu_button["web_app"]["url"], "https://staging-mini-app.example.com")
+
+    def test_sync_mini_app_menu_button_registers_commands_for_regular_user_chat(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._sync_mini_app_menu_button(chat_id=778, app_user=self.service.users_by_telegram_id[77])
+
+        self.assertEqual(calls[0][0], "setChatMenuButton")
+        self.assertEqual(calls[0][1]["chat_id"], 778)
+        menu_button = json.loads(calls[0][1]["menu_button"])
+        self.assertEqual(menu_button["type"], "commands")
 
     def test_document_imports_tbank_csv_in_user_scope(self) -> None:
         calls = []
@@ -865,9 +902,10 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         self.assertEqual(self.service.last_import[0], 1)
         self.assertEqual(self.service.last_import[2], "tbank.csv")
-        self.assertEqual(calls[0][0], "getFile")
-        self.assertEqual(calls[1][0], "sendMessage")
-        self.assertIn("Импорт операций Т-Банка завершен", calls[1][1]["text"])
+        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
+        self.assertEqual(business_calls[0][0], "getFile")
+        self.assertEqual(business_calls[1][0], "sendMessage")
+        self.assertIn("Импорт операций Т-Банка завершен", business_calls[1][1]["text"])
 
     def test_document_import_is_rejected_for_regular_user(self) -> None:
         calls = []
@@ -892,8 +930,9 @@ class TelegramHealthBotTest(unittest.TestCase):
             }
         )
 
-        self.assertEqual(calls[0][0], "sendMessage")
-        self.assertIn("только администратору", calls[0][1]["text"])
+        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
+        self.assertEqual(business_calls[0][0], "sendMessage")
+        self.assertIn("только администратору", business_calls[0][1]["text"])
         self.assertIsNone(self.service.last_import)
 
 

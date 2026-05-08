@@ -96,6 +96,8 @@ class TelegramHealthBot:
         if app_user is not None and app_user.status == UserStatus.BLOCKED:
             self._send_message(chat_id, "Ваш доступ к боту заблокирован.")
             return
+        if app_user is not None:
+            self._sync_mini_app_menu_button(chat_id=chat_id, app_user=app_user)
 
         text = message.get("text")
         caption = message.get("caption")
@@ -647,11 +649,7 @@ class TelegramHealthBot:
             "Окружение: %s" % self.settings.environment_name,
             format_version_line(),
             format_release_date_line(),
-            (
-                "Mini App: откройте через кнопку меню «Открыть приложение»."
-                if self.settings.mini_app_url
-                else "Mini App: пока не настроен в этом окружении."
-            ),
+            self._mini_app_help_line(app_user),
             "Команды:",
             "/whoami",
             "Отправь фото еды, чтобы создать черновик приема пищи.",
@@ -1087,25 +1085,35 @@ class TelegramHealthBot:
         except Exception as exc:  # pragma: no cover
             logger.warning("Bot command sync failed: %s", exc)
 
-    def _sync_mini_app_menu_button(self) -> None:
+    def _sync_mini_app_menu_button(self, chat_id: Optional[int] = None, app_user: Optional[AppUser] = None) -> None:
         if not self.settings.mini_app_url:
             return
+        if app_user is not None and app_user.has_admin_access:
+            menu_button = {
+                "type": "web_app",
+                "text": "Открыть приложение",
+                "web_app": {"url": self.settings.mini_app_url},
+            }
+        else:
+            menu_button = {
+                "type": "commands",
+            }
+        params = {
+            "menu_button": json.dumps(menu_button, ensure_ascii=False),
+        }
+        if chat_id is not None:
+            params["chat_id"] = chat_id
         try:
-            self._telegram_api(
-                "setChatMenuButton",
-                {
-                    "menu_button": json.dumps(
-                        {
-                            "type": "web_app",
-                            "text": "Открыть приложение",
-                            "web_app": {"url": self.settings.mini_app_url},
-                        },
-                        ensure_ascii=False,
-                    )
-                },
-            )
+            self._telegram_api("setChatMenuButton", params)
         except Exception as exc:  # pragma: no cover
             logger.warning("Mini App menu button sync failed: %s", exc)
+
+    def _mini_app_help_line(self, app_user: AppUser) -> str:
+        if not self.settings.mini_app_url:
+            return "Mini App: пока не настроен в этом окружении."
+        if app_user.has_admin_access:
+            return "Mini App: откройте через кнопку меню «Открыть приложение»."
+        return "Mini App: доступен только администратору."
 
     @classmethod
     def _normalize_command_text(cls, text: str) -> str:
