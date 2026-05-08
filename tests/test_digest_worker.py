@@ -192,3 +192,47 @@ class DigestSchedulerWorkerTest(unittest.TestCase):
 
         summary = self.store.build_health_summary(self.user.user_id, date(2026, 5, 1))
         self.assertEqual(summary.steps, 1500)
+
+    def test_run_once_skips_google_drive_import_for_non_admin_user(self) -> None:
+        regular_user = self.store.create_user(
+            telegram_user_id=111,
+            chat_id=111,
+            username="guest",
+            first_name="Guest",
+            status=UserStatus.ACTIVE,
+            is_admin=False,
+        )
+        self.service = HealthService(
+            self.store,
+            default_timezone_name="Europe/Moscow",
+            google_drive_import_service=GoogleDriveHealthImportService(
+                store=self.store,
+                google_drive_client=FakeGoogleDriveClient(),
+            ),
+        )
+        self.worker = DigestSchedulerWorker(service=self.service, bot=self.bot, poll_interval_seconds=60)
+        self.store.upsert_user_google_drive_settings(
+            UserGoogleDriveSettings(
+                user_id=regular_user.user_id,
+                folder_id="folder-regular",
+                folder_url="https://drive.google.com/drive/folders/folder-regular",
+                enabled=True,
+                created_at=datetime(2026, 5, 7, 8, 0),
+                updated_at=datetime(2026, 5, 7, 8, 0),
+            )
+        )
+        self.store.upsert_user_digest_settings(
+            UserDigestSettings(
+                user_id=regular_user.user_id,
+                timezone_name="Europe/Moscow",
+                daily_digest_enabled=False,
+                daily_digest_time="08:00",
+                weekly_digest_enabled=False,
+                weekly_digest_time="08:00",
+            )
+        )
+
+        self.worker.run_once(now_utc=datetime(2026, 5, 7, 5, 10, tzinfo=timezone.utc))
+
+        summary = self.store.build_health_summary(regular_user.user_id, date(2026, 5, 1))
+        self.assertEqual(summary.steps, 0)

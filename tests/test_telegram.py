@@ -422,6 +422,15 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("/activity", response)
         self.assertNotIn("/goals", response)
 
+    def test_help_for_regular_user_hides_admin_only_features(self) -> None:
+        response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[77])
+        self.assertNotIn("/finance_month", response)
+        self.assertNotIn("/connect_drive", response)
+        self.assertNotIn("/drive_status", response)
+        self.assertNotIn("/import_tbank", response)
+        self.assertIn("/digest_status", response)
+        self.assertIn("/drafts", response)
+
     def test_start_registers_new_user_without_invite(self) -> None:
         response = self.bot._route_command(
             "/start",
@@ -603,6 +612,33 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(markup["keyboard"][1][0]["text"], "Google Drive")
         self.assertEqual(markup["keyboard"][1][1]["text"], "Импорт Т-Банк")
 
+    def test_help_message_for_regular_user_hides_admin_buttons(self) -> None:
+        messages = []
+
+        def fake_telegram_api(method, params):
+            messages.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/help",
+                    "chat": {"id": 778, "type": "private"},
+                    "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                },
+            }
+        )
+
+        markup = json.loads(messages[0][1]["reply_markup"])
+        flat = [button["text"] for row in markup["keyboard"] for button in row]
+        self.assertNotIn("Финансы за месяц", flat)
+        self.assertNotIn("Google Drive", flat)
+        self.assertNotIn("Импорт Т-Банк", flat)
+        self.assertIn("Сводка за сегодня", flat)
+        self.assertIn("Черновики еды", flat)
+
     def test_sync_bot_commands_registers_menu_entries(self) -> None:
         calls = []
 
@@ -682,6 +718,34 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[0][0], "getFile")
         self.assertEqual(calls[1][0], "sendMessage")
         self.assertIn("Импорт операций Т-Банка завершен", calls[1][1]["text"])
+
+    def test_document_import_is_rejected_for_regular_user(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 778, "type": "private"},
+                    "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                    "document": {
+                        "file_id": "file-1",
+                        "file_name": "tbank.csv",
+                        "mime_type": "text/csv",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(calls[0][0], "sendMessage")
+        self.assertIn("только администратору", calls[0][1]["text"])
+        self.assertIsNone(self.service.last_import)
+
 
     def test_drafts_command_lists_pending_drafts(self) -> None:
         response = self.bot._route_command("/drafts", app_user=self.service.users_by_telegram_id[42])
@@ -818,6 +882,17 @@ class TelegramHealthBotTest(unittest.TestCase):
     def test_removed_invite_command_is_unknown(self) -> None:
         response = self.bot._route_command("/create_invite 10 2", app_user=self.service.users_by_telegram_id[42])
         self.assertIn("Неизвестная команда", response)
+
+    def test_finance_command_is_rejected_for_regular_user(self) -> None:
+        response = self.bot._route_command("/finance_month", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("только администратору", response)
+
+    def test_connect_drive_command_is_rejected_for_regular_user(self) -> None:
+        response = self.bot._route_command(
+            "/connect_drive https://drive.google.com/drive/folders/folder-123",
+            app_user=self.service.users_by_telegram_id[77],
+        )
+        self.assertIn("только администратору", response)
 
     def test_removed_manual_health_command_is_unknown(self) -> None:
         response = self.bot._route_command("/water 500", app_user=self.service.users_by_telegram_id[42])

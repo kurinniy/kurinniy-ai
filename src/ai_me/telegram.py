@@ -138,7 +138,7 @@ class TelegramHealthBot:
                 self._send_message(
                     chat_id,
                     response,
-                    reply_markup=self._menu_reply_markup() if self._should_show_menu(normalized_text, app_user) else None,
+                    reply_markup=self._menu_reply_markup(app_user) if self._should_show_menu(normalized_text, app_user) else None,
                 )
 
     def _handle_callback_query(self, callback_query: Dict[str, object]) -> None:
@@ -277,6 +277,7 @@ class TelegramHealthBot:
                 return self._registration_required_text()
 
             if command == "/import_tbank":
+                self._ensure_admin(app_user)
                 return self._handle_import_tbank()
             if command == "/finance_month":
                 return self._handle_finance_month(app_user, args)
@@ -371,6 +372,7 @@ class TelegramHealthBot:
         )
 
     def _handle_finance_month(self, app_user: AppUser, args: List[str]) -> str:
+        self._ensure_admin(app_user)
         if args:
             year, month = args[0].split("-", 1)
             month_start = date(int(year), int(month), 1)
@@ -394,6 +396,7 @@ class TelegramHealthBot:
         return "\n".join(lines)
 
     def _handle_connect_drive(self, app_user: AppUser, args: List[str]) -> str:
+        self._ensure_admin(app_user)
         if not self.service.google_drive_is_configured():
             return "Интеграция с Google Drive пока не настроена на сервере."
         if not args:
@@ -424,6 +427,7 @@ class TelegramHealthBot:
         )
 
     def _handle_drive_status(self, app_user: AppUser) -> str:
+        self._ensure_admin(app_user)
         settings = self.service.get_google_drive_settings(app_user.user_id)
         if settings is None:
             return (
@@ -447,6 +451,7 @@ class TelegramHealthBot:
         return "\n".join(lines)
 
     def _handle_drive_toggle(self, app_user: AppUser, enabled: bool) -> str:
+        self._ensure_admin(app_user)
         settings = self.service.set_google_drive_enabled(
             app_user.user_id,
             enabled=enabled,
@@ -635,12 +640,6 @@ class TelegramHealthBot:
             "/whoami",
             "Отправь фото еды, чтобы создать черновик приема пищи.",
             "/menu",
-            "/import_tbank",
-            "/finance_month [YYYY-MM]",
-            "/connect_drive <folder_url>",
-            "/drive_status",
-            "/drive_on",
-            "/drive_off",
             "/digest_status",
             "/digest_on",
             "/digest_off",
@@ -652,6 +651,17 @@ class TelegramHealthBot:
             "/summary [YYYY-MM-DD]",
             "/decisions [YYYY-MM-DD]",
         ]
+        if app_user.is_admin:
+            commands.extend(
+                [
+                    "/import_tbank",
+                    "/finance_month [YYYY-MM]",
+                    "/connect_drive <folder_url>",
+                    "/drive_status",
+                    "/drive_on",
+                    "/drive_off",
+                ]
+            )
         return "\n".join(commands)
 
     def _format_new_decisions(self, decisions: Iterable) -> str:
@@ -941,6 +951,9 @@ class TelegramHealthBot:
         self._send_meal_draft(chat_id, draft)
 
     def _handle_document_message(self, chat_id: int, app_user: AppUser, document: Dict[str, object]) -> None:
+        if not app_user.is_admin:
+            self._send_message(chat_id, "Загрузка CSV Т-Банка доступна только администратору.")
+            return
         file_id = document.get("file_id")
         file_name = document.get("file_name")
         mime_type = document.get("mime_type")
@@ -1043,18 +1056,27 @@ class TelegramHealthBot:
         return app_user is not None and text in {"/start", "/help", "/menu"}
 
     @classmethod
-    def _menu_reply_markup(cls) -> str:
+    def _menu_reply_markup(cls, app_user: AppUser) -> str:
+        keyboard = [
+            [{"text": "Сводка за сегодня"}],
+            [{"text": "Открытые решения"}],
+            [{"text": "Черновики еды"}],
+            [{"text": "Кто я"}],
+            [{"text": "Помощь"}],
+        ]
+        if app_user.is_admin:
+            keyboard = [
+                [{"text": "Сводка за сегодня"}, {"text": "Финансы за месяц"}],
+                [{"text": "Google Drive"}, {"text": "Импорт Т-Банк"}],
+                [{"text": "Открытые решения"}],
+                [{"text": "Черновики еды"}],
+                [{"text": "Кто я"}],
+                [{"text": "Помощь"}],
+            ]
         return json.dumps(
             {
                 "resize_keyboard": True,
-                "keyboard": [
-                    [{"text": "Сводка за сегодня"}, {"text": "Финансы за месяц"}],
-                    [{"text": "Google Drive"}, {"text": "Импорт Т-Банк"}],
-                    [{"text": "Открытые решения"}],
-                    [{"text": "Черновики еды"}],
-                    [{"text": "Кто я"}],
-                    [{"text": "Помощь"}],
-                ],
+                "keyboard": keyboard,
             },
             ensure_ascii=False,
         )
@@ -1104,6 +1126,11 @@ class TelegramHealthBot:
     @staticmethod
     def _private_chat_only_text() -> str:
         return "Бот работает только в личных сообщениях."
+
+    @staticmethod
+    def _ensure_admin(app_user: AppUser) -> None:
+        if not app_user.is_admin:
+            raise ValueError("Этот раздел доступен только администратору.")
 
     def _telegram_api(self, method: str, params: Dict[str, object]):
         encoded = parse.urlencode(params).encode()
