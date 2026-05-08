@@ -55,6 +55,7 @@ Optional:
 - `ALLOWED_TELEGRAM_USER_IDS`: legacy fallback for admin ids.
 - `APP_TIMEZONE`: for example `Europe/Moscow`.
 - `TELEGRAM_POLLING_TIMEOUT_SECONDS`: defaults to `30`.
+- `TELEGRAM_FOOD_PHOTO_RATE_LIMIT_SECONDS`: cooldown between food photos for regular users; defaults to `15`.
 - `MINI_APP_URL`: public HTTPS URL of the Telegram Mini App. When set, the bot syncs a menu button `Открыть приложение`.
 - `WEB_HOST`: defaults to `0.0.0.0`.
 - `WEB_PORT`: defaults to `8000` locally. On Railway the app also respects `PORT`.

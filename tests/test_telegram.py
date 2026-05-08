@@ -935,6 +935,100 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("только администратору", business_calls[0][1]["text"])
         self.assertIsNone(self.service.last_import)
 
+    def test_regular_user_photo_is_rate_limited(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            if method == "getFile":
+                return {"file_path": "photos/meal.jpg"}
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._download_telegram_file = lambda path: VALID_PNG_BYTES
+        timestamps = iter(
+            [
+                datetime(2026, 5, 8, 12, 0, 0),
+                datetime(2026, 5, 8, 12, 0, 0),
+                datetime(2026, 5, 8, 12, 0, 0),
+                datetime(2026, 5, 8, 12, 0, 1),
+            ]
+        )
+        self.bot._local_now = lambda: next(timestamps)
+
+        first_update = {
+            "update_id": 1,
+            "message": {
+                "chat": {"id": 778, "type": "private"},
+                "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                "photo": [{"file_id": "file-1", "file_unique_id": "u-1", "file_size": 100}],
+            },
+        }
+        second_update = {
+            "update_id": 2,
+            "message": {
+                "chat": {"id": 778, "type": "private"},
+                "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                "photo": [{"file_id": "file-2", "file_unique_id": "u-2", "file_size": 100}],
+            },
+        }
+
+        self.bot._handle_update(first_update)
+        self.bot._handle_update(second_update)
+
+        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
+        self.assertEqual(business_calls[0][0], "getFile")
+        self.assertEqual(business_calls[1][0], "sendMessage")
+        self.assertEqual(business_calls[2][0], "sendMessage")
+        self.assertIn("Подождите 14 сек. перед следующим фото.", business_calls[2][1]["text"])
+
+    def test_regular_user_cannot_send_second_photo_while_first_is_processing(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            if method == "getFile":
+                return {"file_path": "photos/meal.jpg"}
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._download_telegram_file = lambda path: VALID_PNG_BYTES
+        self.bot._local_now = lambda: datetime(2026, 5, 8, 12, 0, 0)
+
+        second_update = {
+            "update_id": 2,
+            "message": {
+                "chat": {"id": 778, "type": "private"},
+                "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                "photo": [{"file_id": "file-2", "file_unique_id": "u-2", "file_size": 100}],
+            },
+        }
+
+        original_handle_photo_message = self.bot._handle_photo_message
+
+        def nested_handle_photo_message(chat_id, app_user, photo, caption):
+            self.bot._handle_update(second_update)
+            return original_handle_photo_message(chat_id, app_user, photo, caption)
+
+        self.bot._handle_photo_message = nested_handle_photo_message
+
+        first_update = {
+            "update_id": 1,
+            "message": {
+                "chat": {"id": 778, "type": "private"},
+                "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                "photo": [{"file_id": "file-1", "file_unique_id": "u-1", "file_size": 100}],
+            },
+        }
+
+        self.bot._handle_update(first_update)
+
+        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
+        self.assertEqual(business_calls[0][0], "sendMessage")
+        self.assertIn("предыдущее фото еще обрабатывается", business_calls[0][1]["text"])
+        self.assertEqual(business_calls[1][0], "getFile")
+        self.assertEqual(business_calls[2][0], "sendMessage")
+
 
     def test_drafts_command_lists_pending_drafts(self) -> None:
         response = self.bot._route_command("/drafts", app_user=self.service.users_by_telegram_id[42])

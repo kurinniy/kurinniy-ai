@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import shlex
 import time
 from datetime import date, datetime, timedelta
@@ -43,6 +44,8 @@ class TelegramHealthBot:
         self.base_url = "https://api.telegram.org/bot%s/" % settings.bot_token
         self.timezone = ZoneInfo(settings.timezone_name)
         self.digest_renderer = digest_renderer or DigestImageRenderer()
+        self._photo_processing_user_ids = set()
+        self._photo_rate_limit_until_by_user: Dict[int, datetime] = {}
 
     def run_forever(self) -> None:
         self._ensure_polling_mode()
@@ -109,12 +112,20 @@ class TelegramHealthBot:
             if app_user is None:
                 self._send_message(chat_id, self._registration_required_text())
                 return
-            self._handle_photo_message(
-                chat_id=chat_id,
-                app_user=app_user,
-                photo=photo,
-                caption=caption if isinstance(caption, str) else "",
-            )
+            current_time = self._local_now()
+            rate_limit_error = self._try_begin_photo_processing(app_user, now=current_time)
+            if rate_limit_error is not None:
+                self._send_message(chat_id, rate_limit_error)
+                return
+            try:
+                self._handle_photo_message(
+                    chat_id=chat_id,
+                    app_user=app_user,
+                    photo=photo,
+                    caption=caption if isinstance(caption, str) else "",
+                )
+            finally:
+                self._finish_photo_processing(app_user, now=self._local_now())
             return
 
         if isinstance(document, dict):
@@ -1189,6 +1200,29 @@ class TelegramHealthBot:
         return (
             "Бот работает только в личных сообщениях.\n"
             "Отправьте команду /start, чтобы начать работу."
+        )
+
+    def _try_begin_photo_processing(self, app_user: AppUser, now: datetime) -> Optional[str]:
+        if app_user.has_admin_access:
+            return None
+        if app_user.user_id in self._photo_processing_user_ids:
+            return "Подождите, предыдущее фото еще обрабатывается."
+        available_at = self._photo_rate_limit_until_by_user.get(app_user.user_id)
+        if available_at is not None and now < available_at:
+            seconds_left = max(1, math.ceil((available_at - now).total_seconds()))
+            return "Подождите %s сек. перед следующим фото." % seconds_left
+        self._photo_processing_user_ids.add(app_user.user_id)
+        return None
+
+    def _finish_photo_processing(self, app_user: AppUser, now: datetime) -> None:
+        if app_user.has_admin_access:
+            return
+        self._photo_processing_user_ids.discard(app_user.user_id)
+        if self.settings.food_photo_rate_limit_seconds <= 0:
+            self._photo_rate_limit_until_by_user.pop(app_user.user_id, None)
+            return
+        self._photo_rate_limit_until_by_user[app_user.user_id] = now + timedelta(
+            seconds=self.settings.food_photo_rate_limit_seconds
         )
 
     @staticmethod

@@ -36,6 +36,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(settings.telegram.allowed_user_ids, frozenset({11, 42}))
         self.assertEqual(settings.telegram.admin_user_ids, frozenset({11, 42, 96445950}))
         self.assertEqual(settings.telegram.owner_telegram_user_id, 96445950)
+        self.assertEqual(settings.telegram.food_photo_rate_limit_seconds, 15)
         self.assertEqual(settings.telegram.timezone_name, "Europe/Moscow")
         self.assertEqual(settings.telegram.environment_name, "staging")
         self.assertEqual(settings.telegram.registration_mode, "open")
@@ -51,6 +52,15 @@ class ConfigTest(unittest.TestCase):
     def test_telegram_settings_require_token(self) -> None:
         with self.assertRaises(ValueError):
             TelegramSettings.from_env({})
+
+    def test_telegram_settings_load_food_photo_rate_limit(self) -> None:
+        settings = TelegramSettings.from_env(
+            {
+                "TELEGRAM_BOT_TOKEN": "123:abc",
+                "TELEGRAM_FOOD_PHOTO_RATE_LIMIT_SECONDS": "25",
+            }
+        )
+        self.assertEqual(settings.food_photo_rate_limit_seconds, 25)
 
     def test_default_food_model_is_used_when_api_key_exists(self) -> None:
         settings = AppSettings.from_env(

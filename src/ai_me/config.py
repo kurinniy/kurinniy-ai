@@ -62,6 +62,7 @@ class DatabaseSettings:
 class TelegramSettings:
     bot_token: str
     polling_timeout_seconds: int = 30
+    food_photo_rate_limit_seconds: int = 15
     allowed_user_ids: FrozenSet[int] = frozenset()
     admin_user_ids: FrozenSet[int] = frozenset()
     owner_telegram_user_id: int = 96445950
@@ -78,6 +79,7 @@ class TelegramSettings:
 
         allowed_user_ids = _parse_int_set(env.get("ALLOWED_TELEGRAM_USER_IDS"))
         timeout = int(env.get("TELEGRAM_POLLING_TIMEOUT_SECONDS", "30"))
+        food_photo_rate_limit_seconds = int(env.get("TELEGRAM_FOOD_PHOTO_RATE_LIMIT_SECONDS", "15"))
         timezone_name = env.get("APP_TIMEZONE", "UTC")
         environment_name = env.get("APP_ENV", "production").strip() or "production"
         owner_telegram_user_id = int(env.get("OWNER_TELEGRAM_USER_ID", "96445950"))
@@ -88,6 +90,7 @@ class TelegramSettings:
         return cls(
             bot_token=bot_token,
             polling_timeout_seconds=timeout,
+            food_photo_rate_limit_seconds=food_photo_rate_limit_seconds,
             allowed_user_ids=allowed_user_ids,
             admin_user_ids=admin_user_ids,
             owner_telegram_user_id=owner_telegram_user_id,
