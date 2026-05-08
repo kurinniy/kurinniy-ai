@@ -1079,12 +1079,11 @@ class TelegramHealthBot:
             {"command": "help", "description": "Справка по командам"},
         ]
         try:
-            self._telegram_api(
-                "setMyCommands",
-                {
-                    "commands": json.dumps(commands, ensure_ascii=False),
-                },
-            )
+            payload = {
+                "commands": json.dumps(commands, ensure_ascii=False),
+            }
+            self._telegram_api("setMyCommands", payload)
+            self._telegram_api("setMyCommands", {**payload, "language_code": "ru"})
         except Exception as exc:  # pragma: no cover
             logger.warning("Bot command sync failed: %s", exc)
 

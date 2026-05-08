@@ -791,7 +791,11 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._sync_bot_commands()
 
         self.assertEqual(calls[0][0], "setMyCommands")
+        self.assertEqual(calls[1][0], "setMyCommands")
+        self.assertNotIn("language_code", calls[0][1])
+        self.assertEqual(calls[1][1]["language_code"], "ru")
         commands = json.loads(calls[0][1]["commands"])
+        commands_ru = json.loads(calls[1][1]["commands"])
         command_names = [item["command"] for item in commands]
         self.assertEqual(command_names[0], "start")
         self.assertEqual(command_names[1], "menu")
@@ -809,6 +813,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("whoami", command_names)
         self.assertIn("help", command_names)
         self.assertFalse(any(item["command"] == "create_invite" for item in commands))
+        self.assertEqual(command_names, [item["command"] for item in commands_ru])
 
     def test_sync_mini_app_menu_button_registers_web_app(self) -> None:
         calls = []
