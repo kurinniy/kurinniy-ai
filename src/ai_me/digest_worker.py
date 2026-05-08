@@ -103,6 +103,7 @@ class DigestSchedulerWorker:
                 chat_id=user.chat_id,
                 user_id=user.user_id,
                 digest_date=digest_date,
+                include_step_insight=user.is_admin,
             ),
             completed_at=user_now,
         )

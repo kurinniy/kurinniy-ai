@@ -503,7 +503,8 @@ class TelegramHealthBot:
         digest = self.service.build_daily_food_digest(app_user.user_id, target_date)
         if digest is None:
             return "Для %s нет подтвержденных фото-блюд для daily digest." % target_date.isoformat()
-        return self._format_daily_digest_text(digest, preview=True)
+        step_progress = self.service.build_step_progress_insight(app_user.user_id, target_date) if app_user.is_admin else None
+        return self._format_daily_digest_text(digest, preview=True, step_progress=step_progress)
 
     def _handle_weekly_digest_preview(self, app_user: AppUser, args: List[str]) -> str:
         if args:
@@ -795,7 +796,13 @@ class TelegramHealthBot:
 
     def _send_daily_digest_preview(self, chat_id: int, app_user: AppUser, args: List[str]) -> None:
         target_date = date.fromisoformat(args[0]) if args else (self._local_today() - timedelta(days=1))
-        if self.send_daily_digest(chat_id=chat_id, user_id=app_user.user_id, digest_date=target_date, preview=True) is None:
+        if self.send_daily_digest(
+            chat_id=chat_id,
+            user_id=app_user.user_id,
+            digest_date=target_date,
+            preview=True,
+            include_step_insight=app_user.is_admin,
+        ) is None:
             self._send_message(chat_id, "Для %s нет подтвержденных фото-блюд для daily digest." % target_date.isoformat())
 
     def _send_weekly_digest_preview(self, chat_id: int, app_user: AppUser, args: List[str]) -> None:
@@ -811,10 +818,20 @@ class TelegramHealthBot:
                 % (week_start.isoformat(), (week_start + timedelta(days=6)).isoformat()),
             )
 
-    def send_daily_digest(self, chat_id: int, user_id: int, digest_date: date, preview: bool = False) -> Optional[Dict[str, object]]:
+    def send_daily_digest(
+        self,
+        chat_id: int,
+        user_id: int,
+        digest_date: date,
+        preview: bool = False,
+        include_step_insight: bool = False,
+    ) -> Optional[Dict[str, object]]:
         digest = self.service.build_daily_food_digest(user_id, digest_date)
         if digest is None:
             return None
+        step_progress = None
+        if include_step_insight:
+            step_progress = self.service.build_step_progress_insight(user_id, digest_date)
         photo_result = None
         mosaic_bytes = self.digest_renderer.render_daily_mosaic(digest)
         if mosaic_bytes is not None:
@@ -823,7 +840,10 @@ class TelegramHealthBot:
                 mosaic_bytes,
                 filename="daily-digest-%s.jpg" % digest_date.isoformat(),
             )
-        text_result = self._send_message(chat_id, self._format_daily_digest_text(digest, preview=preview))
+        text_result = self._send_message(
+            chat_id,
+            self._format_daily_digest_text(digest, preview=preview, step_progress=step_progress),
+        )
         payload: Dict[str, object] = {
             "digest_type": "daily",
             "digest_date": digest_date.isoformat(),
@@ -859,7 +879,11 @@ class TelegramHealthBot:
         return payload
 
     @staticmethod
-    def _format_daily_digest_text(digest: DailyFoodDigest, preview: bool = False) -> str:
+    def _format_daily_digest_text(
+        digest: DailyFoodDigest,
+        preview: bool = False,
+        step_progress=None,
+    ) -> str:
         lines = [
             ("Daily digest preview за %s" % digest.digest_date.isoformat())
             if preview
@@ -875,6 +899,19 @@ class TelegramHealthBot:
             lines.append("- %s | %s | %s ккал" % (meal.occurred_at.strftime("%H:%M"), meal.title, meal.calories))
         lines.append("")
         lines.append(digest.commentary)
+        if step_progress is not None:
+            lines.extend(
+                [
+                    "",
+                    "Шаги за день: %s / %s" % (step_progress.steps, step_progress.target_steps),
+                    (
+                        "30-дневная средняя: %.1f" % step_progress.average_steps_30d
+                        if step_progress.average_steps_30d is not None
+                        else "30-дневная средняя: нет данных"
+                    ),
+                    "Комментарий по шагам: %s" % step_progress.comment,
+                ]
+            )
         return "\n".join(lines)
 
     @staticmethod

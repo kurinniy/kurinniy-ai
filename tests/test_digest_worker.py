@@ -17,8 +17,15 @@ class FakeDigestBot:
         self.daily_result = {"text_message_id": 101}
         self.weekly_result = {"text_message_id": 202}
 
-    def send_daily_digest(self, chat_id: int, user_id: int, digest_date: date, preview: bool = False):
-        self.daily_calls.append((chat_id, user_id, digest_date, preview))
+    def send_daily_digest(
+        self,
+        chat_id: int,
+        user_id: int,
+        digest_date: date,
+        preview: bool = False,
+        include_step_insight: bool = False,
+    ):
+        self.daily_calls.append((chat_id, user_id, digest_date, preview, include_step_insight))
         return self.daily_result
 
     def send_weekly_digest(self, chat_id: int, user_id: int, week_start: date, preview: bool = False):
@@ -90,7 +97,7 @@ class DigestSchedulerWorkerTest(unittest.TestCase):
 
         self.worker.run_once(now_utc=datetime(2026, 5, 7, 5, 10, tzinfo=timezone.utc))
 
-        self.assertEqual(self.bot.daily_calls, [(96445950, self.user.user_id, date(2026, 5, 6), False)])
+        self.assertEqual(self.bot.daily_calls, [(96445950, self.user.user_id, date(2026, 5, 6), False, True)])
         runs = self.service.list_digest_runs(self.user.user_id, digest_type=DigestType.DAILY)
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0].status, DigestStatus.SENT)

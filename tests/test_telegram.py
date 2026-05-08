@@ -497,6 +497,15 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Daily digest preview за 2026-05-06", response)
         self.assertIn("Список блюд:", response)
         self.assertIn("Курица с рисом", response)
+        self.assertIn("Шаги за день: 6200 / 10000", response)
+        self.assertIn("Комментарий по шагам:", response)
+
+    def test_digest_preview_for_regular_user_hides_step_block(self) -> None:
+        response = self.bot._route_command("/digest_preview 2026-05-06", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Daily digest preview за 2026-05-06", response)
+        self.assertIn("Список блюд:", response)
+        self.assertNotIn("Шаги за день:", response)
+        self.assertNotIn("Комментарий по шагам:", response)
 
     def test_weekly_digest_preview_command_returns_weekly_preview(self) -> None:
         response = self.bot._route_command(
@@ -535,6 +544,37 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[0][0], "sendPhoto")
         self.assertEqual(calls[1][0], "sendMessage")
         self.assertIn("Daily digest preview за 2026-05-06", calls[1][1]["text"])
+        self.assertIn("Шаги за день: 6200 / 10000", calls[1][1]["text"])
+
+    def test_digest_preview_update_for_regular_user_hides_step_block(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        def fake_telegram_api_multipart(method, **kwargs):
+            calls.append((method, kwargs))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._telegram_api_multipart = fake_telegram_api_multipart
+
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/digest_preview 2026-05-06",
+                    "chat": {"id": 778, "type": "private"},
+                    "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                },
+            }
+        )
+
+        self.assertEqual(calls[0][0], "sendPhoto")
+        self.assertEqual(calls[1][0], "sendMessage")
+        self.assertNotIn("Шаги за день:", calls[1][1]["text"])
+        self.assertNotIn("Комментарий по шагам:", calls[1][1]["text"])
 
     def test_weekly_digest_preview_update_sends_mosaic_photo_and_text(self) -> None:
         calls = []
