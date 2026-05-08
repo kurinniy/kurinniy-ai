@@ -6,7 +6,7 @@ Current stage of a personal assistant system focused on three concrete capabilit
 - `DecisionLog`: stores assistant recommendations, alerts, and confirmation requests derived from those signals.
 - `Telegram Interface`: accepts health events over Telegram using long polling.
 - `Food Pipeline`: accepts food photos, creates a meal draft, and logs it after confirmation.
-- `Multi-user Access`: supports invite-only onboarding for multiple Telegram users in private chats.
+- `Multi-user Access`: supports open onboarding for multiple Telegram users in private chats.
 - `Google Drive Health Import`: imports daily JSON exports with activity metrics from a user-specific Google Drive folder.
 - `Telegram Mini App`: provides a web dashboard inside Telegram while the bot remains the channel for onboarding, digests, and fallback actions.
 
@@ -51,7 +51,7 @@ Optional:
 - `APP_RUNTIME_MODE`: `bot` or `digest_worker`; defaults to `bot`.
 - `DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS`: defaults to `60`.
 - `OWNER_TELEGRAM_USER_ID`: Telegram user id, which receives existing single-user data during migration. Defaults to `96445950`.
-- `ADMIN_TELEGRAM_USER_IDS`: comma-separated Telegram user ids that can create and revoke invites.
+- `ADMIN_TELEGRAM_USER_IDS`: comma-separated Telegram user ids with administrator privileges.
 - `ALLOWED_TELEGRAM_USER_IDS`: legacy fallback for admin ids.
 - `APP_TIMEZONE`: for example `Europe/Moscow`.
 - `TELEGRAM_POLLING_TIMEOUT_SECONDS`: defaults to `30`.
@@ -138,7 +138,7 @@ Current Mini App scope:
 
 The bot remains responsible for:
 
-- invite-only onboarding;
+- onboarding in private chats;
 - daily and weekly digest delivery;
 - food photo intake and confirmation;
 - fallback command handling.
@@ -178,15 +178,15 @@ Scheduler behavior:
 
 ## Access Model
 
-The bot now works only in `private chats` and uses `invite-only` onboarding.
+The bot now works only in `private chats` and uses open onboarding.
 
 Boot sequence:
 
 1. Set `OWNER_TELEGRAM_USER_ID` for the current owner account.
 2. Deploy the bot.
 3. The store creates that owner user automatically and migrates legacy single-user rows onto that owner.
-4. Open the bot from the owner account and create invites with `/create_invite`.
-5. New users connect with `/start <invite_code>`.
+4. Open the bot from any user account and send `/start`.
+5. New users are created automatically and continue working in their own isolated scope.
 
 ## Food Photo Flow
 
@@ -205,9 +205,8 @@ Fallback commands:
 
 - Create meal drafts from Telegram food photos.
 - Support multiple Telegram users with isolated data by `user_id`.
-- Register new users only by invite code.
+- Register new users with `/start`.
 - Reject group chats and work only in Telegram private chats.
-- Create, list, and revoke invite codes from admin accounts.
 - Build a daily health summary from raw events.
 - Expose Telegram and internal account data through `/whoami`.
 - Generate idempotent decisions for common cases:

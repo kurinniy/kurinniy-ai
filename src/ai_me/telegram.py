@@ -11,7 +11,7 @@ from ai_me.config import TelegramSettings
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.digest import DailyFoodDigest, WeeklyFoodDigest
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
-from ai_me.domain.user import AppUser, InviteStatus, UserStatus
+from ai_me.domain.user import AppUser, UserStatus
 from ai_me.services.digest_renderer import DigestImageRenderer
 from ai_me.services.health_service import HealthService
 from ai_me.version import format_release_date_line, format_version_line
@@ -174,7 +174,7 @@ class TelegramHealthBot:
         )
         if app_user is None:
             logger.warning("Rejected callback from unregistered user_id=%s", user_id)
-            self._answer_callback_query(query_id, "Сначала подключите бота по инвайту.")
+            self._answer_callback_query(query_id, "Сначала отправьте /start, чтобы подключить бота.")
             return
         if app_user.status == UserStatus.BLOCKED:
             self._answer_callback_query(query_id, "Ваш доступ к боту заблокирован.")
@@ -314,12 +314,6 @@ class TelegramHealthBot:
                 return self._handle_summary(app_user, args)
             if command == "/decisions":
                 return self._handle_decisions(app_user, args)
-            if command == "/create_invite":
-                return self._handle_create_invite(app_user, args)
-            if command == "/list_invites":
-                return self._handle_list_invites(app_user)
-            if command == "/revoke_invite":
-                return self._handle_revoke_invite(app_user, args)
         except ValueError as exc:
             return "Некорректные аргументы команды: %s" % exc
         return "Неизвестная команда.\n\n%s" % self._help_text(app_user)
@@ -337,17 +331,11 @@ class TelegramHealthBot:
             return "Бот уже подключен.\n\n%s" % self._help_text(app_user)
         if chat_id is None or user_id is None:
             return self._registration_required_text()
-        if not args:
-            return self._registration_required_text()
-        invite_code = args[0].strip()
-        if not invite_code:
-            return self._registration_required_text()
-        registered_user = self.service.register_user_with_invite(
+        registered_user = self.service.register_user(
             telegram_user_id=user_id,
             chat_id=chat_id,
             username=username,
             first_name=first_name,
-            invite_code=invite_code,
             now=self._local_now(),
         )
         return (
@@ -619,56 +607,17 @@ class TelegramHealthBot:
             lines.append("- [%s] %s" % (decision.kind.value, decision.title))
         return "\n".join(lines)
 
-    def _handle_create_invite(self, app_user: AppUser, args: List[str]) -> str:
-        self._ensure_admin(app_user)
-        days_valid = int(args[0]) if len(args) >= 1 else 7
-        max_uses = int(args[1]) if len(args) >= 2 else 1
-        invite = self.service.create_invite(
-            created_by_user_id=app_user.user_id,
-            days_valid=days_valid,
-            max_uses=max_uses,
-            now=self._local_now(),
-        )
-        expires_at = invite.expires_at.strftime("%d.%m.%Y %H:%M") if invite.expires_at else "без срока"
-        return (
-            "Инвайт создан\n"
-            "Код: %s\n"
-            "Действует до: %s\n"
-            "Использований: %s"
-        ) % (invite.code, expires_at, invite.max_uses)
-
-    def _handle_list_invites(self, app_user: AppUser) -> str:
-        self._ensure_admin(app_user)
-        invites = self.service.list_invites()
-        if not invites:
-            return "Инвайтов пока нет."
-        lines = ["Инвайты:"]
-        for invite in invites[:20]:
-            expires_at = invite.expires_at.strftime("%d.%m.%Y %H:%M") if invite.expires_at else "без срока"
-            lines.append(
-                "- %s | %s | %s/%s | до %s"
-                % (invite.code, invite.status.value, invite.used_count, invite.max_uses, expires_at)
-            )
-        return "\n".join(lines)
-
-    def _handle_revoke_invite(self, app_user: AppUser, args: List[str]) -> str:
-        self._ensure_admin(app_user)
-        if len(args) != 1:
-            return "Использование: /revoke_invite <code>"
-        self.service.revoke_invite(args[0])
-        return "Инвайт отозван: %s" % args[0]
-
     def _help_text(self, app_user: Optional[AppUser]) -> str:
         if app_user is None:
             return (
                 "Окружение: %s\n" % self.settings.environment_name
                 + "%s\n" % format_version_line()
                 + "%s\n" % format_release_date_line()
-                + "Доступ: только по инвайту, только в личных сообщениях.\n"
-                + "Чтобы подключиться, отправьте команду:\n"
-                + "/start <invite_code>\n\n"
+                + "Доступ: открыт для всех, только в личных сообщениях.\n"
+                + "Чтобы начать работу, отправьте команду:\n"
+                + "/start\n\n"
                 + "Доступные команды без подключения:\n"
-                + "/start <invite_code>\n"
+                + "/start\n"
                 + "/whoami\n"
                 + "/help"
             )
@@ -703,16 +652,6 @@ class TelegramHealthBot:
             "/summary [YYYY-MM-DD]",
             "/decisions [YYYY-MM-DD]",
         ]
-        if app_user.is_admin:
-            commands.extend(
-                [
-                    "",
-                    "Админ-команды:",
-                    "/create_invite [days_valid] [max_uses]",
-                    "/list_invites",
-                    "/revoke_invite <code>",
-                ]
-            )
         return "\n".join(commands)
 
     def _format_new_decisions(self, decisions: Iterable) -> str:
@@ -1046,7 +985,7 @@ class TelegramHealthBot:
 
     def _sync_bot_commands(self) -> None:
         commands = [
-            {"command": "start", "description": "Подключить бота по инвайту"},
+            {"command": "start", "description": "Подключить и открыть бота"},
             {"command": "menu", "description": "Показать кнопки и список команд"},
             {"command": "summary", "description": "Сводка за сегодня"},
             {"command": "finance_month", "description": "Финансовая сводка за месяц"},
@@ -1062,8 +1001,6 @@ class TelegramHealthBot:
             {"command": "weekly_digest_preview", "description": "Предпросмотр weekly digest"},
             {"command": "import_tbank", "description": "Импорт CSV из Т-Банка"},
             {"command": "drafts", "description": "Черновики приема пищи"},
-            {"command": "create_invite", "description": "Создать инвайт (admin)"},
-            {"command": "list_invites", "description": "Список инвайтов (admin)"},
             {"command": "whoami", "description": "Мои Telegram ID"},
             {"command": "help", "description": "Справка по командам"},
         ]
@@ -1160,18 +1097,13 @@ class TelegramHealthBot:
 
     def _registration_required_text(self) -> str:
         return (
-            "Бот доступен только по инвайту и только в личных сообщениях.\n"
-            "Отправьте команду /start <invite_code>, чтобы подключиться."
+            "Бот работает только в личных сообщениях.\n"
+            "Отправьте команду /start, чтобы начать работу."
         )
 
     @staticmethod
     def _private_chat_only_text() -> str:
         return "Бот работает только в личных сообщениях."
-
-    @staticmethod
-    def _ensure_admin(app_user: AppUser) -> None:
-        if not app_user.is_admin:
-            raise ValueError("Команда доступна только администратору.")
 
     def _telegram_api(self, method: str, params: Dict[str, object]):
         encoded = parse.urlencode(params).encode()

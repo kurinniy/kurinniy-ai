@@ -44,7 +44,7 @@ from ai_me.domain.health import (
     WeightEntry,
 )
 from ai_me.domain.health_import import HealthImportProvider, HealthImportResult, UserGoogleDriveSettings
-from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
+from ai_me.domain.user import AppUser, UserStatus
 from ai_me.services.food_analysis import DisabledFoodPhotoAnalyzer, FoodPhotoAnalyzer
 from ai_me.services.google_drive_import import GoogleDriveHealthImportService
 from ai_me.services.rules import HealthDecisionEngine
@@ -105,16 +105,15 @@ class HealthService:
         users = self.store.list_users_with_google_drive_enabled()
         return [user for user in users if user.status == UserStatus.ACTIVE]
 
-    def register_user_with_invite(
+    def register_user(
         self,
         telegram_user_id: int,
         chat_id: int,
         username: str,
         first_name: str,
-        invite_code: str,
         now: Optional[datetime] = None,
     ) -> AppUser:
-        current_time = now or datetime.now()
+        _ = now or datetime.now()
         existing = self.sync_user(
             telegram_user_id=telegram_user_id,
             chat_id=chat_id,
@@ -126,8 +125,7 @@ class HealthService:
                 raise ValueError("Ваш доступ к боту заблокирован.")
             return existing
 
-        invite = self._require_active_invite(invite_code, now=current_time)
-        user = self.store.create_user(
+        return self.store.create_user(
             telegram_user_id=telegram_user_id,
             chat_id=chat_id,
             username=username,
@@ -135,42 +133,6 @@ class HealthService:
             status=UserStatus.ACTIVE,
             is_admin=telegram_user_id in self.admin_telegram_user_ids,
         )
-        next_used_count = invite.used_count + 1
-        next_status = InviteStatus.EXHAUSTED if next_used_count >= invite.max_uses else InviteStatus.ACTIVE
-        self.store.increment_invite_usage(invite.code, status=next_status)
-        return user
-
-    def create_invite(
-        self,
-        created_by_user_id: int,
-        days_valid: int = 7,
-        max_uses: int = 1,
-        now: Optional[datetime] = None,
-    ) -> InviteCode:
-        if days_valid <= 0:
-            raise ValueError("Срок действия инвайта должен быть больше нуля дней.")
-        if max_uses <= 0:
-            raise ValueError("Количество использований инвайта должно быть больше нуля.")
-        created_at = now or datetime.now()
-        invite = InviteCode(
-            code=uuid4().hex[:12].upper(),
-            created_by_user_id=created_by_user_id,
-            created_at=created_at,
-            expires_at=created_at + timedelta(days=days_valid),
-            max_uses=max_uses,
-            used_count=0,
-            status=InviteStatus.ACTIVE,
-        )
-        return self.store.create_invite(invite)
-
-    def list_invites(self, status: Optional[InviteStatus] = None) -> List[InviteCode]:
-        return self.store.list_invites(status=status)
-
-    def revoke_invite(self, code: str) -> None:
-        invite = self.store.get_invite(code)
-        if invite is None:
-            raise ValueError("Инвайт не найден: %s" % code)
-        self.store.update_invite_status(code, InviteStatus.REVOKED)
 
     def google_drive_is_configured(self) -> bool:
         return self.google_drive_import_service.is_configured()
@@ -1121,17 +1083,3 @@ class HealthService:
             return 0.0
         variance = sum((value - mean) ** 2 for value in values) / len(values)
         return round(math.sqrt(variance) / mean, 3)
-
-    def _require_active_invite(self, code: str, now: datetime) -> InviteCode:
-        invite = self.store.get_invite(code)
-        if invite is None:
-            raise ValueError("Инвайт не найден или недействителен.")
-        if invite.status == InviteStatus.REVOKED:
-            raise ValueError("Инвайт отозван.")
-        if invite.expires_at is not None and invite.expires_at < now:
-            self.store.update_invite_status(invite.code, InviteStatus.EXPIRED)
-            raise ValueError("Срок действия инвайта истек.")
-        if invite.used_count >= invite.max_uses or invite.status == InviteStatus.EXHAUSTED:
-            self.store.update_invite_status(invite.code, InviteStatus.EXHAUSTED)
-            raise ValueError("Инвайт уже использован.")
-        return invite

@@ -38,7 +38,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(settings.telegram.owner_telegram_user_id, 96445950)
         self.assertEqual(settings.telegram.timezone_name, "Europe/Moscow")
         self.assertEqual(settings.telegram.environment_name, "staging")
-        self.assertEqual(settings.telegram.registration_mode, "invite_only")
+        self.assertEqual(settings.telegram.registration_mode, "open")
         self.assertEqual(settings.telegram.mini_app_url, "")
         self.assertEqual(settings.environment_name, "staging")
         self.assertEqual(settings.runtime_mode, "digest_worker")

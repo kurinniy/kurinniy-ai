@@ -316,14 +316,12 @@ class HealthServiceTest(unittest.TestCase):
 
         self.assertEqual(summary.water_ml, 800)
 
-    def test_registration_with_invite_creates_second_user_and_keeps_data_isolated(self) -> None:
-        invite = self.service.create_invite(self.user.user_id, days_valid=7, max_uses=1, now=datetime(2026, 5, 6, 10, 0))
-        second_user = self.service.register_user_with_invite(
+    def test_register_user_creates_second_user_and_keeps_data_isolated(self) -> None:
+        second_user = self.service.register_user(
             telegram_user_id=111,
             chat_id=111,
             username="guest",
             first_name="Guest",
-            invite_code=invite.code,
             now=datetime(2026, 5, 6, 11, 0),
         )
 
@@ -352,14 +350,43 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(guest_summary.water_ml, 900)
         self.assertNotEqual(self.service.sync_user(111, 111, "guest", "Guest"), None)
 
-    def test_register_without_valid_invite_is_rejected(self) -> None:
+    def test_register_user_returns_existing_user_for_repeated_start(self) -> None:
+        second_user = self.service.register_user(
+            telegram_user_id=222,
+            chat_id=222,
+            username="guest",
+            first_name="Guest",
+            now=datetime(2026, 5, 6, 10, 0),
+        )
+        repeated = self.service.register_user(
+            telegram_user_id=222,
+            chat_id=333,
+            username="guest-updated",
+            first_name="Guest Updated",
+            now=datetime(2026, 5, 6, 10, 5),
+        )
+
+        self.assertEqual(second_user.user_id, repeated.user_id)
+        self.assertEqual(repeated.chat_id, 333)
+        self.assertEqual(repeated.username, "guest-updated")
+        self.assertEqual(repeated.first_name, "Guest Updated")
+
+    def test_register_blocked_user_is_rejected(self) -> None:
+        self.store.create_user(
+            telegram_user_id=222,
+            chat_id=222,
+            username="blocked",
+            first_name="Blocked",
+            status=UserStatus.BLOCKED,
+            is_admin=False,
+        )
+
         with self.assertRaises(ValueError):
-            self.service.register_user_with_invite(
+            self.service.register_user(
                 telegram_user_id=222,
                 chat_id=222,
                 username="bad",
                 first_name="Bad",
-                invite_code="INVALID",
                 now=datetime(2026, 5, 6, 10, 0),
             )
 

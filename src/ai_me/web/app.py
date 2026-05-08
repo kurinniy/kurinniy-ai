@@ -76,14 +76,17 @@ def create_web_app(settings: AppSettings, service: HealthService):
         except TelegramInitDataError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
 
-        app_user = service.sync_user(
-            telegram_user_id=validated.telegram_user_id,
-            chat_id=validated.telegram_user_id,
-            username=validated.username,
-            first_name=validated.first_name,
-        )
-        if app_user is None:
-            raise HTTPException(status_code=403, detail="registration_required")
+        try:
+            app_user = service.register_user(
+                telegram_user_id=validated.telegram_user_id,
+                chat_id=validated.telegram_user_id,
+                username=validated.username,
+                first_name=validated.first_name,
+            )
+        except ValueError as exc:
+            if "заблокирован" in str(exc):
+                raise HTTPException(status_code=403, detail="blocked") from exc
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         if app_user.status.value == "blocked":
             raise HTTPException(status_code=403, detail="blocked")
         return app_user

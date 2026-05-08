@@ -9,7 +9,7 @@ from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, Fina
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, StepProgressInsight
 from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
-from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
+from ai_me.domain.user import AppUser, UserStatus
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
 from ai_me.telegram import TelegramHealthBot
 
@@ -23,7 +23,6 @@ class DummyHealthService:
     def __init__(self) -> None:
         self.confirmed_draft_ids = []
         self.last_import = None
-        self.created_invites = []
         self.drive_settings_by_user_id = {}
         self.health_import_files_by_user_id = {}
         self.users_by_telegram_id = {
@@ -64,17 +63,30 @@ class DummyHealthService:
             created_at=user.created_at,
         )
 
-    def register_user_with_invite(
+    def register_user(
         self,
         telegram_user_id: int,
         chat_id: int,
         username: str,
         first_name: str,
-        invite_code: str,
         now=None,
     ):
-        if invite_code != "invite-1":
-            raise ValueError("Инвайт не найден или недействителен.")
+        existing = self.users_by_telegram_id.get(telegram_user_id)
+        if existing is not None:
+            if existing.status == UserStatus.BLOCKED:
+                raise ValueError("Ваш доступ к боту заблокирован.")
+            user = AppUser(
+                user_id=existing.user_id,
+                telegram_user_id=telegram_user_id,
+                chat_id=chat_id,
+                username=username,
+                first_name=first_name,
+                status=existing.status,
+                is_admin=existing.is_admin,
+                created_at=existing.created_at,
+            )
+            self.users_by_telegram_id[telegram_user_id] = user
+            return user
         user = AppUser(
             user_id=3,
             telegram_user_id=telegram_user_id,
@@ -87,35 +99,6 @@ class DummyHealthService:
         )
         self.users_by_telegram_id[telegram_user_id] = user
         return user
-
-    def create_invite(self, created_by_user_id: int, days_valid: int = 7, max_uses: int = 1, now=None):
-        invite = InviteCode(
-            code="NEWCODE123",
-            created_by_user_id=created_by_user_id,
-            created_at=now or datetime(2026, 5, 6, 10, 0),
-            expires_at=datetime(2026, 5, 13, 10, 0),
-            max_uses=max_uses,
-            used_count=0,
-            status=InviteStatus.ACTIVE,
-        )
-        self.created_invites.append(invite)
-        return invite
-
-    def list_invites(self, status=None):
-        return [
-            InviteCode(
-                code="ABC123",
-                created_by_user_id=1,
-                created_at=datetime(2026, 5, 6, 10, 0),
-                expires_at=datetime(2026, 5, 13, 10, 0),
-                max_uses=1,
-                used_count=0,
-                status=InviteStatus.ACTIVE,
-            )
-        ]
-
-    def revoke_invite(self, code: str) -> None:
-        return None
 
     def get_digest_settings(self, user_id):
         return type(
@@ -404,7 +387,7 @@ class TelegramHealthBotTest(unittest.TestCase):
                 owner_telegram_user_id=42,
                 timezone_name="Europe/Moscow",
                 environment_name="staging",
-                registration_mode="invite_only",
+                registration_mode="open",
                 mini_app_url="https://staging-mini-app.example.com",
             ),
         )
@@ -413,16 +396,17 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/whoami", chat_id=777, user_id=42, app_user=self.service.users_by_telegram_id[42])
         self.assertIn("Данные Telegram", response)
         self.assertIn("окружение=staging", response)
-        self.assertIn("режим_доступа=invite_only", response)
+        self.assertIn("режим_доступа=open", response)
         self.assertIn("app_user_id=1", response)
         self.assertIn("роль=admin", response)
 
-    def test_help_for_unregistered_user_explains_invite_flow(self) -> None:
+    def test_help_for_unregistered_user_explains_open_start_flow(self) -> None:
         response = self.bot._route_command("/help")
         self.assertIn("Версия: 0.4", response)
         self.assertIn("Дата релиза: 2026-05-07", response)
-        self.assertIn("Доступ: только по инвайту", response)
-        self.assertIn("/start <invite_code>", response)
+        self.assertIn("Доступ: открыт для всех", response)
+        self.assertIn("/start", response)
+        self.assertNotIn("/start <invite_code>", response)
 
     def test_help_for_registered_user_does_not_list_removed_manual_health_commands(self) -> None:
         response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[42])
@@ -438,9 +422,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("/activity", response)
         self.assertNotIn("/goals", response)
 
-    def test_start_with_invite_registers_new_user(self) -> None:
+    def test_start_registers_new_user_without_invite(self) -> None:
         response = self.bot._route_command(
-            "/start invite-1",
+            "/start",
             chat_id=999,
             user_id=999,
             username="newuser",
@@ -641,7 +625,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(commands[11]["command"], "digest_off")
         self.assertEqual(commands[12]["command"], "digest_preview")
         self.assertEqual(commands[13]["command"], "weekly_digest_preview")
-        self.assertEqual(commands[16]["command"], "create_invite")
+        self.assertEqual(commands[16]["command"], "whoami")
+        self.assertEqual(commands[17]["command"], "help")
+        self.assertFalse(any(item["command"] == "create_invite" for item in commands))
 
     def test_sync_mini_app_menu_button_registers_web_app(self) -> None:
         calls = []
@@ -759,7 +745,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[1][0], "editMessageText")
         self.assertEqual(calls[2][0], "sendMessage")
 
-    def test_unregistered_callback_gets_invite_prompt(self) -> None:
+    def test_unregistered_callback_gets_start_prompt(self) -> None:
         calls = []
 
         def fake_telegram_api(method, params):
@@ -780,7 +766,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         self.assertEqual(calls[0][0], "answerCallbackQuery")
-        self.assertIn("Сначала подключите бота", calls[0][1]["text"])
+        self.assertIn("Сначала отправьте /start", calls[0][1]["text"])
 
     def test_meal_draft_message_uses_russian_labels(self) -> None:
         draft = self.service.list_meal_drafts(1)[0]
@@ -829,14 +815,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("30-дневная средняя: 5400.0", response)
         self.assertIn("Комментарий по шагам:", response)
 
-    def test_admin_can_create_invite(self) -> None:
+    def test_removed_invite_command_is_unknown(self) -> None:
         response = self.bot._route_command("/create_invite 10 2", app_user=self.service.users_by_telegram_id[42])
-        self.assertIn("Инвайт создан", response)
-        self.assertIn("NEWCODE123", response)
-
-    def test_non_admin_cannot_create_invite(self) -> None:
-        response = self.bot._route_command("/create_invite", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("Команда доступна только администратору", response)
+        self.assertIn("Неизвестная команда", response)
 
     def test_removed_manual_health_command_is_unknown(self) -> None:
         response = self.bot._route_command("/water 500", app_user=self.service.users_by_telegram_id[42])

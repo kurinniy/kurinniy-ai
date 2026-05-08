@@ -67,7 +67,7 @@ class TelegramSettings:
     owner_telegram_user_id: int = 96445950
     timezone_name: str = "UTC"
     environment_name: str = "production"
-    registration_mode: str = "invite_only"
+    registration_mode: str = "open"
     mini_app_url: str = ""
 
     @classmethod
@@ -93,7 +93,7 @@ class TelegramSettings:
             owner_telegram_user_id=owner_telegram_user_id,
             timezone_name=timezone_name,
             environment_name=environment_name,
-            registration_mode="invite_only",
+            registration_mode=(env.get("REGISTRATION_MODE", "open").strip() or "open"),
             mini_app_url=env.get("MINI_APP_URL", "").strip(),
         )
 
