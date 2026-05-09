@@ -136,6 +136,8 @@ class InMemoryStore:
             enabled=settings.enabled,
             created_at=current.created_at if current and current.created_at is not None else settings.created_at or datetime.now(),
             updated_at=settings.updated_at or datetime.now(),
+            last_successful_import_at=settings.last_successful_import_at,
+            last_stale_alert_sent_at=settings.last_stale_alert_sent_at,
         )
         self._google_drive_settings_by_user[settings.user_id] = saved
         return saved
@@ -350,6 +352,10 @@ class InMemoryStore:
                 entries[index] = entry
                 return
         entries.append(entry)
+
+    def delete_activity(self, user_id: int, entry_id: str) -> None:
+        entries = self._activity_entries.get(user_id, [])
+        self._activity_entries[user_id] = [entry for entry in entries if entry.entry_id != entry_id]
 
     def list_activity_entries(self, user_id: int, date_from: date, date_to: date) -> List[ActivityEntry]:
         entries = [

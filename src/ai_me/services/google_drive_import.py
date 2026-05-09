@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Protocol
 from uuid import uuid4
 
@@ -295,10 +295,12 @@ class GoogleDriveHealthImportService:
         store,
         google_drive_client: Optional[GoogleDriveClient] = None,
         parser: Optional[GoogleDriveHealthJSONParser] = None,
+        lookback_days: int = 2,
     ) -> None:
         self.store = store
         self.google_drive_client = google_drive_client or DisabledGoogleDriveClient()
         self.parser = parser or GoogleDriveHealthJSONParser()
+        self.lookback_days = max(1, lookback_days)
 
     def is_configured(self) -> bool:
         return self.google_drive_client.is_configured()
@@ -338,6 +340,23 @@ class GoogleDriveHealthImportService:
             )
         )
 
+    def set_stale_alert_sent(self, user_id: int, sent_at: Optional[datetime] = None) -> UserGoogleDriveSettings:
+        current = self.store.get_user_google_drive_settings(user_id)
+        if current is None:
+            raise ValueError("Сначала подключите папку Google Drive.")
+        return self.store.upsert_user_google_drive_settings(
+            UserGoogleDriveSettings(
+                user_id=current.user_id,
+                folder_id=current.folder_id,
+                folder_url=current.folder_url,
+                enabled=current.enabled,
+                created_at=current.created_at,
+                updated_at=sent_at or datetime.now(),
+                last_successful_import_at=current.last_successful_import_at,
+                last_stale_alert_sent_at=sent_at or datetime.now(),
+            )
+        )
+
     def import_new_files(self, user_id: int, now: Optional[datetime] = None) -> HealthImportResult:
         settings = self.store.get_user_google_drive_settings(user_id)
         if settings is None or not settings.enabled:
@@ -346,6 +365,7 @@ class GoogleDriveHealthImportService:
                 provider=self.PROVIDER,
                 scanned_files=0,
                 imported_files=0,
+                updated_files=0,
                 skipped_files=0,
                 failed_files=0,
                 activity_entries_count=0,
@@ -353,31 +373,45 @@ class GoogleDriveHealthImportService:
                 weight_entries_count=0,
             )
 
-        files = self.google_drive_client.list_json_files(settings.folder_id)
+        all_files = self.google_drive_client.list_json_files(settings.folder_id)
+        files = self._filter_recent_files(all_files, now=now)
         imported_files = 0
+        updated_files = 0
         skipped_files = 0
         failed_files = 0
         activity_entries_count = 0
         current_time = now or datetime.now()
 
         for drive_file in files:
-            if self.store.get_health_import_file(user_id, self.PROVIDER, drive_file.file_id) is not None:
+            existing_import = self.store.get_health_import_file(user_id, self.PROVIDER, drive_file.file_id)
+            remote_checksum = drive_file.checksum.strip()
+            if existing_import is not None and remote_checksum and existing_import.checksum == remote_checksum:
                 skipped_files += 1
                 continue
             try:
                 payload = self.google_drive_client.download_file(drive_file.file_id)
+                effective_checksum = remote_checksum or _sha256_hex(payload)
+                if existing_import is not None and existing_import.checksum == effective_checksum:
+                    skipped_files += 1
+                    continue
                 parsed = self.parser.parse(payload, file_name=drive_file.name, file_id=drive_file.file_id)
+                if existing_import is not None:
+                    self._replace_existing_file_data(
+                        user_id=user_id,
+                        existing_import=existing_import,
+                        new_entries=parsed.activity_entries,
+                    )
                 for entry in parsed.activity_entries:
                     self.store.add_activity(user_id, entry)
                 self.store.create_health_import_file(
                     HealthImportFile(
-                        import_id=str(uuid4()),
+                        import_id=existing_import.import_id if existing_import is not None else str(uuid4()),
                         user_id=user_id,
                         provider=self.PROVIDER,
                         external_file_id=drive_file.file_id,
                         file_name=drive_file.name,
                         file_date=parsed.file_date,
-                        checksum=drive_file.checksum or _sha256_hex(payload),
+                        checksum=effective_checksum,
                         status=HealthImportStatus.IMPORTED,
                         imported_at=current_time,
                         activity_entries_count=len(parsed.activity_entries),
@@ -386,6 +420,7 @@ class GoogleDriveHealthImportService:
                         raw_metadata_json=json.dumps(
                             {
                                 "summary": parsed.summary,
+                                "activity_entry_ids": [entry.entry_id for entry in parsed.activity_entries],
                                 "created_at": drive_file.created_at.isoformat(),
                                 "modified_at": drive_file.modified_at.isoformat(),
                                 "size_bytes": drive_file.size_bytes,
@@ -395,7 +430,10 @@ class GoogleDriveHealthImportService:
                         ),
                     )
                 )
-                imported_files += 1
+                if existing_import is None:
+                    imported_files += 1
+                else:
+                    updated_files += 1
                 activity_entries_count += len(parsed.activity_entries)
             except Exception as exc:
                 failed_files += 1
@@ -408,13 +446,13 @@ class GoogleDriveHealthImportService:
                 )
                 self.store.create_health_import_file(
                     HealthImportFile(
-                        import_id=str(uuid4()),
+                        import_id=existing_import.import_id if existing_import is not None else str(uuid4()),
                         user_id=user_id,
                         provider=self.PROVIDER,
                         external_file_id=drive_file.file_id,
                         file_name=drive_file.name,
                         file_date=None,
-                        checksum=drive_file.checksum,
+                        checksum=remote_checksum,
                         status=HealthImportStatus.FAILED,
                         imported_at=current_time,
                         raw_metadata_json=json.dumps(
@@ -430,17 +468,82 @@ class GoogleDriveHealthImportService:
                     )
                 )
 
+        self.store.upsert_user_google_drive_settings(
+            UserGoogleDriveSettings(
+                user_id=settings.user_id,
+                folder_id=settings.folder_id,
+                folder_url=settings.folder_url,
+                enabled=settings.enabled,
+                created_at=settings.created_at,
+                updated_at=current_time,
+                last_successful_import_at=current_time,
+                last_stale_alert_sent_at=None,
+            )
+        )
+
         return HealthImportResult(
             user_id=user_id,
             provider=self.PROVIDER,
             scanned_files=len(files),
             imported_files=imported_files,
+            updated_files=updated_files,
             skipped_files=skipped_files,
             failed_files=failed_files,
             activity_entries_count=activity_entries_count,
             sleep_entries_count=0,
             weight_entries_count=0,
         )
+
+    def _filter_recent_files(self, files: List[GoogleDriveFile], now: Optional[datetime]) -> List[GoogleDriveFile]:
+        current_time = now or datetime.now()
+        min_date = current_time.date() - timedelta(days=self.lookback_days - 1)
+        filtered = []
+        for drive_file in files:
+            file_day = self._detect_drive_file_date(drive_file)
+            if file_day is not None:
+                if file_day >= min_date:
+                    filtered.append(drive_file)
+                continue
+            if drive_file.modified_at.date() >= min_date:
+                filtered.append(drive_file)
+        return filtered
+
+    def _detect_drive_file_date(self, drive_file: GoogleDriveFile) -> Optional[date]:
+        match = FILE_DATE_PATTERN.search(drive_file.name)
+        if match:
+            return date.fromisoformat(match.group(1))
+        return None
+
+    def _replace_existing_file_data(
+        self,
+        *,
+        user_id: int,
+        existing_import: HealthImportFile,
+        new_entries: List[ActivityEntry],
+    ) -> None:
+        old_entry_ids = self._extract_activity_entry_ids(existing_import)
+        new_entry_ids = {entry.entry_id for entry in new_entries}
+        for entry_id in old_entry_ids:
+            if entry_id not in new_entry_ids:
+                self.store.delete_activity(user_id, entry_id)
+
+    def _extract_activity_entry_ids(self, imported_file: HealthImportFile) -> List[str]:
+        if imported_file.raw_metadata_json:
+            try:
+                payload = json.loads(imported_file.raw_metadata_json)
+            except json.JSONDecodeError:
+                payload = {}
+            entry_ids = payload.get("activity_entry_ids")
+            if isinstance(entry_ids, list):
+                normalized = [str(entry_id).strip() for entry_id in entry_ids if str(entry_id).strip()]
+                if normalized:
+                    return normalized
+        return [
+            GoogleDriveHealthJSONParser._make_activity_entry_id(
+                file_id=imported_file.external_file_id,
+                file_name=imported_file.file_name,
+            )
+        ]
 
 
 def extract_google_drive_folder_id(folder_input: str) -> str:

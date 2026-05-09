@@ -28,6 +28,7 @@ def build_health_service(settings: AppSettings) -> HealthService:
         google_drive_import_service=GoogleDriveHealthImportService(
             store=store,
             google_drive_client=google_drive_client,
+            lookback_days=settings.google_drive.lookback_days,
         ),
         admin_telegram_user_ids=settings.telegram.admin_user_ids,
         default_timezone_name=settings.telegram.timezone_name,

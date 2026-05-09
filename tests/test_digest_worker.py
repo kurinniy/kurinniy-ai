@@ -14,6 +14,7 @@ class FakeDigestBot:
     def __init__(self) -> None:
         self.daily_calls = []
         self.weekly_calls = []
+        self.text_calls = []
         self.daily_result = {"text_message_id": 101}
         self.weekly_result = {"text_message_id": 202}
 
@@ -32,6 +33,10 @@ class FakeDigestBot:
         self.weekly_calls.append((chat_id, user_id, week_start, preview))
         return self.weekly_result
 
+    def send_text_message(self, chat_id: int, text: str):
+        self.text_calls.append((chat_id, text))
+        return {"message_id": 303}
+
 
 class FakeGoogleDriveClient:
     def is_configured(self) -> bool:
@@ -47,10 +52,10 @@ class FakeGoogleDriveClient:
                 (),
                 {
                     "file_id": "file-1",
-                    "name": "HealthAutoExport-2026-05-01.json",
+                    "name": "HealthAutoExport-2026-05-07.json",
                     "checksum": "checksum-1",
-                    "created_at": datetime(2026, 5, 1, 9, 0),
-                    "modified_at": datetime(2026, 5, 1, 9, 5),
+                    "created_at": datetime(2026, 5, 7, 9, 0),
+                    "modified_at": datetime(2026, 5, 7, 9, 5),
                     "size_bytes": 128,
                 },
             )()
@@ -59,8 +64,8 @@ class FakeGoogleDriveClient:
     def download_file(self, file_id: str) -> bytes:
         return (
             b'{"data":{"metrics":['
-            b'{"name":"step_count","units":"count","data":[{"qty":1500,"date":"2026-05-01 10:00:00 +0300","source":"iPhone"}]},'
-            b'{"name":"active_energy","units":"kJ","data":[{"qty":100,"date":"2026-05-01 10:00:00 +0300","source":"iPhone"}]}'
+            b'{"name":"step_count","units":"count","data":[{"qty":1500,"date":"2026-05-07 10:00:00 +0300","source":"iPhone"}]},'
+            b'{"name":"active_energy","units":"kJ","data":[{"qty":100,"date":"2026-05-07 10:00:00 +0300","source":"iPhone"}]}'
             b"]}}"
         )
 
@@ -202,6 +207,7 @@ class DigestSchedulerWorkerTest(unittest.TestCase):
                 enabled=True,
                 created_at=datetime(2026, 5, 7, 8, 0),
                 updated_at=datetime(2026, 5, 7, 8, 0),
+                last_successful_import_at=datetime(2026, 5, 7, 8, 0),
             )
         )
         self.store.upsert_user_digest_settings(
@@ -217,7 +223,7 @@ class DigestSchedulerWorkerTest(unittest.TestCase):
 
         self.worker.run_once(now_utc=datetime(2026, 5, 7, 5, 10, tzinfo=timezone.utc))
 
-        summary = self.store.build_health_summary(self.user.user_id, date(2026, 5, 1))
+        summary = self.store.build_health_summary(self.user.user_id, date(2026, 5, 7))
         self.assertEqual(summary.steps, 1500)
 
     def test_run_once_skips_google_drive_import_for_non_admin_user(self) -> None:
@@ -246,6 +252,7 @@ class DigestSchedulerWorkerTest(unittest.TestCase):
                 enabled=True,
                 created_at=datetime(2026, 5, 7, 8, 0),
                 updated_at=datetime(2026, 5, 7, 8, 0),
+                last_successful_import_at=datetime(2026, 5, 7, 8, 0),
             )
         )
         self.store.upsert_user_digest_settings(
@@ -261,5 +268,82 @@ class DigestSchedulerWorkerTest(unittest.TestCase):
 
         self.worker.run_once(now_utc=datetime(2026, 5, 7, 5, 10, tzinfo=timezone.utc))
 
-        summary = self.store.build_health_summary(regular_user.user_id, date(2026, 5, 1))
+        summary = self.store.build_health_summary(regular_user.user_id, date(2026, 5, 7))
         self.assertEqual(summary.steps, 0)
+
+    def test_run_once_alerts_admins_when_last_successful_import_is_older_than_24_hours(self) -> None:
+        self.service = HealthService(
+            self.store,
+            default_timezone_name="Europe/Moscow",
+            google_drive_import_service=GoogleDriveHealthImportService(
+                store=self.store,
+                google_drive_client=FakeGoogleDriveClient(),
+            ),
+        )
+        self.worker = DigestSchedulerWorker(service=self.service, bot=self.bot, poll_interval_seconds=60)
+        self.store.upsert_user_google_drive_settings(
+            UserGoogleDriveSettings(
+                user_id=self.user.user_id,
+                folder_id="folder-123",
+                folder_url="https://drive.google.com/drive/folders/folder-123",
+                enabled=True,
+                created_at=datetime(2026, 5, 5, 8, 0),
+                updated_at=datetime(2026, 5, 5, 8, 0),
+                last_successful_import_at=datetime(2026, 5, 5, 8, 0),
+            )
+        )
+        self.store.upsert_user_digest_settings(
+            UserDigestSettings(
+                user_id=self.user.user_id,
+                timezone_name="Europe/Moscow",
+                daily_digest_enabled=False,
+                daily_digest_time="08:00",
+                weekly_digest_enabled=False,
+                weekly_digest_time="08:00",
+            )
+        )
+
+        self.worker.run_once(now_utc=datetime(2026, 5, 7, 5, 10, tzinfo=timezone.utc))
+
+        self.assertEqual(len(self.bot.text_calls), 1)
+        self.assertIn("Алерт Google Drive импорта", self.bot.text_calls[0][1])
+        settings = self.store.get_user_google_drive_settings(self.user.user_id)
+        self.assertEqual(settings.last_successful_import_at, datetime(2026, 5, 7, 5, 10))
+        self.assertIsNone(settings.last_stale_alert_sent_at)
+
+    def test_run_once_does_not_repeat_stale_alert_until_new_successful_import(self) -> None:
+        self.service = HealthService(
+            self.store,
+            default_timezone_name="Europe/Moscow",
+            google_drive_import_service=GoogleDriveHealthImportService(
+                store=self.store,
+                google_drive_client=FakeGoogleDriveClient(),
+            ),
+        )
+        self.worker = DigestSchedulerWorker(service=self.service, bot=self.bot, poll_interval_seconds=60)
+        self.store.upsert_user_google_drive_settings(
+            UserGoogleDriveSettings(
+                user_id=self.user.user_id,
+                folder_id="folder-123",
+                folder_url="https://drive.google.com/drive/folders/folder-123",
+                enabled=True,
+                created_at=datetime(2026, 5, 5, 8, 0),
+                updated_at=datetime(2026, 5, 7, 5, 10),
+                last_successful_import_at=datetime(2026, 5, 5, 8, 0),
+                last_stale_alert_sent_at=datetime(2026, 5, 6, 9, 0),
+            )
+        )
+        self.store.upsert_user_digest_settings(
+            UserDigestSettings(
+                user_id=self.user.user_id,
+                timezone_name="Europe/Moscow",
+                daily_digest_enabled=False,
+                daily_digest_time="08:00",
+                weekly_digest_enabled=False,
+                weekly_digest_time="08:00",
+            )
+        )
+
+        self.worker.run_once(now_utc=datetime(2026, 5, 7, 5, 10, tzinfo=timezone.utc))
+
+        self.assertEqual(self.bot.text_calls, [])

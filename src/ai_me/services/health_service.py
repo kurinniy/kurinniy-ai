@@ -159,6 +159,9 @@ class HealthService:
     def set_google_drive_enabled(self, user_id: int, enabled: bool, now: Optional[datetime] = None) -> UserGoogleDriveSettings:
         return self.google_drive_import_service.set_enabled(user_id, enabled=enabled, now=now)
 
+    def set_google_drive_alert_sent(self, user_id: int, sent_at: Optional[datetime] = None) -> UserGoogleDriveSettings:
+        return self.google_drive_import_service.set_stale_alert_sent(user_id, sent_at=sent_at)
+
     def import_google_drive_health_data(self, user_id: int, now: Optional[datetime] = None) -> HealthImportResult:
         return self.google_drive_import_service.import_new_files(user_id, now=now)
 

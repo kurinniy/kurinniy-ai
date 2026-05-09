@@ -105,6 +105,7 @@ class TelegramSettings:
 class GoogleDriveSettings:
     service_account_json: str = ""
     service_account_file: str = ""
+    lookback_days: int = 2
 
     @property
     def enabled(self) -> bool:
@@ -115,6 +116,7 @@ class GoogleDriveSettings:
         return cls(
             service_account_json=env.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip(),
             service_account_file=env.get("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip(),
+            lookback_days=int(env.get("GOOGLE_DRIVE_LOOKBACK_DAYS", "2")),
         )
 
 
@@ -147,7 +149,7 @@ class AppSettings:
     web: WebSettings
     environment_name: str = "production"
     runtime_mode: str = "bot"
-    scheduler_poll_interval_seconds: int = 60
+    scheduler_poll_interval_seconds: int = 7200
     food_vision_api_key: str = ""
     food_vision_model: str = ""
 
@@ -161,7 +163,7 @@ class AppSettings:
             web=WebSettings.from_env(source),
             environment_name=source.get("APP_ENV", "production").strip() or "production",
             runtime_mode=(source.get("APP_RUNTIME_MODE", "bot").strip() or "bot"),
-            scheduler_poll_interval_seconds=int(source.get("DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS", "60")),
+            scheduler_poll_interval_seconds=int(source.get("DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS", "7200")),
             food_vision_api_key=source.get("OPENAI_API_KEY", "").strip(),
             food_vision_model=(source.get("OPENAI_MODEL", "").strip() or "gpt-4.1-mini"),
         )

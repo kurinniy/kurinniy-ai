@@ -49,7 +49,7 @@ Optional:
 
 - `APP_ENV`: defaults to `production`; use `staging` for a staging bot/deploy.
 - `APP_RUNTIME_MODE`: `bot` or `digest_worker`; defaults to `bot`.
-- `DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS`: defaults to `60`.
+- `DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS`: defaults to `7200` (2 hours).
 - `OWNER_TELEGRAM_USER_ID`: Telegram user id, which receives existing single-user data during migration. Defaults to `96445950`.
 - `ADMIN_TELEGRAM_USER_IDS`: comma-separated Telegram user ids with administrator privileges.
 - `ALLOWED_TELEGRAM_USER_IDS`: legacy fallback for admin ids.
@@ -66,6 +66,7 @@ Optional:
 - `OPENAI_MODEL`: required for food photo analysis.
 - `GOOGLE_SERVICE_ACCOUNT_JSON`: service account JSON for Google Drive access.
 - `GOOGLE_SERVICE_ACCOUNT_FILE`: optional path to a service account JSON file.
+- `GOOGLE_DRIVE_LOOKBACK_DAYS`: how many recent days of Google Drive health files to scan; defaults to `2`.
 
 For a copy-paste starting point, use [.env.example](/Users/kurinniy/Documents/Projects/ai-me/.env.example).
 For staging, use [.env.staging.example](/Users/kurinniy/Documents/Projects/ai-me/.env.staging.example).
@@ -85,10 +86,11 @@ APP_RUNTIME_MODE=digest_worker PYTHONPATH=src python3 -m ai_me.main
 The digest worker:
 
 - checks active users every `DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS`;
-- checks connected Google Drive folders for new health export files;
+- checks connected Google Drive folders for recent health export files from the last `GOOGLE_DRIVE_LOOKBACK_DAYS`;
 - sends `daily digest` after `08:00` in the user's timezone for yesterday;
 - sends `weekly digest` on Monday after `08:00` for the previous Monday-Sunday window;
-- uses `digest_runs` to avoid duplicate sends once a digest is marked `sent` or `skipped`.
+- uses `digest_runs` to avoid duplicate sends once a digest is marked `sent` or `skipped`;
+- stores the timestamp of the last successful Google Drive import run and alerts admins if the gap exceeds 24 hours.
 
 ## Run The Mini App Backend
 

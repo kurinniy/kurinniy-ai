@@ -165,14 +165,18 @@ class MySQLStore:
                 folder_url,
                 enabled,
                 created_at,
-                updated_at
+                updated_at,
+                last_successful_import_at,
+                last_stale_alert_sent_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 folder_id = VALUES(folder_id),
                 folder_url = VALUES(folder_url),
                 enabled = VALUES(enabled),
-                updated_at = VALUES(updated_at)
+                updated_at = VALUES(updated_at),
+                last_successful_import_at = VALUES(last_successful_import_at),
+                last_stale_alert_sent_at = VALUES(last_stale_alert_sent_at)
             """,
             (
                 settings.user_id,
@@ -181,6 +185,8 @@ class MySQLStore:
                 1 if settings.enabled else 0,
                 settings.created_at or datetime.now(),
                 settings.updated_at or datetime.now(),
+                settings.last_successful_import_at,
+                settings.last_stale_alert_sent_at,
             ),
         )
         saved = self.get_user_google_drive_settings(settings.user_id)
@@ -250,7 +256,16 @@ class MySQLStore:
                 imported_file.error_message,
             ),
         )
-        row = self._fetchone("SELECT * FROM health_import_files WHERE import_id = %s", (imported_file.import_id,))
+        row = self._fetchone(
+            """
+            SELECT *
+            FROM health_import_files
+            WHERE user_id = %s
+              AND provider = %s
+              AND external_file_id = %s
+            """,
+            (imported_file.user_id, imported_file.provider.value, imported_file.external_file_id),
+        )
         if row is None:
             raise RuntimeError("Не удалось сохранить health import file %s" % imported_file.import_id)
         return self._to_health_import_file(row)
@@ -753,6 +768,12 @@ class MySQLStore:
             ),
         )
 
+    def delete_activity(self, user_id: int, entry_id: str) -> None:
+        self._execute(
+            "DELETE FROM activity_entries WHERE user_id = %s AND entry_id = %s",
+            (user_id, entry_id),
+        )
+
     def list_activity_entries(self, user_id: int, date_from: date, date_to: date) -> List[ActivityEntry]:
         period_start = datetime.combine(date_from, time.min)
         period_end = datetime.combine(date_to, time.max)
@@ -1061,6 +1082,8 @@ class MySQLStore:
                 enabled TINYINT(1) NOT NULL DEFAULT 1,
                 created_at DATETIME(6) NOT NULL,
                 updated_at DATETIME(6) NOT NULL,
+                last_successful_import_at DATETIME(6) NULL,
+                last_stale_alert_sent_at DATETIME(6) NULL,
                 INDEX idx_google_drive_enabled (enabled)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
             """,
@@ -1297,6 +1320,16 @@ class MySQLStore:
             "activity_entries",
             "user_id",
             "ALTER TABLE activity_entries ADD COLUMN user_id BIGINT NULL AFTER entry_id",
+        )
+        self._ensure_column(
+            "user_google_drive_settings",
+            "last_successful_import_at",
+            "ALTER TABLE user_google_drive_settings ADD COLUMN last_successful_import_at DATETIME(6) NULL AFTER updated_at",
+        )
+        self._ensure_column(
+            "user_google_drive_settings",
+            "last_stale_alert_sent_at",
+            "ALTER TABLE user_google_drive_settings ADD COLUMN last_stale_alert_sent_at DATETIME(6) NULL AFTER last_successful_import_at",
         )
         self._ensure_column("decision_log", "user_id", "ALTER TABLE decision_log ADD COLUMN user_id BIGINT NULL AFTER decision_id")
         self._ensure_column(
@@ -1546,6 +1579,8 @@ class MySQLStore:
             enabled=bool(row["enabled"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            last_successful_import_at=row.get("last_successful_import_at"),
+            last_stale_alert_sent_at=row.get("last_stale_alert_sent_at"),
         )
 
     @staticmethod

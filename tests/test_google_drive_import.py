@@ -23,31 +23,31 @@ def _sample_health_export() -> bytes:
                     "name": "step_count",
                     "units": "count",
                     "data": [
-                        {"qty": 1200, "date": "2026-05-01 10:00:00 +0300", "source": "iPhone"},
-                        {"qty": 800, "date": "2026-05-01 12:00:00 +0300", "source": "iPhone"},
+                        {"qty": 1200, "date": "2026-05-07 10:00:00 +0300", "source": "iPhone"},
+                        {"qty": 800, "date": "2026-05-07 12:00:00 +0300", "source": "iPhone"},
                     ],
                 },
                 {
                     "name": "walking_running_distance",
                     "units": "km",
                     "data": [
-                        {"qty": 0.9, "date": "2026-05-01 10:00:00 +0300", "source": "iPhone"},
-                        {"qty": 1.1, "date": "2026-05-01 12:00:00 +0300", "source": "iPhone"},
+                        {"qty": 0.9, "date": "2026-05-07 10:00:00 +0300", "source": "iPhone"},
+                        {"qty": 1.1, "date": "2026-05-07 12:00:00 +0300", "source": "iPhone"},
                     ],
                 },
                 {
                     "name": "active_energy",
                     "units": "kJ",
                     "data": [
-                        {"qty": 100, "date": "2026-05-01 10:00:00 +0300", "source": "iPhone"},
-                        {"qty": 200, "date": "2026-05-01 12:00:00 +0300", "source": "iPhone"},
+                        {"qty": 100, "date": "2026-05-07 10:00:00 +0300", "source": "iPhone"},
+                        {"qty": 200, "date": "2026-05-07 12:00:00 +0300", "source": "iPhone"},
                     ],
                 },
                 {
                     "name": "flights_climbed",
                     "units": "count",
                     "data": [
-                        {"qty": 4, "date": "2026-05-01 10:00:00 +0300", "source": "iPhone"},
+                        {"qty": 4, "date": "2026-05-07 10:00:00 +0300", "source": "iPhone"},
                     ],
                 },
             ]
@@ -62,10 +62,10 @@ class FakeGoogleDriveClient:
         self.files = [
             GoogleDriveFile(
                 file_id="file-1",
-                name="HealthAutoExport-2026-05-01.json",
+                name="HealthAutoExport-2026-05-07.json",
                 checksum="checksum-1",
-                created_at=datetime(2026, 5, 1, 9, 0),
-                modified_at=datetime(2026, 5, 1, 9, 5),
+                created_at=datetime(2026, 5, 7, 9, 0),
+                modified_at=datetime(2026, 5, 7, 9, 5),
                 size_bytes=1024,
             )
         ]
@@ -132,13 +132,16 @@ class GoogleDriveHealthImportTest(unittest.TestCase):
         self.assertEqual(result.provider, HealthImportProvider.GOOGLE_DRIVE)
         self.assertEqual(result.scanned_files, 1)
         self.assertEqual(result.imported_files, 1)
+        self.assertEqual(result.updated_files, 0)
         self.assertEqual(result.activity_entries_count, 1)
-        summary = self.store.build_health_summary(self.user.user_id, datetime(2026, 5, 1).date())
+        summary = self.store.build_health_summary(self.user.user_id, datetime(2026, 5, 7).date())
         self.assertEqual(summary.steps, 2000)
         self.assertEqual(summary.activity_minutes, 0)
         imported_files = self.store.list_health_import_files(self.user.user_id, provider=HealthImportProvider.GOOGLE_DRIVE)
         self.assertEqual(len(imported_files), 1)
         self.assertEqual(imported_files[0].status.value, "imported")
+        settings = self.store.get_user_google_drive_settings(self.user.user_id)
+        self.assertEqual(settings.last_successful_import_at, datetime(2026, 5, 7, 8, 5))
 
     def test_import_new_files_is_idempotent_for_same_drive_file(self) -> None:
         self.service.connect_folder(self.user.user_id, "folder-123", now=datetime(2026, 5, 7, 8, 0))
@@ -148,9 +151,71 @@ class GoogleDriveHealthImportTest(unittest.TestCase):
 
         self.assertEqual(result.scanned_files, 1)
         self.assertEqual(result.imported_files, 0)
+        self.assertEqual(result.updated_files, 0)
         self.assertEqual(result.skipped_files, 1)
         imported_files = self.store.list_health_import_files(self.user.user_id, provider=HealthImportProvider.GOOGLE_DRIVE)
         self.assertEqual(len(imported_files), 1)
+
+    def test_import_new_files_reimports_when_checksum_changes(self) -> None:
+        self.service.connect_folder(self.user.user_id, "folder-123", now=datetime(2026, 5, 7, 8, 0))
+        self.service.import_new_files(self.user.user_id, now=datetime(2026, 5, 7, 8, 5))
+
+        self.client.files = [
+            GoogleDriveFile(
+                file_id="file-1",
+                name="HealthAutoExport-2026-05-07.json",
+                checksum="checksum-2",
+                created_at=datetime(2026, 5, 7, 9, 0),
+                modified_at=datetime(2026, 5, 7, 8, 6),
+                size_bytes=1024,
+            )
+        ]
+        payload = json.loads(_sample_health_export().decode("utf-8"))
+        payload["data"]["metrics"][0]["data"][0]["qty"] = 2200
+        payload["data"]["metrics"][0]["data"][1]["qty"] = 1800
+        self.client.payload_by_file_id["file-1"] = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+        result = self.service.import_new_files(self.user.user_id, now=datetime(2026, 5, 7, 8, 10))
+
+        self.assertEqual(result.imported_files, 0)
+        self.assertEqual(result.updated_files, 1)
+        summary = self.store.build_health_summary(self.user.user_id, datetime(2026, 5, 7).date())
+        self.assertEqual(summary.steps, 4000)
+        imported_files = self.store.list_health_import_files(self.user.user_id, provider=HealthImportProvider.GOOGLE_DRIVE)
+        self.assertEqual(len(imported_files), 1)
+        self.assertEqual(imported_files[0].checksum, "checksum-2")
+
+    def test_import_new_files_only_scans_last_two_days_by_default(self) -> None:
+        self.client.files = [
+            GoogleDriveFile(
+                file_id="file-older",
+                name="HealthAutoExport-2026-05-01.json",
+                checksum="checksum-old",
+                created_at=datetime(2026, 5, 1, 9, 0),
+                modified_at=datetime(2026, 5, 1, 9, 5),
+                size_bytes=1024,
+            ),
+            GoogleDriveFile(
+                file_id="file-recent",
+                name="HealthAutoExport-2026-05-07.json",
+                checksum="checksum-recent",
+                created_at=datetime(2026, 5, 7, 9, 0),
+                modified_at=datetime(2026, 5, 7, 9, 5),
+                size_bytes=1024,
+            ),
+        ]
+        self.client.payload_by_file_id = {
+            "file-older": _sample_health_export(),
+            "file-recent": _sample_health_export(),
+        }
+        self.service.connect_folder(self.user.user_id, "folder-123", now=datetime(2026, 5, 7, 8, 0))
+
+        result = self.service.import_new_files(self.user.user_id, now=datetime(2026, 5, 7, 8, 10))
+
+        self.assertEqual(result.scanned_files, 1)
+        imported_files = self.store.list_health_import_files(self.user.user_id, provider=HealthImportProvider.GOOGLE_DRIVE)
+        self.assertEqual(len(imported_files), 1)
+        self.assertEqual(imported_files[0].external_file_id, "file-recent")
 
     def test_google_drive_access_error_is_translated_for_403(self) -> None:
         error = ServiceAccountGoogleDriveClient._translate_folder_access_error(FakeHttpError(403, "forbidden"))

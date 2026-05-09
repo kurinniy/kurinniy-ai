@@ -462,6 +462,8 @@ class TelegramHealthBot:
             "Импорт: %s" % ("включен" if settings.enabled else "выключен"),
             "folder_id=%s" % settings.folder_id,
         ]
+        if settings.last_successful_import_at is not None:
+            lines.append("Последняя успешная проверка: %s" % settings.last_successful_import_at.strftime("%Y-%m-%d %H:%M"))
         if last_import is not None:
             lines.append("Последний импорт: %s" % last_import.imported_at.strftime("%Y-%m-%d %H:%M"))
             lines.append("Последний файл: %s" % last_import.file_name)
@@ -721,6 +723,9 @@ class TelegramHealthBot:
         if reply_markup is not None:
             params["reply_markup"] = reply_markup
         return self._telegram_api("sendMessage", params)
+
+    def send_text_message(self, chat_id: int, text: str):
+        return self._send_message(chat_id, text)
 
     def _send_photo_bytes(
         self,

@@ -23,6 +23,8 @@ class UserGoogleDriveSettings:
     enabled: bool = True
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    last_successful_import_at: Optional[datetime] = None
+    last_stale_alert_sent_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -49,9 +51,9 @@ class HealthImportResult:
     provider: HealthImportProvider
     scanned_files: int
     imported_files: int
+    updated_files: int
     skipped_files: int
     failed_files: int
     activity_entries_count: int
     sleep_entries_count: int
     weight_entries_count: int
-
