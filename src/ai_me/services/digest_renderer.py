@@ -214,103 +214,72 @@ class DigestImageRenderer:
         tile = Image.new("RGB", (self.tile_size, self.tile_size), frame_color)
         inset = max(10, self.tile_size // 40)
         inner_size = self.tile_size - inset * 2
-        inner = Image.new("RGB", (inner_size, inner_size), (252, 252, 250))
-        draw = ImageDraw.Draw(inner)
+        inner = Image.new("RGBA", (inner_size, inner_size), (252, 252, 250, 255))
+        overlay = Image.new("RGBA", (inner_size, inner_size), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(overlay)
 
-        stroke = max(4, inner_size // 36)
-        plate_radius = inner_size * 0.24
-        plate_center_x = inner_size * 0.5
-        plate_center_y = inner_size * 0.52
-        outer_box = (
-            plate_center_x - plate_radius * 1.25,
-            plate_center_y - plate_radius * 1.25,
-            plate_center_x + plate_radius * 1.25,
-            plate_center_y + plate_radius * 1.25,
-        )
-        inner_box = (
-            plate_center_x - plate_radius * 0.82,
-            plate_center_y - plate_radius * 0.82,
-            plate_center_x + plate_radius * 0.82,
-            plate_center_y + plate_radius * 0.82,
-        )
-        draw.ellipse(outer_box, outline=(0, 0, 0), width=stroke)
-        draw.ellipse(inner_box, outline=(0, 0, 0), width=stroke)
+        icon_size = inner_size * 0.6
+        icon_left = (inner_size - icon_size) / 2
+        icon_top = (inner_size - icon_size) / 2
+        icon_right = icon_left + icon_size
+        icon_bottom = icon_top + icon_size
+        stroke = max(5, int(round(icon_size * 0.12)))
+        color = (0, 0, 0, 128)
 
-        cross_half = plate_radius * 0.42
-        draw.line(
+        # Knife: top-left -> bottom-right
+        knife_p1 = (icon_left + icon_size * 0.1, icon_top + icon_size * 0.12)
+        knife_p2 = (icon_right - icon_size * 0.08, icon_bottom - icon_size * 0.08)
+        draw.line((*knife_p1, *knife_p2), fill=color, width=stroke)
+        knife_tip_radius = stroke * 0.62
+        draw.ellipse(
             (
-                plate_center_x - cross_half,
-                plate_center_y - cross_half,
-                plate_center_x + cross_half,
-                plate_center_y + cross_half,
+                knife_p1[0] - knife_tip_radius,
+                knife_p1[1] - knife_tip_radius,
+                knife_p1[0] + knife_tip_radius,
+                knife_p1[1] + knife_tip_radius,
             ),
-            fill=(0, 0, 0),
-            width=stroke,
+            fill=color,
         )
-        draw.line(
+        draw.ellipse(
             (
-                plate_center_x + cross_half,
-                plate_center_y - cross_half,
-                plate_center_x - cross_half,
-                plate_center_y + cross_half,
+                knife_p2[0] - knife_tip_radius,
+                knife_p2[1] - knife_tip_radius,
+                knife_p2[0] + knife_tip_radius,
+                knife_p2[1] + knife_tip_radius,
             ),
-            fill=(0, 0, 0),
-            width=stroke,
+            fill=color,
         )
 
-        utensil_y0 = inner_size * 0.22
-        utensil_y1 = inner_size * 0.77
-        left_x = inner_size * 0.16
-        right_x = inner_size * 0.84
-
-        draw.line((left_x, utensil_y0 + inner_size * 0.14, left_x, utensil_y1), fill=(0, 0, 0), width=stroke)
-        draw.line((left_x - inner_size * 0.075, utensil_y0, left_x - inner_size * 0.06, utensil_y0 + inner_size * 0.18), fill=(0, 0, 0), width=stroke)
-        draw.line((left_x, utensil_y0, left_x, utensil_y0 + inner_size * 0.18), fill=(0, 0, 0), width=stroke)
-        draw.line((left_x + inner_size * 0.075, utensil_y0, left_x + inner_size * 0.06, utensil_y0 + inner_size * 0.18), fill=(0, 0, 0), width=stroke)
-        draw.arc(
+        # Fork: bottom-left -> top-right
+        fork_p1 = (icon_left + icon_size * 0.18, icon_bottom - icon_size * 0.08)
+        fork_p2 = (icon_right - icon_size * 0.12, icon_top + icon_size * 0.2)
+        draw.line((*fork_p1, *fork_p2), fill=color, width=stroke)
+        fork_tip_radius = stroke * 0.6
+        draw.ellipse(
             (
-                left_x - inner_size * 0.085,
-                utensil_y1 - inner_size * 0.09,
-                left_x + inner_size * 0.085,
-                utensil_y1 + inner_size * 0.09,
+                fork_p1[0] - fork_tip_radius,
+                fork_p1[1] - fork_tip_radius,
+                fork_p1[0] + fork_tip_radius,
+                fork_p1[1] + fork_tip_radius,
             ),
-            start=0,
-            end=180,
-            fill=(0, 0, 0),
-            width=stroke,
+            fill=color,
         )
 
-        spoon_head = (
-            right_x - inner_size * 0.075,
-            utensil_y0,
-            right_x + inner_size * 0.075,
-            utensil_y0 + inner_size * 0.22,
-        )
-        draw.ellipse(spoon_head, outline=(0, 0, 0), width=stroke)
-        draw.line(
-            (
-                right_x,
-                utensil_y0 + inner_size * 0.18,
-                right_x,
-                utensil_y1,
-            ),
-            fill=(0, 0, 0),
-            width=stroke,
-        )
-        draw.arc(
-            (
-                right_x - inner_size * 0.05,
-                utensil_y1 - inner_size * 0.09,
-                right_x + inner_size * 0.05,
-                utensil_y1 + inner_size * 0.09,
-            ),
-            start=0,
-            end=180,
-            fill=(0, 0, 0),
-            width=stroke,
-        )
+        # Fork tines
+        tine_anchor_x = fork_p2[0]
+        tine_anchor_y = fork_p2[1]
+        tine_length = icon_size * 0.17
+        tine_spread = icon_size * 0.08
+        tine_dx = icon_size * 0.1
+        for index in (-1.5, -0.5, 0.5, 1.5):
+            start_x = tine_anchor_x - tine_spread * index * 0.6
+            start_y = tine_anchor_y - tine_spread * index
+            end_x = start_x - tine_dx
+            end_y = start_y + tine_length
+            draw.line((start_x, start_y, end_x, end_y), fill=color, width=max(3, stroke // 3))
 
-        tile.paste(inner, (inset, inset))
+        inner = Image.alpha_composite(inner, overlay)
+        tile.paste(inner.convert("RGB"), (inset, inset))
         return tile
 
     def _apply_overlay_text(
