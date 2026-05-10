@@ -1,5 +1,5 @@
-APP_VERSION = "0.10"
-APP_RELEASE_DATE = "2026-05-10"
+APP_VERSION = "0.11"
+APP_RELEASE_DATE = "2026-05-11"
 
 
 def format_version_line() -> str:
