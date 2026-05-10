@@ -271,6 +271,14 @@ class InMemoryStore:
         meals = [entry for entry in self._meals.get(user_id, []) if entry.occurred_at.date() == target_date]
         return sorted(meals, key=lambda item: item.occurred_at)
 
+    def list_meals_in_range(self, user_id: int, start_date: date, end_date: date) -> List[MealEntry]:
+        meals = [
+            entry
+            for entry in self._meals.get(user_id, [])
+            if start_date <= entry.occurred_at.date() <= end_date
+        ]
+        return sorted(meals, key=lambda item: item.occurred_at)
+
     def create_meal_draft(self, user_id: int, draft: MealPhotoDraft) -> None:
         self._meal_drafts.setdefault(user_id, {})[draft.draft_id] = draft
 
@@ -281,6 +289,39 @@ class InMemoryStore:
         media = list(self._meal_media_by_user.get(user_id, {}).values())
         if target_date is not None:
             media = [item for item in media if item.occurred_at.date() == target_date]
+        return sorted(media, key=lambda item: item.occurred_at)
+
+    def list_meal_media_in_range(
+        self,
+        user_id: int,
+        start_date: date,
+        end_date: date,
+        include_image_bytes: bool = True,
+    ) -> List[MealMedia]:
+        media = [
+            item
+            for item in self._meal_media_by_user.get(user_id, {}).values()
+            if start_date <= item.occurred_at.date() <= end_date
+        ]
+        if not include_image_bytes:
+            media = [
+                MealMedia(
+                    media_id=item.media_id,
+                    user_id=item.user_id,
+                    draft_id=item.draft_id,
+                    occurred_at=item.occurred_at,
+                    created_at=item.created_at,
+                    mime_type=item.mime_type,
+                    telegram_file_id=item.telegram_file_id,
+                    telegram_unique_id=item.telegram_unique_id,
+                    byte_size=item.byte_size,
+                    sha256=item.sha256,
+                    image_bytes=b"",
+                    meal_entry_id=item.meal_entry_id,
+                    storage_kind=item.storage_kind,
+                )
+                for item in media
+            ]
         return sorted(media, key=lambda item: item.occurred_at)
 
     def attach_meal_media_to_meal(self, user_id: int, draft_id: str, meal_entry_id: str) -> None:

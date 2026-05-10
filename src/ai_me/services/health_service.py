@@ -255,18 +255,34 @@ class HealthService:
         )
 
     def build_daily_food_digest(self, user_id: int, digest_date: date) -> Optional[DailyFoodDigest]:
-        meals = self._list_photo_meals_for_date(user_id, digest_date)
+        history_start = digest_date - timedelta(days=30)
+        historical_cache = self._build_photo_meals_cache(
+            user_id=user_id,
+            start_date=history_start,
+            end_date=digest_date - timedelta(days=1),
+            include_image_bytes=False,
+        )
+        digest_day_cache = self._build_photo_meals_cache(
+            user_id=user_id,
+            start_date=digest_date,
+            end_date=digest_date,
+            include_image_bytes=True,
+        )
+        photo_meals_cache = self._merge_photo_meal_caches(historical_cache, digest_day_cache)
+        meals = self._list_photo_meals_from_cache(photo_meals_cache, digest_date)
         if not meals:
             return None
         daily_summary = self.get_daily_summary(user_id, digest_date)
 
-        trend_windows = [self._build_trend_window(user_id, digest_date, window_days) for window_days in (7, 14, 30)]
+        trend_windows = [
+            self._build_trend_window_from_cache(photo_meals_cache, digest_date, window_days)
+            for window_days in (7, 14, 30)
+        ]
         total_calories = sum(meal.calories for meal in meals)
         total_protein_g = round(sum(meal.protein_g for meal in meals), 2)
         total_fat_g = round(sum(meal.fat_g for meal in meals), 2)
         total_carbs_g = round(sum(meal.carbs_g for meal in meals), 2)
         commentary_data = self._build_daily_commentary_data(
-            user_id=user_id,
             digest_date=digest_date,
             meals=meals,
             total_calories=total_calories,
@@ -274,6 +290,7 @@ class HealthService:
             total_fat_g=total_fat_g,
             total_carbs_g=total_carbs_g,
             trend_windows=trend_windows,
+            photo_meals_cache=photo_meals_cache,
         )
         commentary = self._build_daily_digest_commentary(
             digest_date=digest_date,
@@ -314,14 +331,29 @@ class HealthService:
         daily_protein: List[float] = []
         late_heavy_dinners_days = 0
         baseline_started_at = time.perf_counter()
-        baseline_meals = self._collect_photo_meals(user_id, week_start - timedelta(days=30), week_start - timedelta(days=1))
+        baseline_end = week_start - timedelta(days=1)
+        baseline_start = week_start - timedelta(days=30)
+        baseline_cache = self._build_photo_meals_cache(
+            user_id=user_id,
+            start_date=baseline_start,
+            end_date=baseline_end,
+            include_image_bytes=False,
+        )
+        baseline_meals = self._collect_photo_meals_from_cache(baseline_cache, baseline_start, baseline_end)
         baseline_seconds = time.perf_counter() - baseline_started_at
+        week_cache = self._build_photo_meals_cache(
+            user_id=user_id,
+            start_date=week_start,
+            end_date=week_start + timedelta(days=6),
+            include_image_bytes=True,
+        )
+        weekly_photo_meals_cache = self._merge_photo_meal_caches(baseline_cache, week_cache)
         day_meals_seconds = 0.0
         highlight_pick_seconds = 0.0
         for offset in range(7):
             current_date = week_start + timedelta(days=offset)
             day_started_at = time.perf_counter()
-            day_meals = self._list_photo_meals_for_date(user_id, current_date)
+            day_meals = self._list_photo_meals_from_cache(weekly_photo_meals_cache, current_date)
             day_meals_seconds += time.perf_counter() - day_started_at
             total_meals += len(day_meals)
             day_total_calories = sum(meal.calories for meal in day_meals)
@@ -352,7 +384,6 @@ class HealthService:
 
         commentary_data_started_at = time.perf_counter()
         commentary_data = self._build_weekly_commentary_data(
-            user_id=user_id,
             week_start=week_start,
             total_meals=total_meals,
             total_calories=total_calories,
@@ -361,6 +392,7 @@ class HealthService:
             daily_protein=daily_protein,
             highlights=highlights,
             late_heavy_dinners_days=late_heavy_dinners_days,
+            photo_meals_cache=weekly_photo_meals_cache,
         )
         commentary_data_seconds = time.perf_counter() - commentary_data_started_at
         commentary_text_started_at = time.perf_counter()
@@ -632,6 +664,10 @@ class HealthService:
     def _list_photo_meals_for_date(self, user_id: int, target_date: date) -> List[DigestMealSnapshot]:
         meals = self.store.list_meals(user_id, target_date)
         meal_media = self.store.list_meal_media(user_id, target_date=target_date)
+        return self._build_photo_meal_snapshots(meals, meal_media)
+
+    @staticmethod
+    def _build_photo_meal_snapshots(meals: List[MealEntry], meal_media: List[MealMedia]) -> List[DigestMealSnapshot]:
         media_by_meal_entry_id: Dict[str, List[MealMedia]] = {}
         for media in meal_media:
             if not media.meal_entry_id:
@@ -657,6 +693,53 @@ class HealthService:
             )
         return snapshots
 
+    def _build_photo_meals_cache(
+        self,
+        user_id: int,
+        start_date: date,
+        end_date: date,
+        include_image_bytes: bool,
+    ) -> Dict[date, List[DigestMealSnapshot]]:
+        if end_date < start_date:
+            return {}
+        meals = self.store.list_meals_in_range(user_id, start_date, end_date)
+        meal_media = self.store.list_meal_media_in_range(
+            user_id,
+            start_date=start_date,
+            end_date=end_date,
+            include_image_bytes=include_image_bytes,
+        )
+        meals_by_date: Dict[date, List[MealEntry]] = {}
+        media_by_date: Dict[date, List[MealMedia]] = {}
+        for meal in meals:
+            meals_by_date.setdefault(meal.occurred_at.date(), []).append(meal)
+        for media in meal_media:
+            media_by_date.setdefault(media.occurred_at.date(), []).append(media)
+
+        cache: Dict[date, List[DigestMealSnapshot]] = {}
+        cursor = start_date
+        while cursor <= end_date:
+            cache[cursor] = self._build_photo_meal_snapshots(
+                meals_by_date.get(cursor, []),
+                media_by_date.get(cursor, []),
+            )
+            cursor += timedelta(days=1)
+        return cache
+
+    @staticmethod
+    def _merge_photo_meal_caches(*caches: Dict[date, List[DigestMealSnapshot]]) -> Dict[date, List[DigestMealSnapshot]]:
+        merged: Dict[date, List[DigestMealSnapshot]] = {}
+        for cache in caches:
+            merged.update(cache)
+        return merged
+
+    @staticmethod
+    def _list_photo_meals_from_cache(
+        photo_meals_cache: Dict[date, List[DigestMealSnapshot]],
+        target_date: date,
+    ) -> List[DigestMealSnapshot]:
+        return list(photo_meals_cache.get(target_date, []))
+
     @staticmethod
     def _is_water_only_analysis(analyzed) -> bool:
         return analyzed.is_water_only or (
@@ -677,7 +760,41 @@ class HealthService:
             cursor += timedelta(days=1)
         return collected
 
+    def _collect_photo_meals_from_cache(
+        self,
+        photo_meals_cache: Dict[date, List[DigestMealSnapshot]],
+        start_date: date,
+        end_date: date,
+    ) -> List[DigestMealSnapshot]:
+        if end_date < start_date:
+            return []
+        collected: List[DigestMealSnapshot] = []
+        cursor = start_date
+        while cursor <= end_date:
+            collected.extend(self._list_photo_meals_from_cache(photo_meals_cache, cursor))
+            cursor += timedelta(days=1)
+        return collected
+
     def _build_trend_window(self, user_id: int, digest_date: date, window_days: int) -> DigestTrendWindow:
+        start_date = digest_date - timedelta(days=window_days)
+        end_date = digest_date - timedelta(days=1)
+        return self._build_trend_window_from_cache(
+            self._build_photo_meals_cache(
+                user_id=user_id,
+                start_date=start_date,
+                end_date=end_date,
+                include_image_bytes=False,
+            ),
+            digest_date,
+            window_days,
+        )
+
+    def _build_trend_window_from_cache(
+        self,
+        photo_meals_cache: Dict[date, List[DigestMealSnapshot]],
+        digest_date: date,
+        window_days: int,
+    ) -> DigestTrendWindow:
         start_date = digest_date - timedelta(days=window_days)
         end_date = digest_date - timedelta(days=1)
         daily_meals_count: List[int] = []
@@ -687,7 +804,7 @@ class HealthService:
         daily_carbs: List[float] = []
         cursor = start_date
         while cursor <= end_date:
-            meals = self._list_photo_meals_for_date(user_id, cursor)
+            meals = self._list_photo_meals_from_cache(photo_meals_cache, cursor)
             if meals:
                 daily_meals_count.append(len(meals))
                 daily_calories.append(sum(meal.calories for meal in meals))
@@ -744,7 +861,6 @@ class HealthService:
 
     def _build_daily_commentary_data(
         self,
-        user_id: int,
         digest_date: date,
         meals: List[DigestMealSnapshot],
         total_calories: int,
@@ -752,6 +868,7 @@ class HealthService:
         total_fat_g: float,
         total_carbs_g: float,
         trend_windows: List[DigestTrendWindow],
+        photo_meals_cache: Dict[date, List[DigestMealSnapshot]],
     ) -> DailyDigestCommentaryData:
         comparisons = self._build_comparisons_from_trends(
             total_calories=total_calories,
@@ -792,8 +909,8 @@ class HealthService:
             protein_density_g_per_1000kcal=round((total_protein_g / total_calories) * 1000, 1) if total_calories else 0.0,
         )
         stability = DailyDigestStability(
-            calories_streak=self._compute_digest_streak(user_id, digest_date, metric="calories"),
-            protein_streak=self._compute_digest_streak(user_id, digest_date, metric="protein_g"),
+            calories_streak=self._compute_digest_streak_from_cache(photo_meals_cache, digest_date, metric="calories"),
+            protein_streak=self._compute_digest_streak_from_cache(photo_meals_cache, digest_date, metric="protein_g"),
         )
         comparison_7d = next((item for item in comparisons if item.days == 7), None)
         flags = DailyDigestFlags(
@@ -938,7 +1055,6 @@ class HealthService:
 
     def _build_weekly_commentary_data(
         self,
-        user_id: int,
         week_start: date,
         total_meals: int,
         total_calories: int,
@@ -947,14 +1063,15 @@ class HealthService:
         daily_protein: List[float],
         highlights: List[WeeklyDigestHighlight],
         late_heavy_dinners_days: int,
+        photo_meals_cache: Dict[date, List[DigestMealSnapshot]],
     ) -> WeeklyDigestCommentaryData:
         days_with_meals = len(daily_calories)
         average_daily_calories = round(total_calories / max(days_with_meals, 1), 1) if days_with_meals else 0.0
         average_daily_protein_g = round(total_protein_g / max(days_with_meals, 1), 1) if days_with_meals else 0.0
         comparisons = []
         for window_days in (7, 14, 30):
-            baseline = self._build_period_average(
-                user_id=user_id,
+            baseline = self._build_period_average_from_cache(
+                photo_meals_cache,
                 start_date=week_start - timedelta(days=window_days),
                 end_date=week_start - timedelta(days=1),
             )
@@ -985,7 +1102,7 @@ class HealthService:
         daily_fat_totals = []
         daily_carb_totals = []
         for offset in range(7):
-            day_meals = self._list_photo_meals_for_date(user_id, week_start + timedelta(days=offset))
+            day_meals = self._list_photo_meals_from_cache(photo_meals_cache, week_start + timedelta(days=offset))
             if day_meals:
                 daily_fat_totals.append(sum(meal.fat_g for meal in day_meals))
                 daily_carb_totals.append(sum(meal.carbs_g for meal in day_meals))
@@ -995,8 +1112,8 @@ class HealthService:
             "углеводы": self._coefficient_of_variation(daily_carb_totals),
         }
         most_variable_macro = max(variability, key=variability.get) if (daily_protein or daily_fat_totals or daily_carb_totals) else ""
-        previous_week = self._build_period_average(
-            user_id=user_id,
+        previous_week = self._build_period_average_from_cache(
+            photo_meals_cache,
             start_date=week_start - timedelta(days=7),
             end_date=week_start - timedelta(days=1),
         )
@@ -1102,6 +1219,23 @@ class HealthService:
         return "\n".join(lines[:5])
 
     def _build_period_average(self, user_id: int, start_date: date, end_date: date) -> Dict[str, float]:
+        return self._build_period_average_from_cache(
+            self._build_photo_meals_cache(
+                user_id=user_id,
+                start_date=start_date,
+                end_date=end_date,
+                include_image_bytes=False,
+            ),
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    def _build_period_average_from_cache(
+        self,
+        photo_meals_cache: Dict[date, List[DigestMealSnapshot]],
+        start_date: date,
+        end_date: date,
+    ) -> Dict[str, float]:
         if end_date < start_date:
             return {
                 "average_calories": 0.0,
@@ -1116,7 +1250,7 @@ class HealthService:
         daily_carbs: List[float] = []
         cursor = start_date
         while cursor <= end_date:
-            meals = self._list_photo_meals_for_date(user_id, cursor)
+            meals = self._list_photo_meals_from_cache(photo_meals_cache, cursor)
             if meals:
                 daily_calories.append(sum(meal.calories for meal in meals))
                 daily_protein.append(sum(meal.protein_g for meal in meals))
@@ -1133,16 +1267,33 @@ class HealthService:
         }
 
     def _compute_digest_streak(self, user_id: int, digest_date: date, metric: str) -> DigestStreak:
+        return self._compute_digest_streak_from_cache(
+            self._build_photo_meals_cache(
+                user_id=user_id,
+                start_date=digest_date - timedelta(days=20),
+                end_date=digest_date,
+                include_image_bytes=False,
+            ),
+            digest_date=digest_date,
+            metric=metric,
+        )
+
+    def _compute_digest_streak_from_cache(
+        self,
+        photo_meals_cache: Dict[date, List[DigestMealSnapshot]],
+        digest_date: date,
+        metric: str,
+    ) -> DigestStreak:
         direction = ""
         days = 0
         cursor = digest_date
         while True:
-            meals = self._list_photo_meals_for_date(user_id, cursor)
+            meals = self._list_photo_meals_from_cache(photo_meals_cache, cursor)
             if not meals:
                 break
             current_total = self._metric_total(meals, metric)
-            baseline = self._build_period_average(
-                user_id=user_id,
+            baseline = self._build_period_average_from_cache(
+                photo_meals_cache,
                 start_date=cursor - timedelta(days=7),
                 end_date=cursor - timedelta(days=1),
             )

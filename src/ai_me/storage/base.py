@@ -126,6 +126,9 @@ class HealthStore(Protocol):
     def list_meals(self, user_id: int, target_date: date) -> List[MealEntry]:
         ...
 
+    def list_meals_in_range(self, user_id: int, start_date: date, end_date: date) -> List[MealEntry]:
+        ...
+
     def create_meal_draft(self, user_id: int, draft: MealPhotoDraft) -> None:
         ...
 
@@ -133,6 +136,15 @@ class HealthStore(Protocol):
         ...
 
     def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
+        ...
+
+    def list_meal_media_in_range(
+        self,
+        user_id: int,
+        start_date: date,
+        end_date: date,
+        include_image_bytes: bool = True,
+    ) -> List[MealMedia]:
         ...
 
     def attach_meal_media_to_meal(self, user_id: int, draft_id: str, meal_entry_id: str) -> None:

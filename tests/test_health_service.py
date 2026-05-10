@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.digest import DigestStatus, DigestType
-from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, PhotoLogKind, WATER_PHOTO_SOURCE
+from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, PhotoLogKind, WATER_PHOTO_SOURCE
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -465,6 +465,73 @@ class HealthServiceTest(unittest.TestCase):
 
         self.assertEqual(media_after[0].meal_entry_id, meal.entry_id)
         self.assertEqual(media_after[0].telegram_file_id, "telegram-photo-1")
+
+    def test_range_store_methods_return_expected_meals_and_strip_image_bytes_when_requested(self) -> None:
+        self.service.log_meal(
+            self.user.user_id,
+            MealEntry(
+                entry_id="meal-range-1",
+                occurred_at=datetime(2026, 5, 4, 9, 0),
+                title="Breakfast",
+                calories=300,
+                protein_g=20,
+            ),
+        )
+        self.service.log_meal(
+            self.user.user_id,
+            MealEntry(
+                entry_id="meal-range-2",
+                occurred_at=datetime(2026, 5, 6, 13, 0),
+                title="Lunch",
+                calories=500,
+                protein_g=30,
+            ),
+        )
+        self.store.create_meal_media(
+            MealMedia(
+                media_id="media-range-1",
+                user_id=self.user.user_id,
+                draft_id="draft-range-1",
+                meal_entry_id="meal-range-1",
+                occurred_at=datetime(2026, 5, 4, 9, 0),
+                created_at=datetime(2026, 5, 4, 9, 0),
+                mime_type="image/jpeg",
+                telegram_file_id="file-range-1",
+                telegram_unique_id="uniq-range-1",
+                byte_size=3,
+                sha256="sha-range-1",
+                image_bytes=b"abc",
+            )
+        )
+        self.store.create_meal_media(
+            MealMedia(
+                media_id="media-range-2",
+                user_id=self.user.user_id,
+                draft_id="draft-range-2",
+                meal_entry_id="meal-range-2",
+                occurred_at=datetime(2026, 5, 6, 13, 0),
+                created_at=datetime(2026, 5, 6, 13, 0),
+                mime_type="image/jpeg",
+                telegram_file_id="file-range-2",
+                telegram_unique_id="uniq-range-2",
+                byte_size=3,
+                sha256="sha-range-2",
+                image_bytes=b"xyz",
+            )
+        )
+
+        meals = self.store.list_meals_in_range(self.user.user_id, date(2026, 5, 4), date(2026, 5, 5))
+        media = self.store.list_meal_media_in_range(
+            self.user.user_id,
+            date(2026, 5, 4),
+            date(2026, 5, 6),
+            include_image_bytes=False,
+        )
+
+        self.assertEqual([meal.entry_id for meal in meals], ["meal-range-1"])
+        self.assertEqual([item.media_id for item in media], ["media-range-1", "media-range-2"])
+        self.assertEqual(media[0].image_bytes, b"")
+        self.assertEqual(media[1].image_bytes, b"")
 
     def test_water_only_photo_draft_is_logged_as_water_not_meal(self) -> None:
         self.service.food_photo_analyzer = StubWaterOnlyPhotoAnalyzer()

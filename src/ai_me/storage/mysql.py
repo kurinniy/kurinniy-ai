@@ -562,6 +562,21 @@ class MySQLStore:
         )
         return [self._to_meal_entry(row) for row in rows]
 
+    def list_meals_in_range(self, user_id: int, start_date: date, end_date: date) -> List[MealEntry]:
+        day_start = datetime.combine(start_date, time.min)
+        day_end = datetime.combine(end_date, time.max)
+        rows = self._fetchall(
+            """
+            SELECT *
+            FROM meals
+            WHERE user_id = %s
+              AND occurred_at BETWEEN %s AND %s
+            ORDER BY occurred_at ASC
+            """,
+            (user_id, day_start, day_end),
+        )
+        return [self._to_meal_entry(row) for row in rows]
+
     def create_meal_draft(self, user_id: int, draft: MealPhotoDraft) -> None:
         self._execute(
             """
@@ -658,6 +673,32 @@ class MySQLStore:
             params.extend([day_start, day_end])
         query += " ORDER BY occurred_at ASC, created_at ASC"
         rows = self._fetchall(query, tuple(params))
+        return [self._to_meal_media(row) for row in rows]
+
+    def list_meal_media_in_range(
+        self,
+        user_id: int,
+        start_date: date,
+        end_date: date,
+        include_image_bytes: bool = True,
+    ) -> List[MealMedia]:
+        day_start = datetime.combine(start_date, time.min)
+        day_end = datetime.combine(end_date, time.max)
+        select_fields = "*" if include_image_bytes else (
+            "media_id, user_id, draft_id, meal_entry_id, occurred_at, created_at, mime_type, "
+            "telegram_file_id, telegram_unique_id, byte_size, sha256, storage_kind, NULL AS image_bytes"
+        )
+        rows = self._fetchall(
+            """
+            SELECT %s
+            FROM meal_media
+            WHERE user_id = %%s
+              AND occurred_at BETWEEN %%s AND %%s
+            ORDER BY occurred_at ASC, created_at ASC
+            """
+            % select_fields,
+            (user_id, day_start, day_end),
+        )
         return [self._to_meal_media(row) for row in rows]
 
     def attach_meal_media_to_meal(self, user_id: int, draft_id: str, meal_entry_id: str) -> None:
@@ -1690,7 +1731,7 @@ class MySQLStore:
             telegram_unique_id=row["telegram_unique_id"],
             byte_size=int(row["byte_size"]),
             sha256=row["sha256"],
-            image_bytes=row["image_bytes"],
+            image_bytes=row["image_bytes"] or b"",
             meal_entry_id=row["meal_entry_id"] or "",
             storage_kind=row["storage_kind"],
         )
