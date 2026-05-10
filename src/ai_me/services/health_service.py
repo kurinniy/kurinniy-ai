@@ -101,8 +101,11 @@ class HealthService:
     def get_user_by_telegram_user_id(self, telegram_user_id: int) -> Optional[AppUser]:
         return self.store.get_user_by_telegram_user_id(telegram_user_id)
 
+    def get_user_by_id(self, user_id: int) -> Optional[AppUser]:
+        return next((item for item in self.store.list_users() if item.user_id == user_id), None)
+
     def set_admin_mode(self, user_id: int, enabled: bool) -> AppUser:
-        user = next((item for item in self.store.list_users() if item.user_id == user_id), None)
+        user = self.get_user_by_id(user_id)
         if user is None:
             raise ValueError("Пользователь не найден.")
         if not user.is_admin:

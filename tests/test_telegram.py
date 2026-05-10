@@ -52,6 +52,9 @@ class DummyHealthService:
     def get_user_by_telegram_user_id(self, telegram_user_id: int):
         return self.users_by_telegram_id.get(telegram_user_id)
 
+    def get_user_by_id(self, user_id: int):
+        return next((user for user in self.users_by_telegram_id.values() if user.user_id == user_id), None)
+
     def sync_user(self, telegram_user_id: int, chat_id: int, username: str = "", first_name: str = ""):
         user = self.users_by_telegram_id.get(telegram_user_id)
         if user is None:
@@ -598,6 +601,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(business_calls[1][0], "sendMessage")
         self.assertIn("Daily digest preview за 2026-05-06", business_calls[1][1]["text"])
         self.assertIn("Шаги за день: 6200 / 10000", business_calls[1][1]["text"])
+        self.assertIn("Отладка:", business_calls[1][1]["text"])
+        self.assertIn("Рендер изображения:", business_calls[1][1]["text"])
+        self.assertIn("Полный ответ:", business_calls[1][1]["text"])
 
     def test_digest_preview_update_for_regular_user_hides_step_block(self) -> None:
         calls = []
@@ -629,6 +635,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(business_calls[1][0], "sendMessage")
         self.assertNotIn("Шаги за день:", business_calls[1][1]["text"])
         self.assertNotIn("Комментарий по шагам:", business_calls[1][1]["text"])
+        self.assertNotIn("Отладка:", business_calls[1][1]["text"])
 
     def test_weekly_digest_preview_update_sends_mosaic_photo_and_text(self) -> None:
         calls = []
@@ -659,6 +666,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(business_calls[0][0], "sendPhoto")
         self.assertEqual(business_calls[1][0], "sendMessage")
         self.assertIn("Weekly digest preview", business_calls[1][1]["text"])
+        self.assertIn("Отладка:", business_calls[1][1]["text"])
+        self.assertIn("Рендер изображения:", business_calls[1][1]["text"])
+        self.assertIn("Полный ответ:", business_calls[1][1]["text"])
 
     def test_non_private_chat_is_rejected(self) -> None:
         messages = []

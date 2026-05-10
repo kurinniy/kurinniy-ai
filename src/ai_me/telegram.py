@@ -862,6 +862,7 @@ class TelegramHealthBot:
         preview: bool = False,
         include_step_insight: bool = False,
     ) -> Optional[Dict[str, object]]:
+        started_at = time.perf_counter()
         digest = self.service.build_daily_food_digest(user_id, digest_date)
         if digest is None:
             return None
@@ -869,16 +870,30 @@ class TelegramHealthBot:
         if include_step_insight:
             step_progress = self.service.build_step_progress_insight(user_id, digest_date)
         photo_result = None
+        render_started_at = time.perf_counter()
         mosaic_bytes = self.digest_renderer.render_daily_mosaic(digest)
+        image_generation_seconds = time.perf_counter() - render_started_at
         if mosaic_bytes is not None:
             photo_result = self._send_photo_bytes(
                 chat_id,
                 mosaic_bytes,
                 filename="daily-digest-%s.jpg" % digest_date.isoformat(),
             )
+        debug_info = None
+        app_user = self.service.get_user_by_id(user_id)
+        if app_user is not None and app_user.has_admin_access:
+            debug_info = {
+                "image_generation_seconds": image_generation_seconds,
+                "total_response_seconds": time.perf_counter() - started_at,
+            }
         text_result = self._send_message(
             chat_id,
-            self._format_daily_digest_text(digest, preview=preview, step_progress=step_progress),
+            self._format_daily_digest_text(
+                digest,
+                preview=preview,
+                step_progress=step_progress,
+                debug_info=debug_info,
+            ),
         )
         payload: Dict[str, object] = {
             "digest_type": "daily",
@@ -891,18 +906,31 @@ class TelegramHealthBot:
         return payload
 
     def send_weekly_digest(self, chat_id: int, user_id: int, week_start: date, preview: bool = False) -> Optional[Dict[str, object]]:
+        started_at = time.perf_counter()
         digest = self.service.build_weekly_food_digest(user_id, week_start)
         if digest is None:
             return None
         photo_result = None
+        render_started_at = time.perf_counter()
         mosaic_bytes = self.digest_renderer.render_weekly_mosaic(digest)
+        image_generation_seconds = time.perf_counter() - render_started_at
         if mosaic_bytes is not None:
             photo_result = self._send_photo_bytes(
                 chat_id,
                 mosaic_bytes,
                 filename="weekly-digest-%s.jpg" % week_start.isoformat(),
             )
-        text_result = self._send_message(chat_id, self._format_weekly_digest_text(digest, preview=preview))
+        debug_info = None
+        app_user = self.service.get_user_by_id(user_id)
+        if app_user is not None and app_user.has_admin_access:
+            debug_info = {
+                "image_generation_seconds": image_generation_seconds,
+                "total_response_seconds": time.perf_counter() - started_at,
+            }
+        text_result = self._send_message(
+            chat_id,
+            self._format_weekly_digest_text(digest, preview=preview, debug_info=debug_info),
+        )
         payload: Dict[str, object] = {
             "digest_type": "weekly",
             "week_start": digest.week_start.isoformat(),
@@ -919,6 +947,7 @@ class TelegramHealthBot:
         digest: DailyFoodDigest,
         preview: bool = False,
         step_progress=None,
+        debug_info: Optional[Dict[str, float]] = None,
     ) -> str:
         lines = [
             ("Daily digest preview за %s" % digest.digest_date.isoformat())
@@ -948,10 +977,23 @@ class TelegramHealthBot:
                     "Комментарий по шагам: %s" % step_progress.comment,
                 ]
             )
+        if debug_info is not None:
+            lines.extend(
+                [
+                    "",
+                    "Отладка:",
+                    "Рендер изображения: %.2f сек" % debug_info["image_generation_seconds"],
+                    "Полный ответ: %.2f сек" % debug_info["total_response_seconds"],
+                ]
+            )
         return "\n".join(lines)
 
     @staticmethod
-    def _format_weekly_digest_text(digest: WeeklyFoodDigest, preview: bool = False) -> str:
+    def _format_weekly_digest_text(
+        digest: WeeklyFoodDigest,
+        preview: bool = False,
+        debug_info: Optional[Dict[str, float]] = None,
+    ) -> str:
         lines = [
             ("Weekly digest preview за %s — %s" % (digest.week_start.isoformat(), digest.week_end.isoformat()))
             if preview
@@ -975,6 +1017,15 @@ class TelegramHealthBot:
             )
         lines.append("")
         lines.append(digest.commentary)
+        if debug_info is not None:
+            lines.extend(
+                [
+                    "",
+                    "Отладка:",
+                    "Рендер изображения: %.2f сек" % debug_info["image_generation_seconds"],
+                    "Полный ответ: %.2f сек" % debug_info["total_response_seconds"],
+                ]
+            )
         return "\n".join(lines)
 
     def _answer_callback_query(self, callback_query_id: str, text: str) -> None:
