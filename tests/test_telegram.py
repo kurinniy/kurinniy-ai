@@ -227,7 +227,18 @@ class DummyHealthService:
             commentary="Относительно 7 дней калорийность выше среднего.",
         )
 
-    def build_weekly_food_digest(self, user_id, week_start):
+    def build_weekly_food_digest(self, user_id, week_start, debug_timings=None):
+        if debug_timings is not None:
+            debug_timings.update(
+                {
+                    "build_digest_seconds": 1.25,
+                    "baseline_collection_seconds": 0.31,
+                    "week_meals_collection_seconds": 0.42,
+                    "highlight_selection_seconds": 0.18,
+                    "commentary_data_seconds": 0.09,
+                    "commentary_text_seconds": 0.03,
+                }
+            )
         media = MealMedia(
             media_id="media-1",
             user_id=user_id,
@@ -677,8 +688,15 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(business_calls[1][0], "sendMessage")
         self.assertIn("Weekly digest preview", business_calls[1][1]["text"])
         self.assertIn("Отладка:", business_calls[1][1]["text"])
+        self.assertIn("Сбор weekly digest:", business_calls[1][1]["text"])
+        self.assertIn("baseline за 30 дней:", business_calls[1][1]["text"])
+        self.assertIn("сбор блюд по 7 дням:", business_calls[1][1]["text"])
+        self.assertIn("выбор highlight по дням:", business_calls[1][1]["text"])
+        self.assertIn("построение commentary data:", business_calls[1][1]["text"])
+        self.assertIn("построение текста:", business_calls[1][1]["text"])
         self.assertIn("Рендер изображения:", business_calls[1][1]["text"])
-        self.assertIn("Полный ответ:", business_calls[1][1]["text"])
+        self.assertIn("Отправка фото в Telegram:", business_calls[1][1]["text"])
+        self.assertIn("Полный ответ до отправки текста:", business_calls[1][1]["text"])
 
     def test_non_private_chat_is_rejected(self) -> None:
         messages = []

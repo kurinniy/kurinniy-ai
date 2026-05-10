@@ -1,6 +1,7 @@
 import hashlib
 import json
 import math
+import time
 from datetime import date, datetime, timedelta
 from typing import Dict, FrozenSet, List, Optional
 from uuid import uuid4
@@ -287,7 +288,13 @@ class HealthService:
             commentary=commentary,
         )
 
-    def build_weekly_food_digest(self, user_id: int, week_start: date) -> Optional[WeeklyFoodDigest]:
+    def build_weekly_food_digest(
+        self,
+        user_id: int,
+        week_start: date,
+        debug_timings: Optional[Dict[str, float]] = None,
+    ) -> Optional[WeeklyFoodDigest]:
+        overall_started_at = time.perf_counter()
         highlights: List[WeeklyDigestHighlight] = []
         total_meals = 0
         total_calories = 0
@@ -295,10 +302,16 @@ class HealthService:
         daily_calories: List[int] = []
         daily_protein: List[float] = []
         late_heavy_dinners_days = 0
+        baseline_started_at = time.perf_counter()
         baseline_meals = self._collect_photo_meals(user_id, week_start - timedelta(days=30), week_start - timedelta(days=1))
+        baseline_seconds = time.perf_counter() - baseline_started_at
+        day_meals_seconds = 0.0
+        highlight_pick_seconds = 0.0
         for offset in range(7):
             current_date = week_start + timedelta(days=offset)
+            day_started_at = time.perf_counter()
             day_meals = self._list_photo_meals_for_date(user_id, current_date)
+            day_meals_seconds += time.perf_counter() - day_started_at
             total_meals += len(day_meals)
             day_total_calories = sum(meal.calories for meal in day_meals)
             day_total_protein = round(sum(meal.protein_g for meal in day_meals), 2)
@@ -310,11 +323,23 @@ class HealthService:
                 largest_meal = max(day_meals, key=lambda meal: meal.calories)
                 if day_total_calories > 0 and largest_meal.occurred_at.hour >= 19 and largest_meal.calories / day_total_calories >= 0.4:
                     late_heavy_dinners_days += 1
+            highlight_started_at = time.perf_counter()
             highlights.append(self._pick_weekly_highlight(current_date, day_meals, baseline_meals))
+            highlight_pick_seconds += time.perf_counter() - highlight_started_at
 
         if total_meals == 0:
+            if debug_timings is not None:
+                debug_timings.update(
+                    {
+                        "baseline_collection_seconds": baseline_seconds,
+                        "week_meals_collection_seconds": day_meals_seconds,
+                        "highlight_selection_seconds": highlight_pick_seconds,
+                        "build_digest_seconds": time.perf_counter() - overall_started_at,
+                    }
+                )
             return None
 
+        commentary_data_started_at = time.perf_counter()
         commentary_data = self._build_weekly_commentary_data(
             user_id=user_id,
             week_start=week_start,
@@ -326,6 +351,8 @@ class HealthService:
             highlights=highlights,
             late_heavy_dinners_days=late_heavy_dinners_days,
         )
+        commentary_data_seconds = time.perf_counter() - commentary_data_started_at
+        commentary_text_started_at = time.perf_counter()
         commentary = self._build_weekly_digest_commentary(
             week_start=week_start,
             total_meals=total_meals,
@@ -333,6 +360,18 @@ class HealthService:
             highlights=highlights,
             commentary_data=commentary_data,
         )
+        commentary_text_seconds = time.perf_counter() - commentary_text_started_at
+        if debug_timings is not None:
+            debug_timings.update(
+                {
+                    "baseline_collection_seconds": baseline_seconds,
+                    "week_meals_collection_seconds": day_meals_seconds,
+                    "highlight_selection_seconds": highlight_pick_seconds,
+                    "commentary_data_seconds": commentary_data_seconds,
+                    "commentary_text_seconds": commentary_text_seconds,
+                    "build_digest_seconds": time.perf_counter() - overall_started_at,
+                }
+            )
         return WeeklyFoodDigest(
             user_id=user_id,
             week_start=week_start,

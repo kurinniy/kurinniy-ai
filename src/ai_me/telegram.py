@@ -907,24 +907,35 @@ class TelegramHealthBot:
 
     def send_weekly_digest(self, chat_id: int, user_id: int, week_start: date, preview: bool = False) -> Optional[Dict[str, object]]:
         started_at = time.perf_counter()
-        digest = self.service.build_weekly_food_digest(user_id, week_start)
+        build_timings: Dict[str, float] = {}
+        digest = self.service.build_weekly_food_digest(user_id, week_start, debug_timings=build_timings)
         if digest is None:
             return None
         photo_result = None
         render_started_at = time.perf_counter()
         mosaic_bytes = self.digest_renderer.render_weekly_mosaic(digest)
         image_generation_seconds = time.perf_counter() - render_started_at
+        send_photo_seconds = 0.0
         if mosaic_bytes is not None:
+            send_photo_started_at = time.perf_counter()
             photo_result = self._send_photo_bytes(
                 chat_id,
                 mosaic_bytes,
                 filename="weekly-digest-%s.jpg" % week_start.isoformat(),
             )
+            send_photo_seconds = time.perf_counter() - send_photo_started_at
         debug_info = None
         app_user = self.service.get_user_by_id(user_id)
         if app_user is not None and app_user.has_admin_access:
             debug_info = {
+                "build_digest_seconds": build_timings.get("build_digest_seconds", 0.0),
+                "baseline_collection_seconds": build_timings.get("baseline_collection_seconds", 0.0),
+                "week_meals_collection_seconds": build_timings.get("week_meals_collection_seconds", 0.0),
+                "highlight_selection_seconds": build_timings.get("highlight_selection_seconds", 0.0),
+                "commentary_data_seconds": build_timings.get("commentary_data_seconds", 0.0),
+                "commentary_text_seconds": build_timings.get("commentary_text_seconds", 0.0),
                 "image_generation_seconds": image_generation_seconds,
+                "send_photo_seconds": send_photo_seconds,
                 "total_response_seconds": time.perf_counter() - started_at,
             }
         text_result = self._send_message(
@@ -1022,8 +1033,15 @@ class TelegramHealthBot:
                 [
                     "",
                     "Отладка:",
+                    "Сбор weekly digest: %.2f сек" % debug_info["build_digest_seconds"],
+                    "  - baseline за 30 дней: %.2f сек" % debug_info["baseline_collection_seconds"],
+                    "  - сбор блюд по 7 дням: %.2f сек" % debug_info["week_meals_collection_seconds"],
+                    "  - выбор highlight по дням: %.2f сек" % debug_info["highlight_selection_seconds"],
+                    "  - построение commentary data: %.2f сек" % debug_info["commentary_data_seconds"],
+                    "  - построение текста: %.2f сек" % debug_info["commentary_text_seconds"],
                     "Рендер изображения: %.2f сек" % debug_info["image_generation_seconds"],
-                    "Полный ответ: %.2f сек" % debug_info["total_response_seconds"],
+                    "Отправка фото в Telegram: %.2f сек" % debug_info["send_photo_seconds"],
+                    "Полный ответ до отправки текста: %.2f сек" % debug_info["total_response_seconds"],
                 ]
             )
         return "\n".join(lines)
