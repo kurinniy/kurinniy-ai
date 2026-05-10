@@ -152,17 +152,18 @@ class DigestImageRenderer:
         font_scale: float = 1.0,
         corner_radius: Optional[int] = None,
     ) -> Image.Image:
-        outer_padding = max(self.gap, self.tile_size // 28)
-        box_padding = max(8, self.tile_size // 26)
-        base_font_size = max(18, self.tile_size // 9)
+        outer_padding = max(self.gap // 2, self.tile_size // 36)
+        horizontal_padding = max(5, self.tile_size // 84)
+        vertical_padding = max(3, self.tile_size // 105)
+        base_font_size = max(22, self.tile_size // 6)
         font = self._load_overlay_font(max(18, int(round(base_font_size * font_scale))))
         overlay = Image.new("RGBA", canvas.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(overlay)
         left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
         text_width = right - left
         text_height = bottom - top
-        box_width = text_width + box_padding * 2
-        box_height = text_height + box_padding * 2
+        box_width = text_width + horizontal_padding * 2
+        box_height = text_height + vertical_padding * 2
         if position == "top_left":
             x0 = outer_padding
             y0 = outer_padding
@@ -171,10 +172,15 @@ class DigestImageRenderer:
             y0 = canvas.height - box_height - outer_padding
         x1 = x0 + box_width
         y1 = y0 + box_height
-        radius = corner_radius if corner_radius is not None else max(10, box_padding)
+        radius = corner_radius if corner_radius is not None else max(4, vertical_padding)
 
         draw.rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=(*fill_color, 185))
-        draw.text((x0 + box_padding, y0 + box_padding - top), text, font=font, fill=(255, 255, 255, 255))
+        draw.text(
+            (x0 + horizontal_padding, y0 + vertical_padding - top),
+            text,
+            font=font,
+            fill=(255, 255, 255, 255),
+        )
         return Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
 
     def _apply_canvas_frame(self, canvas: Image.Image, frame_color: RGBColor) -> Image.Image:
