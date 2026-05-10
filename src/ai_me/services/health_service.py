@@ -254,34 +254,55 @@ class HealthService:
             payload=payload,
         )
 
-    def build_daily_food_digest(self, user_id: int, digest_date: date) -> Optional[DailyFoodDigest]:
+    def _build_daily_food_digest(
+        self,
+        user_id: int,
+        digest_date: date,
+        debug_timings: Optional[Dict[str, float]] = None,
+    ) -> Optional[DailyFoodDigest]:
+        overall_started_at = time.perf_counter()
         history_start = digest_date - timedelta(days=30)
+        historical_cache_started_at = time.perf_counter()
         historical_cache = self._build_photo_meals_cache(
             user_id=user_id,
             start_date=history_start,
             end_date=digest_date - timedelta(days=1),
             include_image_bytes=False,
         )
+        historical_cache_seconds = time.perf_counter() - historical_cache_started_at
+        digest_day_cache_started_at = time.perf_counter()
         digest_day_cache = self._build_photo_meals_cache(
             user_id=user_id,
             start_date=digest_date,
             end_date=digest_date,
             include_image_bytes=True,
         )
+        digest_day_cache_seconds = time.perf_counter() - digest_day_cache_started_at
         photo_meals_cache = self._merge_photo_meal_caches(historical_cache, digest_day_cache)
         meals = self._list_photo_meals_from_cache(photo_meals_cache, digest_date)
         if not meals:
+            if debug_timings is not None:
+                debug_timings.update(
+                    {
+                        "build_digest_seconds": time.perf_counter() - overall_started_at,
+                        "historical_cache_seconds": historical_cache_seconds,
+                        "digest_day_cache_seconds": digest_day_cache_seconds,
+                    }
+                )
             return None
         daily_summary = self.get_daily_summary(user_id, digest_date)
 
+        trend_windows_started_at = time.perf_counter()
         trend_windows = [
             self._build_trend_window_from_cache(photo_meals_cache, digest_date, window_days)
             for window_days in (7, 14, 30)
         ]
+        trend_windows_seconds = time.perf_counter() - trend_windows_started_at
         total_calories = sum(meal.calories for meal in meals)
         total_protein_g = round(sum(meal.protein_g for meal in meals), 2)
         total_fat_g = round(sum(meal.fat_g for meal in meals), 2)
         total_carbs_g = round(sum(meal.carbs_g for meal in meals), 2)
+        commentary_data_started_at = time.perf_counter()
         commentary_data = self._build_daily_commentary_data(
             digest_date=digest_date,
             meals=meals,
@@ -292,6 +313,8 @@ class HealthService:
             trend_windows=trend_windows,
             photo_meals_cache=photo_meals_cache,
         )
+        commentary_data_seconds = time.perf_counter() - commentary_data_started_at
+        commentary_text_started_at = time.perf_counter()
         commentary = self._build_daily_digest_commentary(
             digest_date=digest_date,
             meals=meals,
@@ -301,6 +324,18 @@ class HealthService:
             total_carbs_g=total_carbs_g,
             commentary_data=commentary_data,
         )
+        commentary_text_seconds = time.perf_counter() - commentary_text_started_at
+        if debug_timings is not None:
+            debug_timings.update(
+                {
+                    "build_digest_seconds": time.perf_counter() - overall_started_at,
+                    "historical_cache_seconds": historical_cache_seconds,
+                    "digest_day_cache_seconds": digest_day_cache_seconds,
+                    "trend_windows_seconds": trend_windows_seconds,
+                    "commentary_data_seconds": commentary_data_seconds,
+                    "commentary_text_seconds": commentary_text_seconds,
+                }
+            )
         return DailyFoodDigest(
             user_id=user_id,
             digest_date=digest_date,
@@ -315,6 +350,14 @@ class HealthService:
             commentary_data=commentary_data,
             commentary=commentary,
         )
+
+    def build_daily_food_digest(
+        self,
+        user_id: int,
+        digest_date: date,
+        debug_timings: Optional[Dict[str, float]] = None,
+    ) -> Optional[DailyFoodDigest]:
+        return self._build_daily_food_digest(user_id, digest_date, debug_timings=debug_timings)
 
     def build_weekly_food_digest(
         self,

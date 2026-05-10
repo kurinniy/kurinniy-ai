@@ -246,7 +246,18 @@ class DummyHealthService:
     def list_health_import_files(self, user_id, provider=None):
         return self.health_import_files_by_user_id.get(user_id, [])
 
-    def build_daily_food_digest(self, user_id, digest_date):
+    def build_daily_food_digest(self, user_id, digest_date, debug_timings=None):
+        if debug_timings is not None:
+            debug_timings.update(
+                {
+                    "build_digest_seconds": 1.14,
+                    "historical_cache_seconds": 0.27,
+                    "digest_day_cache_seconds": 0.08,
+                    "trend_windows_seconds": 0.41,
+                    "commentary_data_seconds": 0.12,
+                    "commentary_text_seconds": 0.02,
+                }
+            )
         media = MealMedia(
             media_id="media-1",
             user_id=user_id,
@@ -665,8 +676,16 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Вода: 1.2 л / 2 л", business_calls[1][1]["text"])
         self.assertIn("Шаги за день: 6200 / 10000", business_calls[1][1]["text"])
         self.assertIn("Отладка:", business_calls[1][1]["text"])
+        self.assertIn("Сбор daily digest:", business_calls[1][1]["text"])
+        self.assertIn("история за 30 дней:", business_calls[1][1]["text"])
+        self.assertIn("текущий день:", business_calls[1][1]["text"])
+        self.assertIn("trend windows 7/14/30:", business_calls[1][1]["text"])
+        self.assertIn("построение commentary data:", business_calls[1][1]["text"])
+        self.assertIn("построение текста:", business_calls[1][1]["text"])
+        self.assertIn("построение step insight:", business_calls[1][1]["text"])
         self.assertIn("Рендер изображения:", business_calls[1][1]["text"])
-        self.assertIn("Полный ответ:", business_calls[1][1]["text"])
+        self.assertIn("Отправка фото в Telegram:", business_calls[1][1]["text"])
+        self.assertIn("Полный ответ до отправки текста:", business_calls[1][1]["text"])
 
     def test_digest_preview_update_for_regular_user_hides_step_block(self) -> None:
         calls = []

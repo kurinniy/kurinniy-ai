@@ -919,27 +919,45 @@ class TelegramHealthBot:
         include_step_insight: bool = False,
     ) -> Optional[Dict[str, object]]:
         started_at = time.perf_counter()
-        digest = self.service.build_daily_food_digest(user_id, digest_date)
+        build_timings: Dict[str, float] = {}
+        digest = self.service.build_daily_food_digest(user_id, digest_date, debug_timings=build_timings)
         if digest is None:
             return None
         step_progress = None
+        step_insight_seconds = 0.0
         if include_step_insight:
+            step_insight_started_at = time.perf_counter()
             step_progress = self.service.build_step_progress_insight(user_id, digest_date)
+            step_insight_seconds = time.perf_counter() - step_insight_started_at
         photo_result = None
         render_started_at = time.perf_counter()
         mosaic_bytes = self.digest_renderer.render_daily_mosaic(digest)
         image_generation_seconds = time.perf_counter() - render_started_at
+        send_photo_seconds = 0.0
         if mosaic_bytes is not None:
+            send_photo_started_at = time.perf_counter()
             photo_result = self._send_photo_bytes(
                 chat_id,
                 mosaic_bytes,
                 filename="daily-digest-%s.jpg" % digest_date.isoformat(),
             )
+            send_photo_seconds = time.perf_counter() - send_photo_started_at
         debug_info = None
         app_user = self.service.get_user_by_id(user_id)
         if app_user is not None and app_user.has_admin_access:
             debug_info = {
+                "build_label": "daily digest",
+                "build_seconds": build_timings.get("build_digest_seconds", 0.0),
+                "build_steps": [
+                    ("история за 30 дней", build_timings.get("historical_cache_seconds", 0.0)),
+                    ("текущий день", build_timings.get("digest_day_cache_seconds", 0.0)),
+                    ("trend windows 7/14/30", build_timings.get("trend_windows_seconds", 0.0)),
+                    ("построение commentary data", build_timings.get("commentary_data_seconds", 0.0)),
+                    ("построение текста", build_timings.get("commentary_text_seconds", 0.0)),
+                    ("построение step insight", step_insight_seconds),
+                ],
                 "image_generation_seconds": image_generation_seconds,
+                "send_photo_seconds": send_photo_seconds,
                 "total_response_seconds": time.perf_counter() - started_at,
             }
         text_result = self._send_message(
@@ -984,12 +1002,15 @@ class TelegramHealthBot:
         app_user = self.service.get_user_by_id(user_id)
         if app_user is not None and app_user.has_admin_access:
             debug_info = {
-                "build_digest_seconds": build_timings.get("build_digest_seconds", 0.0),
-                "baseline_collection_seconds": build_timings.get("baseline_collection_seconds", 0.0),
-                "week_meals_collection_seconds": build_timings.get("week_meals_collection_seconds", 0.0),
-                "highlight_selection_seconds": build_timings.get("highlight_selection_seconds", 0.0),
-                "commentary_data_seconds": build_timings.get("commentary_data_seconds", 0.0),
-                "commentary_text_seconds": build_timings.get("commentary_text_seconds", 0.0),
+                "build_label": "weekly digest",
+                "build_seconds": build_timings.get("build_digest_seconds", 0.0),
+                "build_steps": [
+                    ("baseline за 30 дней", build_timings.get("baseline_collection_seconds", 0.0)),
+                    ("сбор блюд по 7 дням", build_timings.get("week_meals_collection_seconds", 0.0)),
+                    ("выбор highlight по дням", build_timings.get("highlight_selection_seconds", 0.0)),
+                    ("построение commentary data", build_timings.get("commentary_data_seconds", 0.0)),
+                    ("построение текста", build_timings.get("commentary_text_seconds", 0.0)),
+                ],
                 "image_generation_seconds": image_generation_seconds,
                 "send_photo_seconds": send_photo_seconds,
                 "total_response_seconds": time.perf_counter() - started_at,
@@ -1050,14 +1071,7 @@ class TelegramHealthBot:
                 ]
             )
         if debug_info is not None:
-            lines.extend(
-                [
-                    "",
-                    "Отладка:",
-                    "Рендер изображения: %.2f сек" % debug_info["image_generation_seconds"],
-                    "Полный ответ: %.2f сек" % debug_info["total_response_seconds"],
-                ]
-            )
+            TelegramHealthBot._append_digest_debug_lines(lines, debug_info)
         return "\n".join(lines)
 
     @staticmethod
@@ -1094,22 +1108,27 @@ class TelegramHealthBot:
         lines.append("")
         lines.append(digest.commentary)
         if debug_info is not None:
-            lines.extend(
-                [
-                    "",
-                    "Отладка:",
-                    "Сбор weekly digest: %.2f сек" % debug_info["build_digest_seconds"],
-                    "  - baseline за 30 дней: %.2f сек" % debug_info["baseline_collection_seconds"],
-                    "  - сбор блюд по 7 дням: %.2f сек" % debug_info["week_meals_collection_seconds"],
-                    "  - выбор highlight по дням: %.2f сек" % debug_info["highlight_selection_seconds"],
-                    "  - построение commentary data: %.2f сек" % debug_info["commentary_data_seconds"],
-                    "  - построение текста: %.2f сек" % debug_info["commentary_text_seconds"],
-                    "Рендер изображения: %.2f сек" % debug_info["image_generation_seconds"],
-                    "Отправка фото в Telegram: %.2f сек" % debug_info["send_photo_seconds"],
-                    "Полный ответ до отправки текста: %.2f сек" % debug_info["total_response_seconds"],
-                ]
-            )
+            TelegramHealthBot._append_digest_debug_lines(lines, debug_info)
         return "\n".join(lines)
+
+    @staticmethod
+    def _append_digest_debug_lines(lines: List[str], debug_info: Dict[str, object]) -> None:
+        lines.extend(
+            [
+                "",
+                "Отладка:",
+                "Сбор %s: %.2f сек" % (debug_info["build_label"], debug_info["build_seconds"]),
+            ]
+        )
+        for step_label, seconds in debug_info.get("build_steps", []):
+            lines.append("  - %s: %.2f сек" % (step_label, seconds))
+        lines.extend(
+            [
+                "Рендер изображения: %.2f сек" % debug_info["image_generation_seconds"],
+                "Отправка фото в Telegram: %.2f сек" % debug_info["send_photo_seconds"],
+                "Полный ответ до отправки текста: %.2f сек" % debug_info["total_response_seconds"],
+            ]
+        )
 
     def _answer_callback_query(self, callback_query_id: str, text: str) -> None:
         self._telegram_api(
