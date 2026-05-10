@@ -14,8 +14,7 @@ from ai_me.domain.food import MealMedia
 RGBColor = Tuple[int, int, int]
 OverlayPosition = Literal["top_left", "bottom_right"]
 DEFAULT_DAILY_OVERLAY_COLOR: RGBColor = (28, 28, 28)
-DEFAULT_WEEKLY_FRAME_COLOR: RGBColor = (177, 204, 195)
-DEFAULT_WEEKLY_OVERLAY_COLOR: RGBColor = (54, 94, 82)
+DEFAULT_CANVAS_FRAME_WIDTH = 3
 RUSSIAN_MONTH_NAMES = (
     "",
     "января",
@@ -53,6 +52,8 @@ class DigestImageRenderer:
             overlay_text=self._format_digest_date(digest.digest_date),
             overlay_fill_color=DEFAULT_DAILY_OVERLAY_COLOR,
             overlay_position="bottom_right",
+            overlay_font_scale=1.3,
+            overlay_corner_radius=4,
         )
 
     def render_weekly_mosaic(self, digest: WeeklyFoodDigest) -> Optional[bytes]:
@@ -63,10 +64,11 @@ class DigestImageRenderer:
         ]
         return self._render_media_grid(
             media_items,
-            frame_color=DEFAULT_WEEKLY_FRAME_COLOR,
             overlay_text=self._format_week_range(digest.week_start, digest.week_end),
-            overlay_fill_color=DEFAULT_WEEKLY_OVERLAY_COLOR,
-            overlay_position="top_left",
+            overlay_fill_color=DEFAULT_DAILY_OVERLAY_COLOR,
+            overlay_position="bottom_right",
+            overlay_font_scale=1.3,
+            overlay_corner_radius=4,
         )
 
     def _render_media_grid(
@@ -76,6 +78,8 @@ class DigestImageRenderer:
         overlay_text: Optional[str] = None,
         overlay_fill_color: RGBColor = DEFAULT_DAILY_OVERLAY_COLOR,
         overlay_position: OverlayPosition = "bottom_right",
+        overlay_font_scale: float = 1.0,
+        overlay_corner_radius: Optional[int] = None,
     ) -> Optional[bytes]:
         tiles = self._build_tiles(media_items, frame_color=frame_color or self.frame_color)
         if not tiles:
@@ -100,7 +104,11 @@ class DigestImageRenderer:
                 overlay_text,
                 fill_color=overlay_fill_color,
                 position=overlay_position,
+                font_scale=overlay_font_scale,
+                corner_radius=overlay_corner_radius,
             )
+
+        canvas = self._apply_canvas_frame(canvas, frame_color=frame_color or self.frame_color)
 
         buffer = BytesIO()
         canvas.save(buffer, format="JPEG", quality=90, optimize=True)
@@ -138,10 +146,13 @@ class DigestImageRenderer:
         text: str,
         fill_color: RGBColor,
         position: OverlayPosition,
+        font_scale: float = 1.0,
+        corner_radius: Optional[int] = None,
     ) -> Image.Image:
         outer_padding = max(self.gap, self.tile_size // 28)
         box_padding = max(8, self.tile_size // 26)
-        font = self._load_overlay_font(max(18, self.tile_size // 9))
+        base_font_size = max(18, self.tile_size // 9)
+        font = self._load_overlay_font(max(18, int(round(base_font_size * font_scale))))
         overlay = Image.new("RGBA", canvas.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(overlay)
         left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
@@ -157,10 +168,23 @@ class DigestImageRenderer:
             y0 = canvas.height - box_height - outer_padding
         x1 = x0 + box_width
         y1 = y0 + box_height
-        radius = max(10, box_padding)
+        radius = corner_radius if corner_radius is not None else max(10, box_padding)
 
         draw.rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=(*fill_color, 185))
         draw.text((x0 + box_padding, y0 + box_padding - top), text, font=font, fill=(255, 255, 255, 255))
+        return Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+
+    def _apply_canvas_frame(self, canvas: Image.Image, frame_color: RGBColor) -> Image.Image:
+        overlay = Image.new("RGBA", canvas.size, (255, 255, 255, 0))
+        draw = ImageDraw.Draw(overlay)
+        inset = max(1, self.gap // 3)
+        radius = max(8, self.gap // 2)
+        draw.rounded_rectangle(
+            (inset, inset, canvas.width - inset - 1, canvas.height - inset - 1),
+            radius=radius,
+            outline=(*frame_color, 255),
+            width=DEFAULT_CANVAS_FRAME_WIDTH,
+        )
         return Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
 
     @staticmethod
