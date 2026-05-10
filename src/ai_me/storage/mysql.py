@@ -26,12 +26,18 @@ except ImportError:  # pragma: no cover
 else:  # pragma: no cover
     mysql = mysql.connector
 
+try:
+    import mysql.connector.pooling as mysql_pooling
+except ImportError:  # pragma: no cover
+    mysql_pooling = None
+
 
 logger = logging.getLogger(__name__)
 
 
 class MySQLStore:
     OWNER_TELEGRAM_USER_ID = 96445950
+    DEFAULT_POOL_SIZE = 5
 
     def __init__(
         self,
@@ -56,6 +62,7 @@ class MySQLStore:
             "charset": charset,
         }
         self.owner_telegram_user_id = owner_telegram_user_id
+        self._connection_pool = self._create_connection_pool()
         self._init_schema()
 
     def close(self) -> None:
@@ -1593,9 +1600,21 @@ class MySQLStore:
         return row is not None
 
     def _connect(self):
-        connection = mysql.connect(**self._connect_kwargs)
+        if self._connection_pool is not None:
+            connection = self._connection_pool.get_connection()
+        else:
+            connection = mysql.connect(**self._connect_kwargs)
         connection.autocommit = False
         return connection
+
+    def _create_connection_pool(self):
+        if mysql_pooling is None:
+            return None
+        return mysql_pooling.MySQLConnectionPool(
+            pool_name="ai_me_%s" % id(self),
+            pool_size=self.DEFAULT_POOL_SIZE,
+            **self._connect_kwargs,
+        )
 
     def _execute(self, query: str, params: tuple) -> int:
         connection = self._connect()
