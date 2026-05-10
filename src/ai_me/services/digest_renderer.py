@@ -113,7 +113,7 @@ class DigestImageRenderer:
 
     def _render_tile_grid(
         self,
-        tiles: Sequence[Image.Image],
+        tiles: Sequence[Optional[Image.Image]],
         columns: int,
         rows: int,
         frame_color: RGBColor,
@@ -132,6 +132,8 @@ class DigestImageRenderer:
         canvas = Image.new("RGB", (canvas_width, canvas_height), self.background_color)
 
         for index, tile in enumerate(tiles):
+            if tile is None:
+                continue
             row = index // columns
             col = index % columns
             x = self.gap + col * (self.tile_size + self.gap)
@@ -163,23 +165,23 @@ class DigestImageRenderer:
                 tiles.append(tile)
         return tiles
 
-    def _build_weekly_tiles(self, digest: WeeklyFoodDigest, frame_color: RGBColor) -> List[Image.Image]:
+    def _build_weekly_tiles(self, digest: WeeklyFoodDigest, frame_color: RGBColor) -> List[Optional[Image.Image]]:
         highlight_by_date = {
             highlight.digest_date: highlight
             for highlight in digest.highlights
         }
-        tiles: List[Image.Image] = []
+        tiles: List[Optional[Image.Image]] = []
 
         for day_offset in range(6):
             target_date = digest.week_start + timedelta(days=day_offset)
             tiles.append(self._weekly_tile_from_highlight(highlight_by_date.get(target_date), frame_color=frame_color))
 
-        tiles.append(self._build_placeholder_tile(frame_color=frame_color))
+        tiles.append(None)
 
         sunday_date = digest.week_start + timedelta(days=6)
         tiles.append(self._weekly_tile_from_highlight(highlight_by_date.get(sunday_date), frame_color=frame_color))
 
-        tiles.append(self._build_placeholder_tile(frame_color=frame_color))
+        tiles.append(None)
         return tiles
 
     def _weekly_tile_from_highlight(self, highlight, frame_color: RGBColor) -> Image.Image:

@@ -262,3 +262,26 @@ class DigestImageRendererTest(unittest.TestCase):
         self.assertIsNotNone(image_bytes)
         with Image.open(BytesIO(image_bytes)) as rendered_image:
             self.assertEqual(rendered_image.size, (392, 392))
+
+    def test_weekly_mosaic_leaves_seventh_and_ninth_cells_empty(self) -> None:
+        digest = WeeklyFoodDigest(
+            user_id=1,
+            week_start=date(2026, 5, 5),
+            week_end=date(2026, 5, 11),
+            highlights=[],
+            total_meals=0,
+            total_calories=0,
+            commentary="Комментарий",
+        )
+
+        image_bytes = self.renderer.render_weekly_mosaic(digest)
+
+        self.assertIsNotNone(image_bytes)
+        with Image.open(BytesIO(image_bytes)) as rendered_image:
+            left_bottom_center = rendered_image.getpixel((68, 324))
+            right_bottom_center = rendered_image.getpixel((324, 324))
+
+        for actual in (left_bottom_center, right_bottom_center):
+            self.assertTrue(
+                all(abs(actual[channel] - self.renderer.background_color[channel]) <= 2 for channel in range(3))
+            )
