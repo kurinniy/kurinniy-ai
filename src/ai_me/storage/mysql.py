@@ -815,6 +815,39 @@ class MySQLStore:
             (user_id, entry_id),
         )
 
+    def get_daily_water_total(self, user_id: int, target_date: date) -> int:
+        day_start = datetime.combine(target_date, time.min)
+        day_end = datetime.combine(target_date, time.max)
+        row = self._fetchone(
+            """
+            SELECT COALESCE(SUM(amount_ml), 0) AS water_ml
+            FROM water_entries
+            WHERE user_id = %s
+              AND occurred_at BETWEEN %s AND %s
+            """,
+            (user_id, day_start, day_end),
+        )
+        if not row:
+            return 0
+        return int(row["water_ml"])
+
+    def list_daily_step_totals(self, user_id: int, date_from: date, date_to: date) -> List[tuple[date, int]]:
+        period_start = datetime.combine(date_from, time.min)
+        period_end = datetime.combine(date_to, time.max)
+        rows = self._fetchall(
+            """
+            SELECT DATE(occurred_at) AS activity_date,
+                   COALESCE(SUM(steps), 0) AS steps
+            FROM activity_entries
+            WHERE user_id = %s
+              AND occurred_at BETWEEN %s AND %s
+            GROUP BY DATE(occurred_at)
+            ORDER BY activity_date ASC
+            """,
+            (user_id, period_start, period_end),
+        )
+        return [(row["activity_date"], int(row["steps"])) for row in rows]
+
     def list_activity_entries(self, user_id: int, date_from: date, date_to: date) -> List[ActivityEntry]:
         period_start = datetime.combine(date_from, time.min)
         period_end = datetime.combine(date_to, time.max)

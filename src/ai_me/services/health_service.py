@@ -294,7 +294,8 @@ class HealthService:
                 )
             return None
         daily_summary_started_at = time.perf_counter()
-        daily_summary = self.get_daily_summary(user_id, digest_date)
+        manual_water_ml = self.store.get_daily_water_total(user_id, digest_date)
+        goals = self.store.get_health_goals(user_id, digest_date)
         daily_summary_seconds = time.perf_counter() - daily_summary_started_at
 
         trend_windows_started_at = time.perf_counter()
@@ -351,8 +352,8 @@ class HealthService:
             total_protein_g=total_protein_g,
             total_fat_g=total_fat_g,
             total_carbs_g=total_carbs_g,
-            water_ml=daily_summary.water_ml,
-            water_goal_ml=daily_summary.goals.water_ml,
+            water_ml=manual_water_ml + sum(meal.water_ml for meal in meals),
+            water_goal_ml=goals.water_ml,
             trend_windows=trend_windows,
             commentary_data=commentary_data,
             commentary=commentary,
@@ -618,30 +619,37 @@ class HealthService:
     def get_daily_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
         return self.store.build_health_summary(user_id, target_date)
 
-    def build_step_progress_insight(self, user_id: int, reference_date: date) -> StepProgressInsight:
-        summary = self.get_daily_summary(user_id, reference_date)
+    def build_step_progress_insight(
+        self,
+        user_id: int,
+        reference_date: date,
+        *,
+        target_steps: Optional[int] = None,
+    ) -> StepProgressInsight:
         window_start = reference_date - timedelta(days=29)
-        entries = self.store.list_activity_entries(user_id, date_from=window_start, date_to=reference_date)
-        steps_by_day: Dict[date, int] = {}
-        for entry in entries:
-            entry_date = entry.occurred_at.date()
-            steps_by_day[entry_date] = steps_by_day.get(entry_date, 0) + entry.steps
+        daily_steps = self.store.list_daily_step_totals(user_id, date_from=window_start, date_to=reference_date)
+        steps_by_day: Dict[date, int] = dict(daily_steps)
+        current_steps = steps_by_day.get(reference_date, 0)
 
         days_with_data = len(steps_by_day)
         average_steps_30d: Optional[float] = None
         if days_with_data > 0:
             average_steps_30d = round(sum(steps_by_day.values()) / days_with_data, 1)
 
+        resolved_target_steps = target_steps
+        if resolved_target_steps is None:
+            resolved_target_steps = self.store.get_health_goals(user_id, reference_date).steps
+
         comment = self._build_step_progress_comment(
-            steps=summary.steps,
-            target_steps=summary.goals.steps,
+            steps=current_steps,
+            target_steps=resolved_target_steps,
             average_steps_30d=average_steps_30d,
             days_with_data_30d=days_with_data,
         )
         return StepProgressInsight(
             reference_date=reference_date,
-            steps=summary.steps,
-            target_steps=summary.goals.steps,
+            steps=current_steps,
+            target_steps=resolved_target_steps,
             average_steps_30d=average_steps_30d,
             days_with_data_30d=days_with_data,
             comment=comment,
@@ -746,6 +754,7 @@ class HealthService:
                     protein_g=meal.protein_g,
                     fat_g=meal.fat_g,
                     carbs_g=meal.carbs_g,
+                    water_ml=meal.water_ml,
                     media_items=media_items,
                 )
             )

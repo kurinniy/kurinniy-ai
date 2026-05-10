@@ -398,6 +398,22 @@ class InMemoryStore:
         entries = self._activity_entries.get(user_id, [])
         self._activity_entries[user_id] = [entry for entry in entries if entry.entry_id != entry_id]
 
+    def get_daily_water_total(self, user_id: int, target_date: date) -> int:
+        return sum(
+            entry.amount_ml
+            for entry in self._water_entries.get(user_id, [])
+            if entry.occurred_at.date() == target_date
+        )
+
+    def list_daily_step_totals(self, user_id: int, date_from: date, date_to: date) -> List[tuple[date, int]]:
+        steps_by_day = {}
+        for entry in self._activity_entries.get(user_id, []):
+            entry_date = entry.occurred_at.date()
+            if not (date_from <= entry_date <= date_to):
+                continue
+            steps_by_day[entry_date] = steps_by_day.get(entry_date, 0) + entry.steps
+        return sorted(steps_by_day.items(), key=lambda item: item[0])
+
     def list_activity_entries(self, user_id: int, date_from: date, date_to: date) -> List[ActivityEntry]:
         entries = [
             entry

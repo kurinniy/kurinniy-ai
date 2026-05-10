@@ -53,6 +53,7 @@ class DigestMealSnapshot:
     protein_g: float
     fat_g: float
     carbs_g: float
+    water_ml: int = 0
     media_items: List[MealMedia] = field(default_factory=list)
 
 
