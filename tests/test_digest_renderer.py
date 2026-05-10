@@ -152,3 +152,62 @@ class DigestImageRendererTest(unittest.TestCase):
         image_bytes = self.renderer.render_weekly_mosaic(digest)
 
         self.assertIsNone(image_bytes)
+
+    def test_daily_and_weekly_mosaics_have_distinct_visual_style(self) -> None:
+        daily_digest = DailyFoodDigest(
+            user_id=1,
+            digest_date=date(2026, 5, 6),
+            meals=[
+                DigestMealSnapshot(
+                    meal_entry_id="meal-1",
+                    occurred_at=datetime(2026, 5, 6, 12, 0),
+                    title="Курица с рисом",
+                    calories=620,
+                    protein_g=38,
+                    fat_g=18,
+                    carbs_g=71,
+                    media_items=[self.media],
+                )
+            ],
+            total_calories=620,
+            total_protein_g=38.0,
+            total_fat_g=18.0,
+            total_carbs_g=71.0,
+            trend_windows=[],
+            commentary="Комментарий",
+        )
+        weekly_digest = WeeklyFoodDigest(
+            user_id=1,
+            week_start=date(2026, 5, 5),
+            week_end=date(2026, 5, 11),
+            highlights=[
+                WeeklyDigestHighlight(
+                    digest_date=date(2026, 5, 6),
+                    meal=DigestMealSnapshot(
+                        meal_entry_id="meal-1",
+                        occurred_at=datetime(2026, 5, 6, 12, 0),
+                        title="Курица с рисом",
+                        calories=620,
+                        protein_g=38,
+                        fat_g=18,
+                        carbs_g=71,
+                        media_items=[self.media],
+                    ),
+                    score=0.8,
+                    reason="Лучший приём пищи",
+                )
+            ],
+            total_meals=1,
+            total_calories=620,
+            commentary="Комментарий",
+        )
+
+        daily_bytes = self.renderer.render_daily_mosaic(daily_digest)
+        weekly_bytes = self.renderer.render_weekly_mosaic(weekly_digest)
+
+        self.assertIsNotNone(daily_bytes)
+        self.assertIsNotNone(weekly_bytes)
+        with Image.open(BytesIO(daily_bytes)) as daily_image, Image.open(BytesIO(weekly_bytes)) as weekly_image:
+            diff = ImageChops.difference(daily_image.convert("RGB"), weekly_image.convert("RGB"))
+
+        self.assertIsNotNone(diff.getbbox())

@@ -14,6 +14,8 @@ from ai_me.domain.food import MealMedia
 RGBColor = Tuple[int, int, int]
 OverlayPosition = Literal["top_left", "bottom_right"]
 DEFAULT_DAILY_OVERLAY_COLOR: RGBColor = (28, 28, 28)
+DEFAULT_WEEKLY_FRAME_COLOR: RGBColor = (177, 204, 195)
+DEFAULT_WEEKLY_OVERLAY_COLOR: RGBColor = (54, 94, 82)
 DEFAULT_CANVAS_FRAME_WIDTH = 3
 RUSSIAN_MONTH_NAMES = (
     "",
@@ -64,9 +66,10 @@ class DigestImageRenderer:
         ]
         return self._render_media_grid(
             media_items,
+            frame_color=DEFAULT_WEEKLY_FRAME_COLOR,
             overlay_text=self._format_week_range(digest.week_start, digest.week_end),
-            overlay_fill_color=DEFAULT_DAILY_OVERLAY_COLOR,
-            overlay_position="bottom_right",
+            overlay_fill_color=DEFAULT_WEEKLY_OVERLAY_COLOR,
+            overlay_position="top_left",
             overlay_font_scale=1.3,
             overlay_corner_radius=4,
         )
