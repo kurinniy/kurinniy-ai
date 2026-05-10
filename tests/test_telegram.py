@@ -644,6 +644,16 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Выделяющиеся блюда по дням:", response)
         self.assertNotIn("Daily digest preview", response)
 
+    def test_weekly_digest_preview_prev_returns_previous_week_preview(self) -> None:
+        self.bot._local_today = lambda: date(2026, 5, 10)
+        response = self.bot._route_command(
+            "/weekly_digest_preview prev",
+            app_user=self.service.users_by_telegram_id[42],
+        )
+        self.assertIn("Weekly digest preview за 2026-04-27 — 2026-05-03", response)
+        self.assertIn("Выделяющиеся блюда по дням:", response)
+        self.assertNotIn("Daily digest preview", response)
+
     def test_digest_preview_update_sends_mosaic_photo_and_text(self) -> None:
         calls = []
 
@@ -758,6 +768,37 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Рендер изображения:", business_calls[1][1]["text"])
         self.assertIn("Отправка фото в Telegram:", business_calls[1][1]["text"])
         self.assertIn("Полный ответ до отправки текста:", business_calls[1][1]["text"])
+
+    def test_weekly_digest_preview_prev_update_sends_previous_week(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        def fake_telegram_api_multipart(method, **kwargs):
+            calls.append((method, kwargs))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._telegram_api_multipart = fake_telegram_api_multipart
+        self.bot._local_today = lambda: date(2026, 5, 10)
+
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/weekly_digest_preview prev",
+                    "chat": {"id": 777, "type": "private"},
+                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                },
+            }
+        )
+
+        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
+        self.assertEqual(business_calls[0][0], "sendPhoto")
+        self.assertEqual(business_calls[1][0], "sendMessage")
+        self.assertIn("Weekly digest preview за 2026-04-27 — 2026-05-03", business_calls[1][1]["text"])
 
     def test_non_private_chat_is_rejected(self) -> None:
         messages = []

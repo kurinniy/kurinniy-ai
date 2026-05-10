@@ -551,11 +551,7 @@ class TelegramHealthBot:
         return self._format_daily_digest_text(digest, preview=True, step_progress=step_progress)
 
     def _handle_weekly_digest_preview(self, app_user: AppUser, args: List[str]) -> str:
-        if args:
-            base_date = date.fromisoformat(args[0])
-        else:
-            base_date = self._local_today()
-        week_start = base_date - timedelta(days=base_date.weekday())
+        week_start = self._resolve_weekly_digest_preview_week_start(args)
         digest = self.service.build_weekly_food_digest(app_user.user_id, week_start)
         if digest is None:
             return "Для недели %s — %s нет подтвержденных фото-блюд для weekly digest." % (
@@ -563,6 +559,17 @@ class TelegramHealthBot:
                 (week_start + timedelta(days=6)).isoformat(),
             )
         return self._format_weekly_digest_text(digest, preview=True)
+
+    def _resolve_weekly_digest_preview_week_start(self, args: List[str]) -> date:
+        if args:
+            if args[0].strip().lower() == "prev":
+                base_date = self._local_today() - timedelta(days=7)
+            else:
+                base_date = date.fromisoformat(args[0])
+        else:
+            base_date = self._local_today()
+        week_start = base_date - timedelta(days=base_date.weekday())
+        return week_start
 
     def _handle_confirm_meal(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) != 1:
@@ -898,11 +905,7 @@ class TelegramHealthBot:
             self._send_message(chat_id, "Для %s нет подтвержденных фото-блюд для daily digest." % target_date.isoformat())
 
     def _send_weekly_digest_preview(self, chat_id: int, app_user: AppUser, args: List[str]) -> None:
-        if args:
-            base_date = date.fromisoformat(args[0])
-        else:
-            base_date = self._local_today()
-        week_start = base_date - timedelta(days=base_date.weekday())
+        week_start = self._resolve_weekly_digest_preview_week_start(args)
         if self.send_weekly_digest(chat_id=chat_id, user_id=app_user.user_id, week_start=week_start, preview=True) is None:
             self._send_message(
                 chat_id,
