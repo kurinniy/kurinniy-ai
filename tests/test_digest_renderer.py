@@ -101,6 +101,11 @@ class DigestImageRendererTest(unittest.TestCase):
 
         self.assertEqual(formatted, "05-11 мая '26")
 
+    def test_format_week_range_overlay_uses_compact_multiline_format(self) -> None:
+        formatted = self.renderer._format_week_range_overlay(date(2026, 5, 5), date(2026, 5, 11))
+
+        self.assertEqual(formatted, "05-11\nмая '26")
+
     def test_render_weekly_mosaic_adds_range_overlay_and_distinct_style(self) -> None:
         digest = WeeklyFoodDigest(
             user_id=1,

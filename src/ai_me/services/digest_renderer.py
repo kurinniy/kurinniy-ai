@@ -74,11 +74,12 @@ class DigestImageRenderer:
         return self._render_media_grid(
             media_items,
             frame_color=DEFAULT_WEEKLY_FRAME_COLOR,
-            overlay_text=self._format_week_range(digest.week_start, digest.week_end),
+            overlay_text=self._format_week_range_overlay(digest.week_start, digest.week_end),
             overlay_fill_color=DEFAULT_WEEKLY_OVERLAY_COLOR,
             overlay_position="top_left",
             overlay_font_scale=3.25,
             overlay_corner_radius=4,
+            overlay_max_width_ratio=0.18,
         )
 
     def _render_media_grid(
@@ -90,6 +91,7 @@ class DigestImageRenderer:
         overlay_position: OverlayPosition = "bottom_right",
         overlay_font_scale: float = 1.0,
         overlay_corner_radius: Optional[int] = None,
+        overlay_max_width_ratio: float = 1.0,
     ) -> Optional[bytes]:
         tiles = self._build_tiles(media_items, frame_color=frame_color or self.frame_color)
         if not tiles:
@@ -116,6 +118,7 @@ class DigestImageRenderer:
                 position=overlay_position,
                 font_scale=overlay_font_scale,
                 corner_radius=overlay_corner_radius,
+                max_width_ratio=overlay_max_width_ratio,
             )
 
         canvas = self._apply_canvas_frame(canvas, frame_color=frame_color or self.frame_color)
@@ -158,6 +161,7 @@ class DigestImageRenderer:
         position: OverlayPosition,
         font_scale: float = 1.0,
         corner_radius: Optional[int] = None,
+        max_width_ratio: float = 1.0,
     ) -> Image.Image:
         outer_padding = max(self.gap // 2, self.tile_size // 36)
         horizontal_padding = max(12, self.tile_size // 28)
@@ -165,7 +169,10 @@ class DigestImageRenderer:
         base_font_size = max(22, self.tile_size // 6)
         overlay = Image.new("RGBA", canvas.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(overlay)
-        max_box_width = canvas.width - outer_padding * 2
+        max_box_width = min(
+            canvas.width - outer_padding * 2,
+            max(1, int(canvas.width * max_width_ratio)),
+        )
         font = self._fit_overlay_font(
             draw=draw,
             text=text,
@@ -227,6 +234,20 @@ class DigestImageRenderer:
             )
         return (
             f"{week_start:%d} {RUSSIAN_MONTH_NAMES[week_start.month]} '{week_start:%y} - "
+            f"{week_end:%d} {RUSSIAN_MONTH_NAMES[week_end.month]} '{week_end:%y}"
+        )
+
+    @staticmethod
+    def _format_week_range_overlay(week_start: date, week_end: date) -> str:
+        if week_start.year == week_end.year and week_start.month == week_end.month:
+            return f"{week_start:%d}-{week_end:%d}\n{RUSSIAN_MONTH_NAMES[week_end.month]} '{week_end:%y}"
+        if week_start.year == week_end.year:
+            return (
+                f"{week_start:%d} {RUSSIAN_MONTH_NAMES[week_start.month]}-\n"
+                f"{week_end:%d} {RUSSIAN_MONTH_NAMES[week_end.month]} '{week_end:%y}"
+            )
+        return (
+            f"{week_start:%d} {RUSSIAN_MONTH_NAMES[week_start.month]} '{week_start:%y}\n"
             f"{week_end:%d} {RUSSIAN_MONTH_NAMES[week_end.month]} '{week_end:%y}"
         )
 
