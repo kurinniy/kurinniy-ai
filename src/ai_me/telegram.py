@@ -951,14 +951,7 @@ class TelegramHealthBot:
             debug_info = {
                 "build_label": "daily digest",
                 "build_seconds": build_timings.get("build_digest_seconds", 0.0),
-                "build_steps": [
-                    ("история за 30 дней", build_timings.get("historical_cache_seconds", 0.0)),
-                    ("текущий день", build_timings.get("digest_day_cache_seconds", 0.0)),
-                    ("trend windows 7/14/30", build_timings.get("trend_windows_seconds", 0.0)),
-                    ("построение commentary data", build_timings.get("commentary_data_seconds", 0.0)),
-                    ("построение текста", build_timings.get("commentary_text_seconds", 0.0)),
-                    ("построение step insight", step_insight_seconds),
-                ],
+                "build_steps": self._build_daily_digest_debug_steps(build_timings, step_insight_seconds),
                 "image_generation_seconds": image_generation_seconds,
                 "send_photo_seconds": send_photo_seconds,
                 "total_response_seconds": time.perf_counter() - started_at,
@@ -1007,13 +1000,7 @@ class TelegramHealthBot:
             debug_info = {
                 "build_label": "weekly digest",
                 "build_seconds": build_timings.get("build_digest_seconds", 0.0),
-                "build_steps": [
-                    ("baseline за 30 дней", build_timings.get("baseline_collection_seconds", 0.0)),
-                    ("сбор блюд по 7 дням", build_timings.get("week_meals_collection_seconds", 0.0)),
-                    ("выбор highlight по дням", build_timings.get("highlight_selection_seconds", 0.0)),
-                    ("построение commentary data", build_timings.get("commentary_data_seconds", 0.0)),
-                    ("построение текста", build_timings.get("commentary_text_seconds", 0.0)),
-                ],
+                "build_steps": self._build_weekly_digest_debug_steps(build_timings),
                 "image_generation_seconds": image_generation_seconds,
                 "send_photo_seconds": send_photo_seconds,
                 "total_response_seconds": time.perf_counter() - started_at,
@@ -1132,6 +1119,31 @@ class TelegramHealthBot:
                 "Полный ответ до отправки текста: %.2f сек" % debug_info["total_response_seconds"],
             ]
         )
+
+    @staticmethod
+    def _build_daily_digest_debug_steps(build_timings: Dict[str, float], step_insight_seconds: float) -> List[tuple[str, float]]:
+        return [
+            ("история за 30 дней", build_timings.get("historical_cache_seconds", 0.0)),
+            ("текущий день", build_timings.get("digest_day_cache_seconds", 0.0)),
+            ("слияние cache", build_timings.get("cache_merge_seconds", 0.0)),
+            ("daily summary", build_timings.get("daily_summary_seconds", 0.0)),
+            ("trend windows 7/14/30", build_timings.get("trend_windows_seconds", 0.0)),
+            ("построение commentary data", build_timings.get("commentary_data_seconds", 0.0)),
+            ("построение текста", build_timings.get("commentary_text_seconds", 0.0)),
+            ("построение step insight", step_insight_seconds),
+        ]
+
+    @staticmethod
+    def _build_weekly_digest_debug_steps(build_timings: Dict[str, float]) -> List[tuple[str, float]]:
+        return [
+            ("baseline за 30 дней", build_timings.get("baseline_collection_seconds", 0.0)),
+            ("загрузка недели с изображениями", build_timings.get("week_cache_seconds", 0.0)),
+            ("слияние cache", build_timings.get("cache_merge_seconds", 0.0)),
+            ("сбор блюд по 7 дням", build_timings.get("week_meals_collection_seconds", 0.0)),
+            ("выбор highlight по дням", build_timings.get("highlight_selection_seconds", 0.0)),
+            ("построение commentary data", build_timings.get("commentary_data_seconds", 0.0)),
+            ("построение текста", build_timings.get("commentary_text_seconds", 0.0)),
+        ]
 
     def _answer_callback_query(self, callback_query_id: str, text: str) -> None:
         self._telegram_api(

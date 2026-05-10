@@ -253,6 +253,8 @@ class DummyHealthService:
                     "build_digest_seconds": 1.14,
                     "historical_cache_seconds": 0.27,
                     "digest_day_cache_seconds": 0.08,
+                    "cache_merge_seconds": 0.03,
+                    "daily_summary_seconds": 0.05,
                     "trend_windows_seconds": 0.41,
                     "commentary_data_seconds": 0.12,
                     "commentary_text_seconds": 0.02,
@@ -302,6 +304,8 @@ class DummyHealthService:
                 {
                     "build_digest_seconds": 1.25,
                     "baseline_collection_seconds": 0.31,
+                    "week_cache_seconds": 0.16,
+                    "cache_merge_seconds": 0.04,
                     "week_meals_collection_seconds": 0.42,
                     "highlight_selection_seconds": 0.18,
                     "commentary_data_seconds": 0.09,
@@ -689,6 +693,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Сбор daily digest:", business_calls[1][1]["text"])
         self.assertIn("история за 30 дней:", business_calls[1][1]["text"])
         self.assertIn("текущий день:", business_calls[1][1]["text"])
+        self.assertIn("слияние cache:", business_calls[1][1]["text"])
+        self.assertIn("daily summary:", business_calls[1][1]["text"])
         self.assertIn("trend windows 7/14/30:", business_calls[1][1]["text"])
         self.assertIn("построение commentary data:", business_calls[1][1]["text"])
         self.assertIn("построение текста:", business_calls[1][1]["text"])
@@ -761,6 +767,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Отладка:", business_calls[1][1]["text"])
         self.assertIn("Сбор weekly digest:", business_calls[1][1]["text"])
         self.assertIn("baseline за 30 дней:", business_calls[1][1]["text"])
+        self.assertIn("загрузка недели с изображениями:", business_calls[1][1]["text"])
+        self.assertIn("слияние cache:", business_calls[1][1]["text"])
         self.assertIn("сбор блюд по 7 дням:", business_calls[1][1]["text"])
         self.assertIn("выбор highlight по дням:", business_calls[1][1]["text"])
         self.assertIn("построение commentary data:", business_calls[1][1]["text"])

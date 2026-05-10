@@ -278,7 +278,9 @@ class HealthService:
             include_image_bytes=True,
         )
         digest_day_cache_seconds = time.perf_counter() - digest_day_cache_started_at
+        cache_merge_started_at = time.perf_counter()
         photo_meals_cache = self._merge_photo_meal_caches(historical_cache, digest_day_cache)
+        cache_merge_seconds = time.perf_counter() - cache_merge_started_at
         meals = self._list_photo_meals_from_cache(photo_meals_cache, digest_date)
         if not meals:
             if debug_timings is not None:
@@ -287,10 +289,13 @@ class HealthService:
                         "build_digest_seconds": time.perf_counter() - overall_started_at,
                         "historical_cache_seconds": historical_cache_seconds,
                         "digest_day_cache_seconds": digest_day_cache_seconds,
+                        "cache_merge_seconds": cache_merge_seconds,
                     }
                 )
             return None
+        daily_summary_started_at = time.perf_counter()
         daily_summary = self.get_daily_summary(user_id, digest_date)
+        daily_summary_seconds = time.perf_counter() - daily_summary_started_at
 
         trend_windows_started_at = time.perf_counter()
         trend_windows = [
@@ -331,6 +336,8 @@ class HealthService:
                     "build_digest_seconds": time.perf_counter() - overall_started_at,
                     "historical_cache_seconds": historical_cache_seconds,
                     "digest_day_cache_seconds": digest_day_cache_seconds,
+                    "cache_merge_seconds": cache_merge_seconds,
+                    "daily_summary_seconds": daily_summary_seconds,
                     "trend_windows_seconds": trend_windows_seconds,
                     "commentary_data_seconds": commentary_data_seconds,
                     "commentary_text_seconds": commentary_text_seconds,
@@ -384,13 +391,17 @@ class HealthService:
         )
         baseline_meals = self._collect_photo_meals_from_cache(baseline_cache, baseline_start, baseline_end)
         baseline_seconds = time.perf_counter() - baseline_started_at
+        week_cache_started_at = time.perf_counter()
         week_cache = self._build_photo_meals_cache(
             user_id=user_id,
             start_date=week_start,
             end_date=week_start + timedelta(days=6),
             include_image_bytes=True,
         )
+        week_cache_seconds = time.perf_counter() - week_cache_started_at
+        cache_merge_started_at = time.perf_counter()
         weekly_photo_meals_cache = self._merge_photo_meal_caches(baseline_cache, week_cache)
+        cache_merge_seconds = time.perf_counter() - cache_merge_started_at
         day_meals_seconds = 0.0
         highlight_pick_seconds = 0.0
         for offset in range(7):
@@ -418,6 +429,8 @@ class HealthService:
                 debug_timings.update(
                     {
                         "baseline_collection_seconds": baseline_seconds,
+                        "week_cache_seconds": week_cache_seconds,
+                        "cache_merge_seconds": cache_merge_seconds,
                         "week_meals_collection_seconds": day_meals_seconds,
                         "highlight_selection_seconds": highlight_pick_seconds,
                         "build_digest_seconds": time.perf_counter() - overall_started_at,
@@ -451,6 +464,8 @@ class HealthService:
             debug_timings.update(
                 {
                     "baseline_collection_seconds": baseline_seconds,
+                    "week_cache_seconds": week_cache_seconds,
+                    "cache_merge_seconds": cache_merge_seconds,
                     "week_meals_collection_seconds": day_meals_seconds,
                     "highlight_selection_seconds": highlight_pick_seconds,
                     "commentary_data_seconds": commentary_data_seconds,
