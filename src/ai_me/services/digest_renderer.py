@@ -39,6 +39,7 @@ FONT_CANDIDATE_PATHS = (
     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
 )
+WEEKLY_PLACEHOLDER_ASSET_PATH = Path(__file__).resolve().parent.parent / "assets" / "weekly-placeholder-fork-knife.jpg"
 
 
 class DigestImageRenderer:
@@ -216,25 +217,47 @@ class DigestImageRenderer:
         inner_size = self.tile_size - inset * 2
         inner = Image.new("RGBA", (inner_size, inner_size), (252, 252, 250, 255))
         overlay = Image.new("RGBA", (inner_size, inner_size), (255, 255, 255, 0))
+        icon = self._load_weekly_placeholder_icon(inner_size=inner_size)
+        if icon is None:
+            icon_size = max(32, int(round(inner_size * 0.6)))
+            color = (0, 0, 0, 128)
+            knife = self._build_placeholder_knife(icon_size=icon_size, color=color)
+            fork = self._build_placeholder_fork(icon_size=icon_size, color=color)
 
-        icon_size = max(32, int(round(inner_size * 0.6)))
-        color = (0, 0, 0, 128)
-        knife = self._build_placeholder_knife(icon_size=icon_size, color=color)
-        fork = self._build_placeholder_fork(icon_size=icon_size, color=color)
+            knife = knife.rotate(-44, resample=Image.Resampling.BICUBIC, expand=True)
+            fork = fork.rotate(44, resample=Image.Resampling.BICUBIC, expand=True)
 
-        knife = knife.rotate(-44, resample=Image.Resampling.BICUBIC, expand=True)
-        fork = fork.rotate(44, resample=Image.Resampling.BICUBIC, expand=True)
-
-        knife_x = (inner_size - knife.width) // 2 - max(2, icon_size // 28)
-        knife_y = (inner_size - knife.height) // 2 - max(2, icon_size // 40)
-        fork_x = (inner_size - fork.width) // 2 + max(2, icon_size // 34)
-        fork_y = (inner_size - fork.height) // 2 + max(2, icon_size // 48)
-        overlay.alpha_composite(knife, (knife_x, knife_y))
-        overlay.alpha_composite(fork, (fork_x, fork_y))
+            knife_x = (inner_size - knife.width) // 2 - max(2, icon_size // 28)
+            knife_y = (inner_size - knife.height) // 2 - max(2, icon_size // 40)
+            fork_x = (inner_size - fork.width) // 2 + max(2, icon_size // 34)
+            fork_y = (inner_size - fork.height) // 2 + max(2, icon_size // 48)
+            overlay.alpha_composite(knife, (knife_x, knife_y))
+            overlay.alpha_composite(fork, (fork_x, fork_y))
+        else:
+            icon_x = (inner_size - icon.width) // 2
+            icon_y = (inner_size - icon.height) // 2
+            overlay.alpha_composite(icon, (icon_x, icon_y))
 
         inner = Image.alpha_composite(inner, overlay)
         tile.paste(inner.convert("RGB"), (inset, inset))
         return tile
+
+    @staticmethod
+    def _load_weekly_placeholder_icon(inner_size: int) -> Optional[Image.Image]:
+        if not WEEKLY_PLACEHOLDER_ASSET_PATH.exists():
+            return None
+        try:
+            with Image.open(WEEKLY_PLACEHOLDER_ASSET_PATH) as raw_icon:
+                icon = raw_icon.convert("RGBA")
+        except Exception:
+            return None
+
+        alpha = icon.getchannel("A")
+        icon.putalpha(alpha.point(lambda value: int(value * 0.5)))
+        max_width = max(1, int(round(inner_size * 0.6)))
+        max_height = max(1, int(round(inner_size * 0.6)))
+        icon.thumbnail((max_width, max_height), resample=Image.Resampling.LANCZOS)
+        return icon
 
     @staticmethod
     def _build_placeholder_knife(icon_size: int, color: Tuple[int, int, int, int]) -> Image.Image:
