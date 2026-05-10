@@ -571,6 +571,16 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Выделяющиеся блюда по дням:", response)
         self.assertIn("Курица с рисом", response)
 
+    def test_weekly_digest_preview_without_args_returns_current_week_preview(self) -> None:
+        self.bot._local_today = lambda: date(2026, 5, 10)
+        response = self.bot._route_command(
+            "/weekly_digest_preview",
+            app_user=self.service.users_by_telegram_id[42],
+        )
+        self.assertIn("Weekly digest preview за 2026-05-04 — 2026-05-10", response)
+        self.assertIn("Выделяющиеся блюда по дням:", response)
+        self.assertNotIn("Daily digest preview", response)
+
     def test_digest_preview_update_sends_mosaic_photo_and_text(self) -> None:
         calls = []
 

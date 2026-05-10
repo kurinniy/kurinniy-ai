@@ -540,7 +540,7 @@ class TelegramHealthBot:
         if args:
             base_date = date.fromisoformat(args[0])
         else:
-            base_date = self._local_today() - timedelta(days=7)
+            base_date = self._local_today()
         week_start = base_date - timedelta(days=base_date.weekday())
         digest = self.service.build_weekly_food_digest(app_user.user_id, week_start)
         if digest is None:
@@ -845,7 +845,7 @@ class TelegramHealthBot:
         if args:
             base_date = date.fromisoformat(args[0])
         else:
-            base_date = self._local_today() - timedelta(days=7)
+            base_date = self._local_today()
         week_start = base_date - timedelta(days=base_date.weekday())
         if self.send_weekly_digest(chat_id=chat_id, user_id=app_user.user_id, week_start=week_start, preview=True) is None:
             self._send_message(
