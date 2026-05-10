@@ -216,71 +216,109 @@ class DigestImageRenderer:
         inner_size = self.tile_size - inset * 2
         inner = Image.new("RGBA", (inner_size, inner_size), (252, 252, 250, 255))
         overlay = Image.new("RGBA", (inner_size, inner_size), (255, 255, 255, 0))
-        draw = ImageDraw.Draw(overlay)
 
-        icon_size = inner_size * 0.6
-        icon_left = (inner_size - icon_size) / 2
-        icon_top = (inner_size - icon_size) / 2
-        icon_right = icon_left + icon_size
-        icon_bottom = icon_top + icon_size
-        stroke = max(5, int(round(icon_size * 0.12)))
+        icon_size = max(32, int(round(inner_size * 0.6)))
         color = (0, 0, 0, 128)
+        knife = self._build_placeholder_knife(icon_size=icon_size, color=color)
+        fork = self._build_placeholder_fork(icon_size=icon_size, color=color)
 
-        # Knife: top-left -> bottom-right
-        knife_p1 = (icon_left + icon_size * 0.1, icon_top + icon_size * 0.12)
-        knife_p2 = (icon_right - icon_size * 0.08, icon_bottom - icon_size * 0.08)
-        draw.line((*knife_p1, *knife_p2), fill=color, width=stroke)
-        knife_tip_radius = stroke * 0.62
-        draw.ellipse(
-            (
-                knife_p1[0] - knife_tip_radius,
-                knife_p1[1] - knife_tip_radius,
-                knife_p1[0] + knife_tip_radius,
-                knife_p1[1] + knife_tip_radius,
-            ),
-            fill=color,
-        )
-        draw.ellipse(
-            (
-                knife_p2[0] - knife_tip_radius,
-                knife_p2[1] - knife_tip_radius,
-                knife_p2[0] + knife_tip_radius,
-                knife_p2[1] + knife_tip_radius,
-            ),
-            fill=color,
-        )
+        knife = knife.rotate(-44, resample=Image.Resampling.BICUBIC, expand=True)
+        fork = fork.rotate(44, resample=Image.Resampling.BICUBIC, expand=True)
 
-        # Fork: bottom-left -> top-right
-        fork_p1 = (icon_left + icon_size * 0.18, icon_bottom - icon_size * 0.08)
-        fork_p2 = (icon_right - icon_size * 0.12, icon_top + icon_size * 0.2)
-        draw.line((*fork_p1, *fork_p2), fill=color, width=stroke)
-        fork_tip_radius = stroke * 0.6
-        draw.ellipse(
-            (
-                fork_p1[0] - fork_tip_radius,
-                fork_p1[1] - fork_tip_radius,
-                fork_p1[0] + fork_tip_radius,
-                fork_p1[1] + fork_tip_radius,
-            ),
-            fill=color,
-        )
-
-        # Fork tines
-        tine_anchor_x = fork_p2[0]
-        tine_anchor_y = fork_p2[1]
-        tine_length = icon_size * 0.17
-        tine_spread = icon_size * 0.08
-        tine_dx = icon_size * 0.1
-        for index in (-1.5, -0.5, 0.5, 1.5):
-            start_x = tine_anchor_x - tine_spread * index * 0.6
-            start_y = tine_anchor_y - tine_spread * index
-            end_x = start_x - tine_dx
-            end_y = start_y + tine_length
-            draw.line((start_x, start_y, end_x, end_y), fill=color, width=max(3, stroke // 3))
+        knife_x = (inner_size - knife.width) // 2 - max(2, icon_size // 28)
+        knife_y = (inner_size - knife.height) // 2 - max(2, icon_size // 40)
+        fork_x = (inner_size - fork.width) // 2 + max(2, icon_size // 34)
+        fork_y = (inner_size - fork.height) // 2 + max(2, icon_size // 48)
+        overlay.alpha_composite(knife, (knife_x, knife_y))
+        overlay.alpha_composite(fork, (fork_x, fork_y))
 
         inner = Image.alpha_composite(inner, overlay)
         tile.paste(inner.convert("RGB"), (inset, inset))
         return tile
+
+    @staticmethod
+    def _build_placeholder_knife(icon_size: int, color: Tuple[int, int, int, int]) -> Image.Image:
+        width = max(28, int(round(icon_size * 0.29)))
+        height = max(72, int(round(icon_size * 0.9)))
+        image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(image)
+
+        handle_width = max(12, int(round(width * 0.34)))
+        handle_left = (width - handle_width) / 2
+        handle_top = height * 0.42
+        handle_bottom = height * 0.96
+        radius = max(6, int(round(handle_width * 0.45)))
+        draw.rounded_rectangle(
+            (handle_left, handle_top, handle_left + handle_width, handle_bottom),
+            radius=radius,
+            fill=color,
+        )
+
+        blade_points = [
+            (width * 0.08, height * 0.18),
+            (width * 0.16, height * 0.08),
+            (width * 0.34, height * 0.02),
+            (width * 0.58, height * 0.12),
+            (width * 0.64, height * 0.24),
+            (width * 0.54, height * 0.42),
+            (width * 0.44, height * 0.48),
+            (width * 0.26, height * 0.44),
+        ]
+        draw.polygon(blade_points, fill=color)
+        return image
+
+    @staticmethod
+    def _build_placeholder_fork(icon_size: int, color: Tuple[int, int, int, int]) -> Image.Image:
+        width = max(30, int(round(icon_size * 0.31)))
+        height = max(72, int(round(icon_size * 0.9)))
+        image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(image)
+
+        handle_width = max(12, int(round(width * 0.34)))
+        handle_left = (width - handle_width) / 2
+        handle_top = height * 0.44
+        handle_bottom = height * 0.98
+        radius = max(6, int(round(handle_width * 0.45)))
+        draw.rounded_rectangle(
+            (handle_left, handle_top, handle_left + handle_width, handle_bottom),
+            radius=radius,
+            fill=color,
+        )
+
+        neck_left = width * 0.30
+        neck_right = width * 0.70
+        neck_top = height * 0.28
+        neck_bottom = height * 0.52
+        draw.rounded_rectangle(
+            (neck_left, neck_top, neck_right, neck_bottom),
+            radius=max(4, int(round(width * 0.12))),
+            fill=color,
+        )
+
+        head_top = height * 0.02
+        head_bottom = height * 0.34
+        draw.rounded_rectangle(
+            (width * 0.12, head_top, width * 0.88, head_bottom),
+            radius=max(5, int(round(width * 0.14))),
+            fill=color,
+        )
+
+        carve = ImageDraw.Draw(image)
+        slot_width = max(3, int(round(width * 0.09)))
+        slot_height = head_bottom - head_top - max(6, int(round(height * 0.02)))
+        slot_top = head_top + max(4, int(round(height * 0.02)))
+        for center_x in (width * 0.33, width * 0.5, width * 0.67):
+            carve.rounded_rectangle(
+                (
+                    center_x - slot_width / 2,
+                    slot_top,
+                    center_x + slot_width / 2,
+                    slot_top + slot_height,
+                ),
+                radius=max(2, slot_width // 2),
+                fill=(255, 255, 255, 0),
+            )
+        return image
 
     def _apply_overlay_text(
         self,
