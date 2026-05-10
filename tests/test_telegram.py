@@ -12,6 +12,7 @@ from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, H
 from ai_me.domain.user import AppUser, UserStatus
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
 from ai_me.telegram import TelegramHealthBot
+from ai_me.version import format_release_date_line, format_version_line
 
 
 VALID_PNG_BYTES = base64.b64decode(
@@ -444,16 +445,16 @@ class TelegramHealthBotTest(unittest.TestCase):
 
     def test_help_for_unregistered_user_explains_open_start_flow(self) -> None:
         response = self.bot._route_command("/help")
-        self.assertIn("Версия: 0.9", response)
-        self.assertIn("Дата релиза: 2026-05-09", response)
+        self.assertIn(format_version_line(), response)
+        self.assertIn(format_release_date_line(), response)
         self.assertIn("Доступ: открыт для всех", response)
         self.assertIn("/start", response)
         self.assertNotIn("/start <invite_code>", response)
 
     def test_help_for_registered_user_does_not_list_removed_manual_health_commands(self) -> None:
         response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[42])
-        self.assertIn("Версия: 0.9", response)
-        self.assertIn("Дата релиза: 2026-05-09", response)
+        self.assertIn(format_version_line(), response)
+        self.assertIn(format_release_date_line(), response)
         self.assertIn("Mini App: откройте через кнопку меню", response)
         self.assertIn("/connect_drive <folder_url>", response)
         self.assertIn("/drive_status", response)

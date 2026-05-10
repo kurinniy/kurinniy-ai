@@ -1,16 +1,36 @@
 from __future__ import annotations
 
 import math
+from datetime import date
 from io import BytesIO
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import List, Literal, Optional, Sequence, Tuple
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from ai_me.domain.digest import DailyFoodDigest, WeeklyFoodDigest
 from ai_me.domain.food import MealMedia
 
 
 RGBColor = Tuple[int, int, int]
+OverlayPosition = Literal["top_left", "bottom_right"]
+DEFAULT_DAILY_OVERLAY_COLOR: RGBColor = (28, 28, 28)
+DEFAULT_WEEKLY_FRAME_COLOR: RGBColor = (177, 204, 195)
+DEFAULT_WEEKLY_OVERLAY_COLOR: RGBColor = (54, 94, 82)
+RUSSIAN_MONTH_NAMES = (
+    "",
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+)
 
 
 class DigestImageRenderer:
@@ -28,7 +48,12 @@ class DigestImageRenderer:
 
     def render_daily_mosaic(self, digest: DailyFoodDigest) -> Optional[bytes]:
         media_items = [meal.media_items[0] for meal in digest.meals if meal.media_items]
-        return self._render_media_grid(media_items)
+        return self._render_media_grid(
+            media_items,
+            overlay_text=self._format_digest_date(digest.digest_date),
+            overlay_fill_color=DEFAULT_DAILY_OVERLAY_COLOR,
+            overlay_position="bottom_right",
+        )
 
     def render_weekly_mosaic(self, digest: WeeklyFoodDigest) -> Optional[bytes]:
         media_items = [
@@ -36,10 +61,23 @@ class DigestImageRenderer:
             for highlight in digest.highlights
             if highlight.meal is not None and highlight.meal.media_items
         ]
-        return self._render_media_grid(media_items)
+        return self._render_media_grid(
+            media_items,
+            frame_color=DEFAULT_WEEKLY_FRAME_COLOR,
+            overlay_text=self._format_week_range(digest.week_start, digest.week_end),
+            overlay_fill_color=DEFAULT_WEEKLY_OVERLAY_COLOR,
+            overlay_position="top_left",
+        )
 
-    def _render_media_grid(self, media_items: Sequence[MealMedia]) -> Optional[bytes]:
-        tiles = self._build_tiles(media_items)
+    def _render_media_grid(
+        self,
+        media_items: Sequence[MealMedia],
+        frame_color: Optional[RGBColor] = None,
+        overlay_text: Optional[str] = None,
+        overlay_fill_color: RGBColor = DEFAULT_DAILY_OVERLAY_COLOR,
+        overlay_position: OverlayPosition = "bottom_right",
+    ) -> Optional[bytes]:
+        tiles = self._build_tiles(media_items, frame_color=frame_color or self.frame_color)
         if not tiles:
             return None
 
@@ -56,19 +94,27 @@ class DigestImageRenderer:
             y = self.gap + row * (self.tile_size + self.gap)
             canvas.paste(tile, (x, y))
 
+        if overlay_text:
+            canvas = self._apply_overlay_text(
+                canvas,
+                overlay_text,
+                fill_color=overlay_fill_color,
+                position=overlay_position,
+            )
+
         buffer = BytesIO()
         canvas.save(buffer, format="JPEG", quality=90, optimize=True)
         return buffer.getvalue()
 
-    def _build_tiles(self, media_items: Sequence[MealMedia]) -> List[Image.Image]:
+    def _build_tiles(self, media_items: Sequence[MealMedia], frame_color: RGBColor) -> List[Image.Image]:
         tiles: List[Image.Image] = []
         for media in media_items:
-            tile = self._meal_media_to_tile(media)
+            tile = self._meal_media_to_tile(media, frame_color=frame_color)
             if tile is not None:
                 tiles.append(tile)
         return tiles
 
-    def _meal_media_to_tile(self, media: MealMedia) -> Optional[Image.Image]:
+    def _meal_media_to_tile(self, media: MealMedia, frame_color: RGBColor) -> Optional[Image.Image]:
         if not media.image_bytes:
             return None
         try:
@@ -81,10 +127,66 @@ class DigestImageRenderer:
         except Exception:
             return None
 
-        framed = Image.new("RGB", (self.tile_size, self.tile_size), self.frame_color)
+        framed = Image.new("RGB", (self.tile_size, self.tile_size), frame_color)
         inset = max(10, self.tile_size // 40)
         framed.paste(fitted.resize((self.tile_size - inset * 2, self.tile_size - inset * 2)), (inset, inset))
         return framed
+
+    def _apply_overlay_text(
+        self,
+        canvas: Image.Image,
+        text: str,
+        fill_color: RGBColor,
+        position: OverlayPosition,
+    ) -> Image.Image:
+        outer_padding = max(self.gap, self.tile_size // 28)
+        box_padding = max(8, self.tile_size // 26)
+        font = self._load_overlay_font(max(18, self.tile_size // 9))
+        overlay = Image.new("RGBA", canvas.size, (255, 255, 255, 0))
+        draw = ImageDraw.Draw(overlay)
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        text_width = right - left
+        text_height = bottom - top
+        box_width = text_width + box_padding * 2
+        box_height = text_height + box_padding * 2
+        if position == "top_left":
+            x0 = outer_padding
+            y0 = outer_padding
+        else:
+            x0 = canvas.width - box_width - outer_padding
+            y0 = canvas.height - box_height - outer_padding
+        x1 = x0 + box_width
+        y1 = y0 + box_height
+        radius = max(10, box_padding)
+
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=(*fill_color, 185))
+        draw.text((x0 + box_padding, y0 + box_padding - top), text, font=font, fill=(255, 255, 255, 255))
+        return Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+
+    @staticmethod
+    def _format_digest_date(digest_date: date) -> str:
+        return digest_date.strftime("%d/%m/%y")
+
+    @staticmethod
+    def _format_week_range(week_start: date, week_end: date) -> str:
+        if week_start.year == week_end.year and week_start.month == week_end.month:
+            return f"{week_start:%d}-{week_end:%d} {RUSSIAN_MONTH_NAMES[week_end.month]} '{week_end:%y}"
+        if week_start.year == week_end.year:
+            return (
+                f"{week_start:%d} {RUSSIAN_MONTH_NAMES[week_start.month]} - "
+                f"{week_end:%d} {RUSSIAN_MONTH_NAMES[week_end.month]} '{week_end:%y}"
+            )
+        return (
+            f"{week_start:%d} {RUSSIAN_MONTH_NAMES[week_start.month]} '{week_start:%y} - "
+            f"{week_end:%d} {RUSSIAN_MONTH_NAMES[week_end.month]} '{week_end:%y}"
+        )
+
+    @staticmethod
+    def _load_overlay_font(font_size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+        try:
+            return ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
+        except OSError:
+            return ImageFont.load_default()
 
     @staticmethod
     def _choose_columns(items_count: int) -> int:
