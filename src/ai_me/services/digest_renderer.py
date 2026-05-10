@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from datetime import date
 from io import BytesIO
+from pathlib import Path
 from typing import List, Literal, Optional, Sequence, Tuple
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -12,7 +13,7 @@ from ai_me.domain.food import MealMedia
 
 
 RGBColor = Tuple[int, int, int]
-OverlayPosition = Literal["top_left", "bottom_right"]
+OverlayPosition = Literal["top_left", "bottom_left", "bottom_right"]
 DEFAULT_DAILY_OVERLAY_COLOR: RGBColor = (28, 28, 28)
 DEFAULT_WEEKLY_FRAME_COLOR: RGBColor = (177, 204, 195)
 DEFAULT_WEEKLY_OVERLAY_COLOR: RGBColor = (54, 94, 82)
@@ -31,6 +32,12 @@ RUSSIAN_MONTH_NAMES = (
     "октября",
     "ноября",
     "декабря",
+)
+FONT_CANDIDATE_PATHS = (
+    "DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
 )
 
 
@@ -53,8 +60,8 @@ class DigestImageRenderer:
             media_items,
             overlay_text=self._format_digest_date(digest.digest_date),
             overlay_fill_color=DEFAULT_DAILY_OVERLAY_COLOR,
-            overlay_position="bottom_right",
-            overlay_font_scale=1.3,
+            overlay_position="bottom_left",
+            overlay_font_scale=3.25,
             overlay_corner_radius=4,
         )
 
@@ -70,7 +77,7 @@ class DigestImageRenderer:
             overlay_text=self._format_week_range(digest.week_start, digest.week_end),
             overlay_fill_color=DEFAULT_WEEKLY_OVERLAY_COLOR,
             overlay_position="top_left",
-            overlay_font_scale=1.3,
+            overlay_font_scale=3.25,
             overlay_corner_radius=4,
         )
 
@@ -153,12 +160,18 @@ class DigestImageRenderer:
         corner_radius: Optional[int] = None,
     ) -> Image.Image:
         outer_padding = max(self.gap // 2, self.tile_size // 36)
-        horizontal_padding = max(5, self.tile_size // 84)
-        vertical_padding = max(3, self.tile_size // 105)
+        horizontal_padding = max(12, self.tile_size // 28)
+        vertical_padding = max(8, self.tile_size // 36)
         base_font_size = max(22, self.tile_size // 6)
-        font = self._load_overlay_font(max(18, int(round(base_font_size * font_scale))))
         overlay = Image.new("RGBA", canvas.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(overlay)
+        max_box_width = canvas.width - outer_padding * 2
+        font = self._fit_overlay_font(
+            draw=draw,
+            text=text,
+            desired_size=max(18, int(round(base_font_size * font_scale))),
+            max_text_width=max(1, max_box_width - horizontal_padding * 2),
+        )
         left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
         text_width = right - left
         text_height = bottom - top
@@ -167,6 +180,9 @@ class DigestImageRenderer:
         if position == "top_left":
             x0 = outer_padding
             y0 = outer_padding
+        elif position == "bottom_left":
+            x0 = outer_padding
+            y0 = canvas.height - box_height - outer_padding
         else:
             x0 = canvas.width - box_width - outer_padding
             y0 = canvas.height - box_height - outer_padding
@@ -216,10 +232,29 @@ class DigestImageRenderer:
 
     @staticmethod
     def _load_overlay_font(font_size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
-        try:
-            return ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
-        except OSError:
-            return ImageFont.load_default()
+        for candidate in FONT_CANDIDATE_PATHS:
+            try:
+                if "/" in candidate and not Path(candidate).exists():
+                    continue
+                return ImageFont.truetype(candidate, font_size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    @classmethod
+    def _fit_overlay_font(
+        cls,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        desired_size: int,
+        max_text_width: int,
+    ) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+        for font_size in range(desired_size, 17, -2):
+            font = cls._load_overlay_font(font_size)
+            left, _, right, _ = draw.textbbox((0, 0), text, font=font)
+            if (right - left) <= max_text_width:
+                return font
+        return cls._load_overlay_font(18)
 
     @staticmethod
     def _choose_columns(items_count: int) -> int:
