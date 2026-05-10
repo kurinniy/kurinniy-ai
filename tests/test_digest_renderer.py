@@ -135,10 +135,11 @@ class DigestImageRendererTest(unittest.TestCase):
         self.assertIsNotNone(image_bytes)
         with Image.open(BytesIO(baseline_bytes)) as baseline_image, Image.open(BytesIO(image_bytes)) as rendered_image:
             diff = ImageChops.difference(baseline_image.convert("RGB"), rendered_image.convert("RGB"))
+            self.assertEqual(rendered_image.size, (392, 392))
 
         self.assertIsNotNone(diff.getbbox())
 
-    def test_render_weekly_mosaic_returns_none_without_images(self) -> None:
+    def test_render_weekly_mosaic_renders_placeholder_grid_without_images(self) -> None:
         digest = WeeklyFoodDigest(
             user_id=1,
             week_start=date(2026, 5, 4),
@@ -151,7 +152,9 @@ class DigestImageRendererTest(unittest.TestCase):
 
         image_bytes = self.renderer.render_weekly_mosaic(digest)
 
-        self.assertIsNone(image_bytes)
+        self.assertIsNotNone(image_bytes)
+        with Image.open(BytesIO(image_bytes)) as rendered_image:
+            self.assertEqual(rendered_image.size, (392, 392))
 
     def test_daily_and_weekly_mosaics_have_distinct_visual_style(self) -> None:
         daily_digest = DailyFoodDigest(
@@ -211,3 +214,51 @@ class DigestImageRendererTest(unittest.TestCase):
             diff = ImageChops.difference(daily_image.convert("RGB"), weekly_image.convert("RGB"))
 
         self.assertIsNotNone(diff.getbbox())
+
+    def test_weekly_mosaic_uses_fixed_three_by_three_layout(self) -> None:
+        digest = WeeklyFoodDigest(
+            user_id=1,
+            week_start=date(2026, 5, 5),
+            week_end=date(2026, 5, 11),
+            highlights=[
+                WeeklyDigestHighlight(
+                    digest_date=date(2026, 5, 5),
+                    meal=DigestMealSnapshot(
+                        meal_entry_id="meal-1",
+                        occurred_at=datetime(2026, 5, 5, 12, 0),
+                        title="Курица с рисом",
+                        calories=620,
+                        protein_g=38,
+                        fat_g=18,
+                        carbs_g=71,
+                        media_items=[self.media],
+                    ),
+                    score=0.8,
+                    reason="Понедельник",
+                ),
+                WeeklyDigestHighlight(
+                    digest_date=date(2026, 5, 11),
+                    meal=DigestMealSnapshot(
+                        meal_entry_id="meal-2",
+                        occurred_at=datetime(2026, 5, 11, 12, 0),
+                        title="Воскресенье",
+                        calories=480,
+                        protein_g=20,
+                        fat_g=14,
+                        carbs_g=52,
+                        media_items=[self.media],
+                    ),
+                    score=0.7,
+                    reason="Воскресенье",
+                ),
+            ],
+            total_meals=2,
+            total_calories=1100,
+            commentary="Комментарий",
+        )
+
+        image_bytes = self.renderer.render_weekly_mosaic(digest)
+
+        self.assertIsNotNone(image_bytes)
+        with Image.open(BytesIO(image_bytes)) as rendered_image:
+            self.assertEqual(rendered_image.size, (392, 392))

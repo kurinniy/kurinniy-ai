@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import date
+from datetime import date, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import List, Literal, Optional, Sequence, Tuple
@@ -67,13 +67,11 @@ class DigestImageRenderer:
         )
 
     def render_weekly_mosaic(self, digest: WeeklyFoodDigest) -> Optional[bytes]:
-        media_items = [
-            highlight.meal.media_items[0]
-            for highlight in digest.highlights
-            if highlight.meal is not None and highlight.meal.media_items
-        ]
-        return self._render_media_grid(
-            media_items,
+        tiles = self._build_weekly_tiles(digest, frame_color=DEFAULT_WEEKLY_FRAME_COLOR)
+        return self._render_tile_grid(
+            tiles,
+            columns=3,
+            rows=3,
             frame_color=DEFAULT_WEEKLY_FRAME_COLOR,
             overlay_text=self._format_week_range(digest.week_start, digest.week_end),
             overlay_fill_color=DEFAULT_WEEKLY_OVERLAY_COLOR,
@@ -100,6 +98,35 @@ class DigestImageRenderer:
 
         columns = self._choose_columns(len(tiles))
         rows = math.ceil(len(tiles) / columns)
+        return self._render_tile_grid(
+            tiles,
+            columns=columns,
+            rows=rows,
+            frame_color=frame_color or self.frame_color,
+            overlay_text=overlay_text,
+            overlay_fill_color=overlay_fill_color,
+            overlay_position=overlay_position,
+            overlay_font_scale=overlay_font_scale,
+            overlay_corner_radius=overlay_corner_radius,
+            overlay_max_width_ratio=overlay_max_width_ratio,
+        )
+
+    def _render_tile_grid(
+        self,
+        tiles: Sequence[Image.Image],
+        columns: int,
+        rows: int,
+        frame_color: RGBColor,
+        overlay_text: Optional[str],
+        overlay_fill_color: RGBColor,
+        overlay_position: OverlayPosition,
+        overlay_font_scale: float,
+        overlay_corner_radius: Optional[int],
+        overlay_max_width_ratio: float,
+    ) -> Optional[bytes]:
+        if not tiles:
+            return None
+
         canvas_width = columns * self.tile_size + (columns + 1) * self.gap
         canvas_height = rows * self.tile_size + (rows + 1) * self.gap
         canvas = Image.new("RGB", (canvas_width, canvas_height), self.background_color)
@@ -136,6 +163,33 @@ class DigestImageRenderer:
                 tiles.append(tile)
         return tiles
 
+    def _build_weekly_tiles(self, digest: WeeklyFoodDigest, frame_color: RGBColor) -> List[Image.Image]:
+        highlight_by_date = {
+            highlight.digest_date: highlight
+            for highlight in digest.highlights
+        }
+        tiles: List[Image.Image] = []
+
+        for day_offset in range(6):
+            target_date = digest.week_start + timedelta(days=day_offset)
+            tiles.append(self._weekly_tile_from_highlight(highlight_by_date.get(target_date), frame_color=frame_color))
+
+        tiles.append(self._build_placeholder_tile(frame_color=frame_color))
+
+        sunday_date = digest.week_start + timedelta(days=6)
+        tiles.append(self._weekly_tile_from_highlight(highlight_by_date.get(sunday_date), frame_color=frame_color))
+
+        tiles.append(self._build_placeholder_tile(frame_color=frame_color))
+        return tiles
+
+    def _weekly_tile_from_highlight(self, highlight, frame_color: RGBColor) -> Image.Image:
+        if highlight is not None and highlight.meal is not None and highlight.meal.media_items:
+            media = highlight.meal.media_items[0]
+            tile = self._meal_media_to_tile(media, frame_color=frame_color)
+            if tile is not None:
+                return tile
+        return self._build_placeholder_tile(frame_color=frame_color)
+
     def _meal_media_to_tile(self, media: MealMedia, frame_color: RGBColor) -> Optional[Image.Image]:
         if not media.image_bytes:
             return None
@@ -153,6 +207,109 @@ class DigestImageRenderer:
         inset = max(10, self.tile_size // 40)
         framed.paste(fitted.resize((self.tile_size - inset * 2, self.tile_size - inset * 2)), (inset, inset))
         return framed
+
+    def _build_placeholder_tile(self, frame_color: RGBColor) -> Image.Image:
+        tile = Image.new("RGB", (self.tile_size, self.tile_size), frame_color)
+        inset = max(10, self.tile_size // 40)
+        inner_size = self.tile_size - inset * 2
+        inner = Image.new("RGB", (inner_size, inner_size), (252, 252, 250))
+        draw = ImageDraw.Draw(inner)
+
+        stroke = max(4, inner_size // 36)
+        plate_radius = inner_size * 0.24
+        plate_center_x = inner_size * 0.5
+        plate_center_y = inner_size * 0.52
+        outer_box = (
+            plate_center_x - plate_radius * 1.25,
+            plate_center_y - plate_radius * 1.25,
+            plate_center_x + plate_radius * 1.25,
+            plate_center_y + plate_radius * 1.25,
+        )
+        inner_box = (
+            plate_center_x - plate_radius * 0.82,
+            plate_center_y - plate_radius * 0.82,
+            plate_center_x + plate_radius * 0.82,
+            plate_center_y + plate_radius * 0.82,
+        )
+        draw.ellipse(outer_box, outline=(0, 0, 0), width=stroke)
+        draw.ellipse(inner_box, outline=(0, 0, 0), width=stroke)
+
+        cross_half = plate_radius * 0.42
+        draw.line(
+            (
+                plate_center_x - cross_half,
+                plate_center_y - cross_half,
+                plate_center_x + cross_half,
+                plate_center_y + cross_half,
+            ),
+            fill=(0, 0, 0),
+            width=stroke,
+        )
+        draw.line(
+            (
+                plate_center_x + cross_half,
+                plate_center_y - cross_half,
+                plate_center_x - cross_half,
+                plate_center_y + cross_half,
+            ),
+            fill=(0, 0, 0),
+            width=stroke,
+        )
+
+        utensil_y0 = inner_size * 0.22
+        utensil_y1 = inner_size * 0.77
+        left_x = inner_size * 0.16
+        right_x = inner_size * 0.84
+
+        draw.line((left_x, utensil_y0 + inner_size * 0.14, left_x, utensil_y1), fill=(0, 0, 0), width=stroke)
+        draw.line((left_x - inner_size * 0.075, utensil_y0, left_x - inner_size * 0.06, utensil_y0 + inner_size * 0.18), fill=(0, 0, 0), width=stroke)
+        draw.line((left_x, utensil_y0, left_x, utensil_y0 + inner_size * 0.18), fill=(0, 0, 0), width=stroke)
+        draw.line((left_x + inner_size * 0.075, utensil_y0, left_x + inner_size * 0.06, utensil_y0 + inner_size * 0.18), fill=(0, 0, 0), width=stroke)
+        draw.arc(
+            (
+                left_x - inner_size * 0.085,
+                utensil_y1 - inner_size * 0.09,
+                left_x + inner_size * 0.085,
+                utensil_y1 + inner_size * 0.09,
+            ),
+            start=0,
+            end=180,
+            fill=(0, 0, 0),
+            width=stroke,
+        )
+
+        spoon_head = (
+            right_x - inner_size * 0.075,
+            utensil_y0,
+            right_x + inner_size * 0.075,
+            utensil_y0 + inner_size * 0.22,
+        )
+        draw.ellipse(spoon_head, outline=(0, 0, 0), width=stroke)
+        draw.line(
+            (
+                right_x,
+                utensil_y0 + inner_size * 0.18,
+                right_x,
+                utensil_y1,
+            ),
+            fill=(0, 0, 0),
+            width=stroke,
+        )
+        draw.arc(
+            (
+                right_x - inner_size * 0.05,
+                utensil_y1 - inner_size * 0.09,
+                right_x + inner_size * 0.05,
+                utensil_y1 + inner_size * 0.09,
+            ),
+            start=0,
+            end=180,
+            fill=(0, 0, 0),
+            width=stroke,
+        )
+
+        tile.paste(inner, (inset, inset))
+        return tile
 
     def _apply_overlay_text(
         self,
