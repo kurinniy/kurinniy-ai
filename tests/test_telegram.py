@@ -6,7 +6,7 @@ from datetime import date, datetime
 from ai_me.config import TelegramSettings
 from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDigestHighlight, WeeklyFoodDigest
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
-from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft
+from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft, PhotoLogKind, PhotoLogResult, WATER_PHOTO_SOURCE
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, StepProgressInsight
 from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, UserStatus
@@ -26,6 +26,7 @@ class DummyHealthService:
         self.last_import = None
         self.drive_settings_by_user_id = {}
         self.health_import_files_by_user_id = {}
+        self.water_only_photo_mode = False
         self.users_by_telegram_id = {
             42: AppUser(
                 user_id=1,
@@ -48,6 +49,61 @@ class DummyHealthService:
                 created_at=datetime(2026, 5, 6, 9, 30),
             ),
         }
+
+    def _build_meal_draft(self) -> MealPhotoDraft:
+        return MealPhotoDraft(
+            draft_id="draft-1",
+            created_at=datetime(2026, 5, 6, 12, 0),
+            occurred_at=datetime(2026, 5, 6, 12, 0),
+            title="Chicken rice bowl",
+            summary="Rice bowl",
+            calories=620,
+            protein_g=38,
+            fat_g=18,
+            carbs_g=71,
+            confidence=0.84,
+            photo_file_id="file-1",
+            photo_unique_id="u-1",
+            items=[
+                FoodItemEstimate(
+                    title="Курица",
+                    portion_text="150 г",
+                    calories=250,
+                    protein_g=31,
+                    fat_g=8,
+                    carbs_g=0,
+                )
+            ],
+        )
+
+    def _build_water_draft(self) -> MealPhotoDraft:
+        return MealPhotoDraft(
+            draft_id="draft-1",
+            created_at=datetime(2026, 5, 6, 12, 0),
+            occurred_at=datetime(2026, 5, 6, 12, 0),
+            title="Вода",
+            summary="Стакан воды",
+            calories=0,
+            protein_g=0,
+            fat_g=0,
+            carbs_g=0,
+            confidence=0.91,
+            photo_file_id="file-1",
+            photo_unique_id="u-1",
+            source=WATER_PHOTO_SOURCE,
+            items=[
+                FoodItemEstimate(
+                    title="Вода",
+                    portion_text="500 мл",
+                    calories=0,
+                    protein_g=0,
+                    fat_g=0,
+                    carbs_g=0,
+                    water_ml=500,
+                )
+            ],
+            water_ml=500,
+        )
 
     def get_user_by_telegram_user_id(self, telegram_user_id: int):
         return self.users_by_telegram_id.get(telegram_user_id)
@@ -224,6 +280,8 @@ class DummyHealthService:
             total_protein_g=38.0,
             total_fat_g=18.0,
             total_carbs_g=71.0,
+            water_ml=1200,
+            water_goal_ml=2000,
             commentary="Относительно 7 дней калорийность выше среднего.",
         )
 
@@ -343,46 +401,28 @@ class DummyHealthService:
         return []
 
     def list_meal_drafts(self, user_id, status=MealDraftStatus.PENDING):
-        return [
-            MealPhotoDraft(
-                draft_id="draft-1",
-                created_at=datetime(2026, 5, 6, 12, 0),
-                occurred_at=datetime(2026, 5, 6, 12, 0),
-                title="Chicken rice bowl",
-                summary="Rice bowl",
-                calories=620,
-                protein_g=38,
-                fat_g=18,
-                carbs_g=71,
-                confidence=0.84,
-                photo_file_id="file-1",
-                photo_unique_id="u-1",
-                items=[
-                    FoodItemEstimate(
-                        title="Курица",
-                        portion_text="150 г",
-                        calories=250,
-                        protein_g=31,
-                        fat_g=8,
-                        carbs_g=0,
-                    )
-                ],
-            )
-        ]
+        return [self._build_water_draft() if self.water_only_photo_mode else self._build_meal_draft()]
 
     def create_meal_draft_from_photo(self, user_id, **kwargs):
         return self.list_meal_drafts(user_id)[0]
 
     def confirm_meal_draft(self, user_id, draft_id):
         self.confirmed_draft_ids.append((user_id, draft_id))
-        return type(
-            "Meal",
-            (),
-            {
-                "title": "Chicken rice bowl",
-                "occurred_at": datetime(2026, 5, 6, 12, 0),
-            },
-        )()
+        if self.water_only_photo_mode:
+            return PhotoLogResult(
+                entry_id="water-1",
+                kind=PhotoLogKind.WATER,
+                title="Вода",
+                occurred_at=datetime(2026, 5, 6, 12, 0),
+                water_ml=500,
+            )
+        return PhotoLogResult(
+            entry_id="meal-1",
+            kind=PhotoLogKind.MEAL,
+            title="Chicken rice bowl",
+            occurred_at=datetime(2026, 5, 6, 12, 0),
+            water_ml=0,
+        )
 
     def reject_meal_draft(self, user_id, draft_id):
         return type("Draft", (), {"title": "Chicken rice bowl"})()
@@ -561,6 +601,7 @@ class TelegramHealthBotTest(unittest.TestCase):
     def test_digest_preview_command_returns_daily_preview(self) -> None:
         response = self.bot._route_command("/digest_preview 2026-05-06", app_user=self.service.users_by_telegram_id[42])
         self.assertIn("Daily digest preview за 2026-05-06", response)
+        self.assertIn("Вода: 1.2 л / 2 л", response)
         self.assertIn("Список блюд:", response)
         self.assertIn("Курица с рисом", response)
         self.assertIn("Шаги за день: 6200 / 10000", response)
@@ -621,6 +662,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(business_calls[0][0], "sendPhoto")
         self.assertEqual(business_calls[1][0], "sendMessage")
         self.assertIn("Daily digest preview за 2026-05-06", business_calls[1][1]["text"])
+        self.assertIn("Вода: 1.2 л / 2 л", business_calls[1][1]["text"])
         self.assertIn("Шаги за день: 6200 / 10000", business_calls[1][1]["text"])
         self.assertIn("Отладка:", business_calls[1][1]["text"])
         self.assertIn("Рендер изображения:", business_calls[1][1]["text"])
@@ -1079,6 +1121,14 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Прием пищи сохранен", response)
         self.assertEqual(self.service.confirmed_draft_ids, [(1, "draft-1")])
 
+    def test_confirm_meal_command_saves_water_when_photo_is_water_only(self) -> None:
+        self.service.water_only_photo_mode = True
+
+        response = self.bot._route_command("/confirm_meal draft-1", app_user=self.service.users_by_telegram_id[42])
+
+        self.assertIn("Вода сохранена: 0.5 л.", response)
+        self.assertEqual(self.service.confirmed_draft_ids, [(1, "draft-1")])
+
     def test_confirm_callback_edits_message_and_sends_confirmation(self) -> None:
         calls = []
 
@@ -1131,6 +1181,32 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[1][0], "editMessageText")
         self.assertEqual(calls[2][0], "sendMessage")
 
+    def test_confirm_callback_uses_water_text_for_water_only_photo(self) -> None:
+        self.service.water_only_photo_mode = True
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "meal_confirm:draft-1",
+                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 777, "type": "private"},
+                },
+            }
+        )
+
+        self.assertEqual(calls[1][0], "editMessageText")
+        self.assertIn("Вода сохранена", calls[1][1]["text"])
+        self.assertEqual(calls[2][0], "sendMessage")
+        self.assertIn("Вода сохранена: 0.5 л.", calls[2][1]["text"])
+
     def test_unregistered_callback_gets_start_prompt(self) -> None:
         calls = []
 
@@ -1170,6 +1246,23 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Черновик приема пищи", text)
         self.assertIn("Состав:", text)
         self.assertIn("Ингредиенты:", text)
+
+    def test_water_only_draft_message_uses_water_labels(self) -> None:
+        self.service.water_only_photo_mode = True
+        draft = self.service.list_meal_drafts(1)[0]
+        messages = []
+
+        def fake_telegram_api(method, params):
+            messages.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._send_meal_draft(777, draft)
+
+        text = messages[0][1]["text"]
+        self.assertIn("Черновик воды", text)
+        self.assertIn("Объем: 0.5 л", text)
+        self.assertNotIn("Калории:", text)
 
     def test_food_analysis_parser_handles_markdown_wrapped_json(self) -> None:
         parsed = OpenAIFoodPhotoAnalyzer._parse_json_text(

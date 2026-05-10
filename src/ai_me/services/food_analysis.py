@@ -18,6 +18,7 @@ class MealAnalysis:
     confidence: float
     items: List[FoodItemEstimate]
     water_ml: int = 0
+    is_water_only: bool = False
 
 
 class FoodPhotoAnalyzer(Protocol):
@@ -44,11 +45,14 @@ class OpenAIFoodPhotoAnalyzer:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         input_text = (
             "Analyze this food photo. Return strict JSON with keys: "
-            "title, summary, calories, protein_g, fat_g, carbs_g, water_ml, confidence, items. "
+            "title, summary, calories, protein_g, fat_g, carbs_g, water_ml, is_water_only, confidence, items. "
             "Each item must include title, portion_text, calories, protein_g, fat_g, carbs_g, water_ml. "
             "Return title, summary, item titles, and portion_text in Russian. "
             "If the meal contains water, tea, coffee, soup, juice, soda, or another drink, "
             "estimate drink volume in water_ml conservatively. If there is no drink, return 0. "
+            "If the image shows only plain water and no food, set is_water_only=true, "
+            "set calories/protein_g/fat_g/carbs_g to 0, and estimate only water_ml. "
+            "If there is any food besides water, set is_water_only=false. "
             "Estimate conservatively. If unclear, lower confidence. "
             "Caption context: %s" % (caption or "none")
         )
@@ -111,6 +115,7 @@ class OpenAIFoodPhotoAnalyzer:
                 for item in data.get("items", [])
             ],
             water_ml=int(data.get("water_ml", 0)),
+            is_water_only=bool(data.get("is_water_only", False)),
         )
 
     @staticmethod
@@ -178,6 +183,7 @@ class OpenAIFoodPhotoAnalyzer:
                 "fat_g": {"type": "number"},
                 "carbs_g": {"type": "number"},
                 "water_ml": {"type": "integer"},
+                "is_water_only": {"type": "boolean"},
                 "confidence": {"type": "number"},
                 "items": {
                     "type": "array",
@@ -192,6 +198,7 @@ class OpenAIFoodPhotoAnalyzer:
                 "fat_g",
                 "carbs_g",
                 "water_ml",
+                "is_water_only",
                 "confidence",
                 "items",
             ],

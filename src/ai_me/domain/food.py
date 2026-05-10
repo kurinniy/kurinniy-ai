@@ -10,6 +10,15 @@ class MealDraftStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class PhotoLogKind(str, Enum):
+    MEAL = "meal"
+    WATER = "water"
+
+
+MEAL_PHOTO_SOURCE = "telegram_photo"
+WATER_PHOTO_SOURCE = "telegram_water_photo"
+
+
 @dataclass(frozen=True)
 class FoodItemEstimate:
     title: str
@@ -36,8 +45,27 @@ class MealPhotoDraft:
     photo_file_id: str
     photo_unique_id: str
     status: MealDraftStatus = MealDraftStatus.PENDING
-    source: str = "telegram_photo"
+    source: str = MEAL_PHOTO_SOURCE
     items: List[FoodItemEstimate] = field(default_factory=list)
+    water_ml: int = 0
+
+    @property
+    def is_water_only(self) -> bool:
+        return self.source == WATER_PHOTO_SOURCE or (
+            self.water_ml > 0
+            and self.calories <= 0
+            and self.protein_g <= 0
+            and self.fat_g <= 0
+            and self.carbs_g <= 0
+        )
+
+
+@dataclass(frozen=True)
+class PhotoLogResult:
+    entry_id: str
+    kind: PhotoLogKind
+    title: str
+    occurred_at: datetime
     water_ml: int = 0
 
 

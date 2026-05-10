@@ -140,6 +140,8 @@ class DailyFoodDigest:
     total_protein_g: float
     total_fat_g: float
     total_carbs_g: float
+    water_ml: int = 0
+    water_goal_ml: int = 2000
     trend_windows: List[DigestTrendWindow] = field(default_factory=list)
     commentary_data: DailyDigestCommentaryData = field(default_factory=DailyDigestCommentaryData)
     commentary: str = ""

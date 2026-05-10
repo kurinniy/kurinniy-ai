@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from ai_me.config import TelegramSettings
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.digest import DailyFoodDigest, WeeklyFoodDigest
-from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
+from ai_me.domain.food import MealDraftStatus, MealPhotoDraft, PhotoLogKind
 from ai_me.domain.user import AppUser, UserStatus
 from ai_me.services.digest_renderer import DigestImageRenderer
 from ai_me.services.health_service import HealthService
@@ -205,22 +205,36 @@ class TelegramHealthBot:
                 self._send_message(chat_id, "Не удалось сохранить прием пищи: %s" % exc)
                 return
             if isinstance(message_id, int):
-                self._try_edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=(
+                edit_text = (
+                    "Вода сохранена\n"
+                    "Напиток: %s\n"
+                    "Статус: подтверждено"
+                    % meal.title
+                    if meal.kind == PhotoLogKind.WATER
+                    else (
                         "Прием пищи сохранен\n"
                         "Блюдо: %s\n"
                         "Статус: подтверждено"
+                        % meal.title
                     )
-                    % meal.title,
+                )
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=edit_text,
                 )
             decisions = self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
             logger.info("Meal confirmed draft_id=%s title=%s", draft_id, meal.title)
-            self._send_message(
-                chat_id,
-                "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions)),
-            )
+            if meal.kind == PhotoLogKind.WATER:
+                self._send_message(
+                    chat_id,
+                    "Вода сохранена: %s л.\n%s" % (self._format_liters(meal.water_ml), self._format_new_decisions(decisions)),
+                )
+            else:
+                self._send_message(
+                    chat_id,
+                    "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions)),
+                )
             return
 
         if data.startswith("meal_reject:"):
@@ -555,6 +569,8 @@ class TelegramHealthBot:
             return "Использование: /confirm_meal <draft_id>"
         meal = self.service.confirm_meal_draft(app_user.user_id, args[0])
         decisions = self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
+        if meal.kind == PhotoLogKind.WATER:
+            return "Вода сохранена: %s л.\n%s" % (self._format_liters(meal.water_ml), self._format_new_decisions(decisions))
         return "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions))
 
     def _handle_reject_meal(self, app_user: AppUser, args: List[str]) -> str:
@@ -769,6 +785,46 @@ class TelegramHealthBot:
             )
 
     def _send_meal_draft(self, chat_id: int, draft: MealPhotoDraft) -> None:
+        if draft.is_water_only:
+            self._telegram_api(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": (
+                        "Черновик воды\n"
+                        "Напиток: %s\n"
+                        "Объем: %s л\n"
+                        "Описание: %s\n"
+                        "Уверенность: %.2f\n"
+                        "ID черновика: %s"
+                        % (
+                            draft.title,
+                            self._format_liters(draft.water_ml),
+                            draft.summary,
+                            draft.confidence,
+                            draft.draft_id,
+                        )
+                    ),
+                    "reply_markup": json.dumps(
+                        {
+                            "inline_keyboard": [
+                                [
+                                    {
+                                        "text": "Подтвердить",
+                                        "callback_data": "meal_confirm:%s" % draft.draft_id,
+                                    },
+                                    {
+                                        "text": "Отклонить",
+                                        "callback_data": "meal_reject:%s" % draft.draft_id,
+                                    },
+                                ]
+                            ]
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            )
+            return
         items_text = "\n".join(
             "- %s (%s): %s ккал, Б %.1f / Ж %.1f / У %.1f"
             % (
@@ -969,6 +1025,11 @@ class TelegramHealthBot:
             "Белок: %.1f г" % digest.total_protein_g,
             "Жиры: %.1f г" % digest.total_fat_g,
             "Углеводы: %.1f г" % digest.total_carbs_g,
+            "Вода: %s л / %s л"
+            % (
+                TelegramHealthBot._format_liters(digest.water_ml),
+                TelegramHealthBot._format_liters(digest.water_goal_ml),
+            ),
             "Список блюд:",
         ]
         for meal in digest.meals:
@@ -998,6 +1059,10 @@ class TelegramHealthBot:
                 ]
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_liters(amount_ml: int) -> str:
+        return ("%.1f" % (amount_ml / 1000.0)).rstrip("0").rstrip(".")
 
     @staticmethod
     def _format_weekly_digest_text(

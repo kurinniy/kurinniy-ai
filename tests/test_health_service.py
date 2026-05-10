@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.digest import DigestStatus, DigestType
-from ai_me.domain.food import FoodItemEstimate, MealDraftStatus
+from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, PhotoLogKind, WATER_PHOTO_SOURCE
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -56,6 +56,32 @@ class StubFoodPhotoAnalyzer:
                 ),
             ],
             water_ml=500,
+        )
+
+
+class StubWaterOnlyPhotoAnalyzer:
+    def analyze_photo(self, image_bytes: bytes, mime_type: str, caption: str = "") -> MealAnalysis:
+        return MealAnalysis(
+            title="Вода",
+            summary="Стакан воды без еды.",
+            calories=0,
+            protein_g=0,
+            fat_g=0,
+            carbs_g=0,
+            confidence=0.93,
+            items=[
+                FoodItemEstimate(
+                    title="Вода",
+                    portion_text="700 мл",
+                    calories=0,
+                    protein_g=0,
+                    fat_g=0,
+                    carbs_g=0,
+                    water_ml=700,
+                )
+            ],
+            water_ml=700,
+            is_water_only=True,
         )
 
 
@@ -283,6 +309,7 @@ class HealthServiceTest(unittest.TestCase):
         summary = self.service.get_daily_summary(self.user.user_id, self.target_date)
         drafts = self.service.list_meal_drafts(self.user.user_id)
 
+        self.assertEqual(meal.kind, PhotoLogKind.MEAL)
         self.assertEqual(meal.title, "Chicken rice bowl")
         self.assertEqual(summary.meals_count, 1)
         self.assertEqual(summary.calories, 620)
@@ -439,6 +466,34 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(media_after[0].meal_entry_id, meal.entry_id)
         self.assertEqual(media_after[0].telegram_file_id, "telegram-photo-1")
 
+    def test_water_only_photo_draft_is_logged_as_water_not_meal(self) -> None:
+        self.service.food_photo_analyzer = StubWaterOnlyPhotoAnalyzer()
+
+        draft = self.service.create_meal_draft_from_photo(
+            self.user.user_id,
+            photo_file_id="telegram-water-1",
+            photo_unique_id="water-unique-1",
+            image_bytes=b"fake-water-jpeg",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 14, 0),
+            caption="Water",
+        )
+
+        result = self.service.confirm_meal_draft(self.user.user_id, draft.draft_id)
+        summary = self.service.get_daily_summary(self.user.user_id, self.target_date)
+        meals = self.service.list_meals(self.user.user_id, self.target_date)
+        media = self.service.list_meal_media(self.user.user_id, target_date=self.target_date)
+
+        self.assertTrue(draft.is_water_only)
+        self.assertEqual(draft.source, WATER_PHOTO_SOURCE)
+        self.assertEqual(result.kind, PhotoLogKind.WATER)
+        self.assertEqual(result.water_ml, 700)
+        self.assertEqual(summary.meals_count, 0)
+        self.assertEqual(summary.calories, 0)
+        self.assertEqual(summary.water_ml, 700)
+        self.assertEqual(meals, [])
+        self.assertEqual(media[0].meal_entry_id, "")
+
     def test_build_daily_food_digest_uses_confirmed_photo_meals_and_trends(self) -> None:
         historical_dates = [date(2026, 5, 3), date(2026, 5, 4), date(2026, 5, 5)]
         for index, current_date in enumerate(historical_dates, start=1):
@@ -458,10 +513,43 @@ class HealthServiceTest(unittest.TestCase):
         self.assertIsNotNone(digest)
         self.assertEqual(len(digest.meals), 1)
         self.assertEqual(digest.total_calories, 620)
+        self.assertEqual(digest.water_ml, 500)
+        self.assertEqual(digest.water_goal_ml, 2000)
         self.assertEqual([trend.days for trend in digest.trend_windows], [7, 14, 30])
         self.assertEqual(digest.commentary_data.meal_pattern.largest_meal.title, "Chicken rice bowl")
         self.assertGreaterEqual(len(digest.commentary_data.comparisons), 3)
         self.assertIn("7-дневной базы", digest.commentary)
+
+    def test_build_daily_food_digest_excludes_confirmed_water_only_photos(self) -> None:
+        meal_draft = self.service.create_meal_draft_from_photo(
+            self.user.user_id,
+            photo_file_id="meal-file",
+            photo_unique_id="meal-uniq",
+            image_bytes=b"meal-img",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 12, 0),
+            caption="meal",
+        )
+        self.service.confirm_meal_draft(self.user.user_id, meal_draft.draft_id)
+
+        self.service.food_photo_analyzer = StubWaterOnlyPhotoAnalyzer()
+        water_draft = self.service.create_meal_draft_from_photo(
+            self.user.user_id,
+            photo_file_id="water-file",
+            photo_unique_id="water-uniq",
+            image_bytes=b"water-img",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 15, 0),
+            caption="water",
+        )
+        self.service.confirm_meal_draft(self.user.user_id, water_draft.draft_id)
+
+        digest = self.service.build_daily_food_digest(self.user.user_id, self.target_date)
+
+        self.assertIsNotNone(digest)
+        self.assertEqual(len(digest.meals), 1)
+        self.assertEqual(digest.meals[0].title, "Chicken rice bowl")
+        self.assertEqual(digest.water_ml, 1200)
 
     def test_build_weekly_food_digest_selects_highlights(self) -> None:
         for offset in range(7):

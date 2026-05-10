@@ -33,7 +33,15 @@ from ai_me.domain.digest import (
 )
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
 from ai_me.domain.finance import FinanceImportResult, FinanceMonthlySummary
-from ai_me.domain.food import MealDraftStatus, MealMedia, MealPhotoDraft
+from ai_me.domain.food import (
+    MEAL_PHOTO_SOURCE,
+    WATER_PHOTO_SOURCE,
+    MealDraftStatus,
+    MealMedia,
+    MealPhotoDraft,
+    PhotoLogKind,
+    PhotoLogResult,
+)
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -250,6 +258,7 @@ class HealthService:
         meals = self._list_photo_meals_for_date(user_id, digest_date)
         if not meals:
             return None
+        daily_summary = self.get_daily_summary(user_id, digest_date)
 
         trend_windows = [self._build_trend_window(user_id, digest_date, window_days) for window_days in (7, 14, 30)]
         total_calories = sum(meal.calories for meal in meals)
@@ -283,6 +292,8 @@ class HealthService:
             total_protein_g=total_protein_g,
             total_fat_g=total_fat_g,
             total_carbs_g=total_carbs_g,
+            water_ml=daily_summary.water_ml,
+            water_goal_ml=daily_summary.goals.water_ml,
             trend_windows=trend_windows,
             commentary_data=commentary_data,
             commentary=commentary,
@@ -404,6 +415,7 @@ class HealthService:
             mime_type=mime_type,
             caption=caption,
         )
+        is_water_only = self._is_water_only_analysis(analyzed)
         draft = MealPhotoDraft(
             draft_id=str(uuid4()),
             created_at=datetime.now(),
@@ -417,6 +429,7 @@ class HealthService:
             confidence=analyzed.confidence,
             photo_file_id=photo_file_id,
             photo_unique_id=photo_unique_id,
+            source=WATER_PHOTO_SOURCE if is_water_only else MEAL_PHOTO_SOURCE,
             items=analyzed.items,
             water_ml=analyzed.water_ml,
         )
@@ -438,8 +451,23 @@ class HealthService:
         )
         return draft
 
-    def confirm_meal_draft(self, user_id: int, draft_id: str) -> MealEntry:
+    def confirm_meal_draft(self, user_id: int, draft_id: str) -> PhotoLogResult:
         draft = self._require_meal_draft(user_id, draft_id, MealDraftStatus.PENDING)
+        if draft.is_water_only:
+            water = WaterEntry(
+                entry_id=str(uuid4()),
+                occurred_at=draft.occurred_at,
+                amount_ml=draft.water_ml,
+            )
+            self.store.add_water(user_id, water)
+            self.store.update_meal_draft_status(user_id, draft_id, MealDraftStatus.CONFIRMED)
+            return PhotoLogResult(
+                entry_id=water.entry_id,
+                kind=PhotoLogKind.WATER,
+                title=draft.title,
+                occurred_at=draft.occurred_at,
+                water_ml=draft.water_ml,
+            )
         meal = MealEntry(
             entry_id=str(uuid4()),
             occurred_at=draft.occurred_at,
@@ -462,7 +490,13 @@ class HealthService:
         self.store.add_meal(user_id, meal)
         self.store.update_meal_draft_status(user_id, draft_id, MealDraftStatus.CONFIRMED)
         self.store.attach_meal_media_to_meal(user_id, draft_id, meal.entry_id)
-        return meal
+        return PhotoLogResult(
+            entry_id=meal.entry_id,
+            kind=PhotoLogKind.MEAL,
+            title=meal.title,
+            occurred_at=meal.occurred_at,
+            water_ml=meal.water_ml,
+        )
 
     def reject_meal_draft(self, user_id: int, draft_id: str) -> MealPhotoDraft:
         draft = self._require_meal_draft(user_id, draft_id, MealDraftStatus.PENDING)
@@ -622,6 +656,16 @@ class HealthService:
                 )
             )
         return snapshots
+
+    @staticmethod
+    def _is_water_only_analysis(analyzed) -> bool:
+        return analyzed.is_water_only or (
+            analyzed.water_ml > 0
+            and analyzed.calories <= 0
+            and analyzed.protein_g <= 0
+            and analyzed.fat_g <= 0
+            and analyzed.carbs_g <= 0
+        )
 
     def _collect_photo_meals(self, user_id: int, start_date: date, end_date: date) -> List[DigestMealSnapshot]:
         if end_date < start_date:
