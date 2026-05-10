@@ -238,87 +238,99 @@ class DigestImageRenderer:
 
     @staticmethod
     def _build_placeholder_knife(icon_size: int, color: Tuple[int, int, int, int]) -> Image.Image:
-        width = max(28, int(round(icon_size * 0.29)))
-        height = max(72, int(round(icon_size * 0.9)))
-        image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
+        scale = 4
+        width = max(30, int(round(icon_size * 0.34)))
+        height = max(76, int(round(icon_size * 0.9)))
+        image = Image.new("RGBA", (width * scale, height * scale), (255, 255, 255, 0))
         draw = ImageDraw.Draw(image)
 
-        handle_width = max(12, int(round(width * 0.34)))
-        handle_left = (width - handle_width) / 2
-        handle_top = height * 0.42
-        handle_bottom = height * 0.96
-        radius = max(6, int(round(handle_width * 0.45)))
+        def sx(value: float) -> float:
+            return value * width * scale
+
+        def sy(value: float) -> float:
+            return value * height * scale
+
+        handle_left = sx(0.39)
+        handle_right = sx(0.61)
+        handle_top = sy(0.40)
+        handle_bottom = sy(0.98)
         draw.rounded_rectangle(
-            (handle_left, handle_top, handle_left + handle_width, handle_bottom),
-            radius=radius,
+            (handle_left, handle_top, handle_right, handle_bottom),
+            radius=max(10, int(round((handle_right - handle_left) * 0.48))),
             fill=color,
         )
 
+        shoulder_y = sy(0.35)
+        draw.rounded_rectangle(
+            (sx(0.34), sy(0.31), sx(0.66), sy(0.45)),
+            radius=max(8, int(round(width * scale * 0.08))),
+            fill=color,
+        )
         blade_points = [
-            (width * 0.08, height * 0.18),
-            (width * 0.16, height * 0.08),
-            (width * 0.34, height * 0.02),
-            (width * 0.58, height * 0.12),
-            (width * 0.64, height * 0.24),
-            (width * 0.54, height * 0.42),
-            (width * 0.44, height * 0.48),
-            (width * 0.26, height * 0.44),
+            (sx(0.50), sy(0.02)),
+            (sx(0.82), sy(0.23)),
+            (sx(0.67), shoulder_y),
+            (sx(0.33), shoulder_y),
+            (sx(0.18), sy(0.23)),
         ]
         draw.polygon(blade_points, fill=color)
-        return image
+
+        return image.resize((width, height), resample=Image.Resampling.LANCZOS)
 
     @staticmethod
     def _build_placeholder_fork(icon_size: int, color: Tuple[int, int, int, int]) -> Image.Image:
-        width = max(30, int(round(icon_size * 0.31)))
-        height = max(72, int(round(icon_size * 0.9)))
-        image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
+        scale = 4
+        width = max(32, int(round(icon_size * 0.36)))
+        height = max(76, int(round(icon_size * 0.9)))
+        image = Image.new("RGBA", (width * scale, height * scale), (255, 255, 255, 0))
         draw = ImageDraw.Draw(image)
 
-        handle_width = max(12, int(round(width * 0.34)))
-        handle_left = (width - handle_width) / 2
-        handle_top = height * 0.44
-        handle_bottom = height * 0.98
-        radius = max(6, int(round(handle_width * 0.45)))
+        def sx(value: float) -> float:
+            return value * width * scale
+
+        def sy(value: float) -> float:
+            return value * height * scale
+
+        handle_left = sx(0.39)
+        handle_right = sx(0.61)
+        handle_top = sy(0.42)
+        handle_bottom = sy(0.98)
         draw.rounded_rectangle(
-            (handle_left, handle_top, handle_left + handle_width, handle_bottom),
-            radius=radius,
+            (handle_left, handle_top, handle_right, handle_bottom),
+            radius=max(10, int(round((handle_right - handle_left) * 0.48))),
             fill=color,
         )
 
-        neck_left = width * 0.30
-        neck_right = width * 0.70
-        neck_top = height * 0.28
-        neck_bottom = height * 0.52
+        neck_left = sx(0.36)
+        neck_right = sx(0.64)
+        neck_top = sy(0.28)
+        neck_bottom = sy(0.49)
         draw.rounded_rectangle(
             (neck_left, neck_top, neck_right, neck_bottom),
-            radius=max(4, int(round(width * 0.12))),
+            radius=max(8, int(round(width * scale * 0.07))),
             fill=color,
         )
 
-        head_top = height * 0.02
-        head_bottom = height * 0.34
-        draw.rounded_rectangle(
-            (width * 0.12, head_top, width * 0.88, head_bottom),
-            radius=max(5, int(round(width * 0.14))),
-            fill=color,
-        )
-
-        carve = ImageDraw.Draw(image)
-        slot_width = max(3, int(round(width * 0.09)))
-        slot_height = head_bottom - head_top - max(6, int(round(height * 0.02)))
-        slot_top = head_top + max(4, int(round(height * 0.02)))
-        for center_x in (width * 0.33, width * 0.5, width * 0.67):
-            carve.rounded_rectangle(
-                (
-                    center_x - slot_width / 2,
-                    slot_top,
-                    center_x + slot_width / 2,
-                    slot_top + slot_height,
-                ),
-                radius=max(2, slot_width // 2),
-                fill=(255, 255, 255, 0),
+        tine_width = sx(0.12) - sx(0.0)
+        tine_gap = sx(0.05) - sx(0.0)
+        tine_top = sy(0.02)
+        tine_bottom = sy(0.28)
+        first_tine_left = sx(0.15)
+        for tine_index in range(4):
+            tine_left = first_tine_left + tine_index * (tine_width + tine_gap)
+            draw.rounded_rectangle(
+                (tine_left, tine_top, tine_left + tine_width, tine_bottom),
+                radius=max(6, int(round(tine_width * 0.45))),
+                fill=color,
             )
-        return image
+
+        draw.rounded_rectangle(
+            (sx(0.12), sy(0.22), sx(0.88), sy(0.36)),
+            radius=max(8, int(round(width * scale * 0.08))),
+            fill=color,
+        )
+
+        return image.resize((width, height), resample=Image.Resampling.LANCZOS)
 
     def _apply_overlay_text(
         self,
