@@ -143,6 +143,7 @@ class DailyFoodDigest:
     total_carbs_g: float
     water_ml: int = 0
     water_goal_ml: int = 2000
+    steps_goal: int = 10000
     trend_windows: List[DigestTrendWindow] = field(default_factory=list)
     commentary_data: DailyDigestCommentaryData = field(default_factory=DailyDigestCommentaryData)
     commentary: str = ""

@@ -147,6 +147,9 @@ class HealthStore(Protocol):
     ) -> List[MealMedia]:
         ...
 
+    def list_meal_media_by_ids(self, user_id: int, media_ids: List[str]) -> List[MealMedia]:
+        ...
+
     def attach_meal_media_to_meal(self, user_id: int, draft_id: str, meal_entry_id: str) -> None:
         ...
 

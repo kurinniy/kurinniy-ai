@@ -701,6 +701,22 @@ class MySQLStore:
         )
         return [self._to_meal_media(row) for row in rows]
 
+    def list_meal_media_by_ids(self, user_id: int, media_ids: List[str]) -> List[MealMedia]:
+        if not media_ids:
+            return []
+        placeholders = ", ".join(["%s"] * len(media_ids))
+        rows = self._fetchall(
+            """
+            SELECT *
+            FROM meal_media
+            WHERE user_id = %s
+              AND media_id IN ({placeholders})
+            ORDER BY occurred_at ASC, created_at ASC
+            """.format(placeholders=placeholders),
+            tuple([user_id] + media_ids),
+        )
+        return [self._to_meal_media(row) for row in rows]
+
     def attach_meal_media_to_meal(self, user_id: int, draft_id: str, meal_entry_id: str) -> None:
         self._execute(
             """

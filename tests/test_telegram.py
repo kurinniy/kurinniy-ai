@@ -254,6 +254,7 @@ class DummyHealthService:
                     "historical_cache_seconds": 0.27,
                     "digest_day_cache_seconds": 0.08,
                     "cache_merge_seconds": 0.03,
+                    "media_hydration_seconds": 0.04,
                     "daily_summary_seconds": 0.05,
                     "trend_windows_seconds": 0.41,
                     "commentary_data_seconds": 0.12,
@@ -295,6 +296,7 @@ class DummyHealthService:
             total_carbs_g=71.0,
             water_ml=1200,
             water_goal_ml=2000,
+            steps_goal=10000,
             commentary="Относительно 7 дней калорийность выше среднего.",
         )
 
@@ -402,11 +404,11 @@ class DummyHealthService:
             )
         ]
 
-    def build_step_progress_insight(self, user_id, reference_date):
+    def build_step_progress_insight(self, user_id, reference_date, target_steps=None):
         return StepProgressInsight(
             reference_date=reference_date,
             steps=6200,
-            target_steps=10000,
+            target_steps=target_steps or 10000,
             average_steps_30d=5400.0,
             days_with_data_30d=30,
             comment="Это на 15% выше вашей средней за последние 30 дней. До цели не хватило 3800 шагов.",
@@ -694,6 +696,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("история за 30 дней:", business_calls[1][1]["text"])
         self.assertIn("текущий день:", business_calls[1][1]["text"])
         self.assertIn("слияние cache:", business_calls[1][1]["text"])
+        self.assertIn("загрузка изображений текущего дня:", business_calls[1][1]["text"])
         self.assertIn("daily summary:", business_calls[1][1]["text"])
         self.assertIn("trend windows 7/14/30:", business_calls[1][1]["text"])
         self.assertIn("построение commentary data:", business_calls[1][1]["text"])

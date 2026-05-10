@@ -930,7 +930,11 @@ class TelegramHealthBot:
         step_insight_seconds = 0.0
         if include_step_insight:
             step_insight_started_at = time.perf_counter()
-            step_progress = self.service.build_step_progress_insight(user_id, digest_date)
+            step_progress = self.service.build_step_progress_insight(
+                user_id,
+                digest_date,
+                target_steps=digest.steps_goal,
+            )
             step_insight_seconds = time.perf_counter() - step_insight_started_at
         photo_result = None
         render_started_at = time.perf_counter()
@@ -1126,6 +1130,7 @@ class TelegramHealthBot:
             ("история за 30 дней", build_timings.get("historical_cache_seconds", 0.0)),
             ("текущий день", build_timings.get("digest_day_cache_seconds", 0.0)),
             ("слияние cache", build_timings.get("cache_merge_seconds", 0.0)),
+            ("загрузка изображений текущего дня", build_timings.get("media_hydration_seconds", 0.0)),
             ("daily summary", build_timings.get("daily_summary_seconds", 0.0)),
             ("trend windows 7/14/30", build_timings.get("trend_windows_seconds", 0.0)),
             ("построение commentary data", build_timings.get("commentary_data_seconds", 0.0)),

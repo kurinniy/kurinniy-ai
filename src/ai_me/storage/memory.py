@@ -324,6 +324,15 @@ class InMemoryStore:
             ]
         return sorted(media, key=lambda item: item.occurred_at)
 
+    def list_meal_media_by_ids(self, user_id: int, media_ids: List[str]) -> List[MealMedia]:
+        wanted = set(media_ids)
+        media = [
+            item
+            for item in self._meal_media_by_user.get(user_id, {}).values()
+            if item.media_id in wanted
+        ]
+        return sorted(media, key=lambda item: item.occurred_at)
+
     def attach_meal_media_to_meal(self, user_id: int, draft_id: str, meal_entry_id: str) -> None:
         current_items = self._meal_media_by_user.get(user_id, {})
         for media_id, media in list(current_items.items()):

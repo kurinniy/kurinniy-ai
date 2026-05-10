@@ -275,7 +275,7 @@ class HealthService:
             user_id=user_id,
             start_date=digest_date,
             end_date=digest_date,
-            include_image_bytes=True,
+            include_image_bytes=False,
         )
         digest_day_cache_seconds = time.perf_counter() - digest_day_cache_started_at
         cache_merge_started_at = time.perf_counter()
@@ -293,6 +293,9 @@ class HealthService:
                     }
                 )
             return None
+        media_hydration_started_at = time.perf_counter()
+        meals = self._hydrate_primary_media_bytes(user_id, meals)
+        media_hydration_seconds = time.perf_counter() - media_hydration_started_at
         daily_summary_started_at = time.perf_counter()
         manual_water_ml = self.store.get_daily_water_total(user_id, digest_date)
         goals = self.store.get_health_goals(user_id, digest_date)
@@ -338,6 +341,7 @@ class HealthService:
                     "historical_cache_seconds": historical_cache_seconds,
                     "digest_day_cache_seconds": digest_day_cache_seconds,
                     "cache_merge_seconds": cache_merge_seconds,
+                    "media_hydration_seconds": media_hydration_seconds,
                     "daily_summary_seconds": daily_summary_seconds,
                     "trend_windows_seconds": trend_windows_seconds,
                     "commentary_data_seconds": commentary_data_seconds,
@@ -354,6 +358,7 @@ class HealthService:
             total_carbs_g=total_carbs_g,
             water_ml=manual_water_ml + sum(meal.water_ml for meal in meals),
             water_goal_ml=goals.water_ml,
+            steps_goal=goals.steps,
             trend_windows=trend_windows,
             commentary_data=commentary_data,
             commentary=commentary,
@@ -654,6 +659,45 @@ class HealthService:
             days_with_data_30d=days_with_data,
             comment=comment,
         )
+
+    def _hydrate_primary_media_bytes(
+        self,
+        user_id: int,
+        meals: List[DigestMealSnapshot],
+    ) -> List[DigestMealSnapshot]:
+        primary_media_ids = [
+            meal.media_items[0].media_id
+            for meal in meals
+            if meal.media_items
+        ]
+        if not primary_media_ids:
+            return meals
+
+        hydrated_media = self.store.list_meal_media_by_ids(user_id, primary_media_ids)
+        media_by_id = {media.media_id: media for media in hydrated_media}
+        hydrated_meals: List[DigestMealSnapshot] = []
+        for meal in meals:
+            if not meal.media_items:
+                hydrated_meals.append(meal)
+                continue
+            primary_media = media_by_id.get(meal.media_items[0].media_id)
+            if primary_media is None:
+                hydrated_meals.append(meal)
+                continue
+            hydrated_meals.append(
+                DigestMealSnapshot(
+                    meal_entry_id=meal.meal_entry_id,
+                    occurred_at=meal.occurred_at,
+                    title=meal.title,
+                    calories=meal.calories,
+                    protein_g=meal.protein_g,
+                    fat_g=meal.fat_g,
+                    carbs_g=meal.carbs_g,
+                    water_ml=meal.water_ml,
+                    media_items=[primary_media],
+                )
+            )
+        return hydrated_meals
 
     def list_meals(self, user_id: int, target_date: date) -> List[MealEntry]:
         return self.store.list_meals(user_id, target_date)
