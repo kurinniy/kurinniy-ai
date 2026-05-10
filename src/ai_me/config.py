@@ -142,11 +142,37 @@ class WebSettings:
 
 
 @dataclass(frozen=True)
+class MediaBucketSettings:
+    bucket_name: str = ""
+    endpoint: str = ""
+    access_key_id: str = ""
+    secret_access_key: str = ""
+    region: str = "auto"
+    key_prefix: str = "meal-media"
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.bucket_name and self.endpoint and self.access_key_id and self.secret_access_key)
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> "MediaBucketSettings":
+        return cls(
+            bucket_name=(env.get("BUCKET") or env.get("MEDIA_BUCKET_NAME") or "").strip(),
+            endpoint=(env.get("ENDPOINT") or env.get("MEDIA_BUCKET_ENDPOINT") or "").strip(),
+            access_key_id=(env.get("ACCESS_KEY_ID") or env.get("MEDIA_BUCKET_ACCESS_KEY_ID") or "").strip(),
+            secret_access_key=(env.get("SECRET_ACCESS_KEY") or env.get("MEDIA_BUCKET_SECRET_ACCESS_KEY") or "").strip(),
+            region="auto",
+            key_prefix=((env.get("BUCKET_KEY_PREFIX") or env.get("MEDIA_BUCKET_KEY_PREFIX") or "meal-media").strip() or "meal-media"),
+        )
+
+
+@dataclass(frozen=True)
 class AppSettings:
     database: DatabaseSettings
     telegram: TelegramSettings
     google_drive: GoogleDriveSettings
     web: WebSettings
+    media_bucket: MediaBucketSettings
     environment_name: str = "production"
     runtime_mode: str = "bot"
     scheduler_poll_interval_seconds: int = 7200
@@ -161,6 +187,7 @@ class AppSettings:
             telegram=TelegramSettings.from_env(source),
             google_drive=GoogleDriveSettings.from_env(source),
             web=WebSettings.from_env(source),
+            media_bucket=MediaBucketSettings.from_env(source),
             environment_name=source.get("APP_ENV", "production").strip() or "production",
             runtime_mode=(source.get("APP_RUNTIME_MODE", "bot").strip() or "bot"),
             scheduler_poll_interval_seconds=int(source.get("DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS", "7200")),

@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
-from ai_me.config import AppSettings, DatabaseSettings, GoogleDriveSettings, TelegramSettings, WebSettings
+from ai_me.config import AppSettings, DatabaseSettings, GoogleDriveSettings, MediaBucketSettings, TelegramSettings, WebSettings
 from ai_me.services.health_service import HealthService
 from ai_me.storage.memory import InMemoryStore
 from ai_me.web.app import create_web_app
@@ -61,6 +61,7 @@ class WebAppTest(unittest.TestCase):
                 init_data_ttl_seconds=3600,
                 public_url="https://mini-app.example.com",
             ),
+            media_bucket=MediaBucketSettings(),
             environment_name="staging",
             runtime_mode="web",
         )

@@ -319,6 +319,10 @@ class InMemoryStore:
                     image_bytes=b"",
                     meal_entry_id=item.meal_entry_id,
                     storage_kind=item.storage_kind,
+                    storage_key=item.storage_key,
+                    bucket_name=item.bucket_name,
+                    width=item.width,
+                    height=item.height,
                 )
                 for item in media
             ]
@@ -352,6 +356,10 @@ class InMemoryStore:
                 image_bytes=media.image_bytes,
                 meal_entry_id=meal_entry_id,
                 storage_kind=media.storage_kind,
+                storage_key=media.storage_key,
+                bucket_name=media.bucket_name,
+                width=media.width,
+                height=media.height,
             )
 
     def get_meal_draft(self, user_id: int, draft_id: str) -> Optional[MealPhotoDraft]:

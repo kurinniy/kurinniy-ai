@@ -3,8 +3,11 @@ import json
 import math
 import time
 from datetime import date, datetime, timedelta
+from io import BytesIO
 from typing import Dict, FrozenSet, List, Optional
 from uuid import uuid4
+
+from PIL import Image
 
 from ai_me.domain.digest import (
     DailyFoodDigest,
@@ -56,6 +59,11 @@ from ai_me.domain.health_import import HealthImportProvider, HealthImportResult,
 from ai_me.domain.user import AppUser, UserStatus
 from ai_me.services.food_analysis import DisabledFoodPhotoAnalyzer, FoodPhotoAnalyzer
 from ai_me.services.google_drive_import import GoogleDriveHealthImportService
+from ai_me.services.media_storage import (
+    DisabledMediaStorage,
+    MediaStorage,
+    build_meal_media_object_key,
+)
 from ai_me.services.rules import HealthDecisionEngine
 from ai_me.services.tbank_import import TBankCSVImporter
 from ai_me.storage.base import HealthStore
@@ -68,6 +76,7 @@ class HealthService:
         decision_engine: Optional[HealthDecisionEngine] = None,
         food_photo_analyzer: Optional[FoodPhotoAnalyzer] = None,
         tbank_csv_importer: Optional[TBankCSVImporter] = None,
+        media_storage: Optional[MediaStorage] = None,
         google_drive_import_service: Optional[GoogleDriveHealthImportService] = None,
         admin_telegram_user_ids: FrozenSet[int] = frozenset(),
         default_timezone_name: str = "Europe/Moscow",
@@ -76,6 +85,7 @@ class HealthService:
         self.decision_engine = decision_engine or HealthDecisionEngine()
         self.food_photo_analyzer = food_photo_analyzer or DisabledFoodPhotoAnalyzer()
         self.tbank_csv_importer = tbank_csv_importer or TBankCSVImporter()
+        self.media_storage = media_storage or DisabledMediaStorage()
         self.google_drive_import_service = google_drive_import_service or GoogleDriveHealthImportService(store=store)
         self.admin_telegram_user_ids = admin_telegram_user_ids
         self.default_timezone_name = default_timezone_name
@@ -402,7 +412,7 @@ class HealthService:
             user_id=user_id,
             start_date=week_start,
             end_date=week_start + timedelta(days=6),
-            include_image_bytes=True,
+            include_image_bytes=False,
         )
         week_cache_seconds = time.perf_counter() - week_cache_started_at
         cache_merge_started_at = time.perf_counter()
@@ -444,6 +454,10 @@ class HealthService:
                 )
             return None
 
+        highlight_media_hydration_started_at = time.perf_counter()
+        highlights = self._hydrate_weekly_highlight_media(user_id, highlights)
+        highlight_media_hydration_seconds = time.perf_counter() - highlight_media_hydration_started_at
+
         commentary_data_started_at = time.perf_counter()
         commentary_data = self._build_weekly_commentary_data(
             week_start=week_start,
@@ -474,6 +488,7 @@ class HealthService:
                     "cache_merge_seconds": cache_merge_seconds,
                     "week_meals_collection_seconds": day_meals_seconds,
                     "highlight_selection_seconds": highlight_pick_seconds,
+                    "highlight_media_hydration_seconds": highlight_media_hydration_seconds,
                     "commentary_data_seconds": commentary_data_seconds,
                     "commentary_text_seconds": commentary_text_seconds,
                     "build_digest_seconds": time.perf_counter() - overall_started_at,
@@ -530,9 +545,17 @@ class HealthService:
             water_ml=analyzed.water_ml,
         )
         self.store.create_meal_draft(user_id, draft)
+        media_id = str(uuid4())
+        stored_media_payload = self._upload_media_if_configured(
+            user_id=user_id,
+            media_id=media_id,
+            occurred_at=draft.occurred_at,
+            mime_type=mime_type,
+            image_bytes=image_bytes,
+        )
         self.store.create_meal_media(
             MealMedia(
-                media_id=str(uuid4()),
+                media_id=media_id,
                 user_id=user_id,
                 draft_id=draft.draft_id,
                 occurred_at=draft.occurred_at,
@@ -542,7 +565,12 @@ class HealthService:
                 telegram_unique_id=photo_unique_id,
                 byte_size=len(image_bytes),
                 sha256=hashlib.sha256(image_bytes).hexdigest(),
-                image_bytes=image_bytes,
+                image_bytes=stored_media_payload["image_bytes"],
+                storage_kind=stored_media_payload["storage_kind"],
+                storage_key=stored_media_payload["storage_key"],
+                bucket_name=stored_media_payload["bucket_name"],
+                width=stored_media_payload["width"],
+                height=stored_media_payload["height"],
             )
         )
         return draft
@@ -684,6 +712,7 @@ class HealthService:
             if primary_media is None:
                 hydrated_meals.append(meal)
                 continue
+            primary_media = self._hydrate_media_bytes(primary_media)
             hydrated_meals.append(
                 DigestMealSnapshot(
                     meal_entry_id=meal.meal_entry_id,
@@ -698,6 +727,117 @@ class HealthService:
                 )
             )
         return hydrated_meals
+
+    def _hydrate_weekly_highlight_media(
+        self,
+        user_id: int,
+        highlights: List[WeeklyDigestHighlight],
+    ) -> List[WeeklyDigestHighlight]:
+        meals_to_hydrate = [
+            highlight.meal
+            for highlight in highlights
+            if highlight.meal is not None
+        ]
+        hydrated_by_entry_id = {
+            meal.meal_entry_id: meal
+            for meal in self._hydrate_primary_media_bytes(user_id, meals_to_hydrate)
+        }
+        hydrated_highlights: List[WeeklyDigestHighlight] = []
+        for highlight in highlights:
+            if highlight.meal is None:
+                hydrated_highlights.append(highlight)
+                continue
+            hydrated_highlights.append(
+                WeeklyDigestHighlight(
+                    digest_date=highlight.digest_date,
+                    meal=hydrated_by_entry_id.get(highlight.meal.meal_entry_id, highlight.meal),
+                    score=highlight.score,
+                    reason=highlight.reason,
+                )
+            )
+        return hydrated_highlights
+
+    def _hydrate_media_bytes(self, media: MealMedia) -> MealMedia:
+        if media.image_bytes or not media.storage_key or media.storage_kind == "db_blob":
+            return media
+        image_bytes = self.media_storage.load_image(object_key=media.storage_key)
+        return MealMedia(
+            media_id=media.media_id,
+            user_id=media.user_id,
+            draft_id=media.draft_id,
+            occurred_at=media.occurred_at,
+            created_at=media.created_at,
+            mime_type=media.mime_type,
+            telegram_file_id=media.telegram_file_id,
+            telegram_unique_id=media.telegram_unique_id,
+            byte_size=media.byte_size,
+            sha256=media.sha256,
+            image_bytes=image_bytes,
+            meal_entry_id=media.meal_entry_id,
+            storage_kind=media.storage_kind,
+            storage_key=media.storage_key,
+            bucket_name=media.bucket_name,
+            width=media.width,
+            height=media.height,
+        )
+
+    def _upload_media_if_configured(
+        self,
+        *,
+        user_id: int,
+        media_id: str,
+        occurred_at: datetime,
+        mime_type: str,
+        image_bytes: bytes,
+    ) -> Dict[str, object]:
+        width = 0
+        height = 0
+        try:
+            with Image.open(BytesIO(image_bytes)) as image:
+                width, height = image.size
+        except Exception:
+            width = 0
+            height = 0
+
+        payload: Dict[str, object] = {
+            "storage_kind": "db_blob",
+            "storage_key": "",
+            "bucket_name": "",
+            "image_bytes": image_bytes,
+            "width": width,
+            "height": height,
+        }
+        if not self.media_storage.enabled:
+            return payload
+
+        stored = self.media_storage.store_image(
+            object_key=self._build_media_storage_key(
+                user_id=user_id,
+                media_id=media_id,
+                occurred_at=occurred_at,
+                mime_type=mime_type,
+            ),
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+        )
+        payload.update(
+            {
+                "storage_kind": stored.storage_kind,
+                "storage_key": stored.storage_key,
+                "bucket_name": stored.bucket_name,
+                "image_bytes": b"",
+            }
+        )
+        return payload
+
+    def _build_media_storage_key(self, *, user_id: int, media_id: str, occurred_at: datetime, mime_type: str) -> str:
+        return build_meal_media_object_key(
+            key_prefix=getattr(self.media_storage, "key_prefix", "meal-media") or "meal-media",
+            user_id=user_id,
+            media_id=media_id,
+            occurred_at=occurred_at,
+            mime_type=mime_type,
+        )
 
     def list_meals(self, user_id: int, target_date: date) -> List[MealEntry]:
         return self.store.list_meals(user_id, target_date)

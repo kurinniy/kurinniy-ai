@@ -67,6 +67,11 @@ Optional:
 - `GOOGLE_SERVICE_ACCOUNT_JSON`: service account JSON for Google Drive access.
 - `GOOGLE_SERVICE_ACCOUNT_FILE`: optional path to a service account JSON file.
 - `GOOGLE_DRIVE_LOOKBACK_DAYS`: how many recent days of Google Drive health files to scan; defaults to `2`.
+- `BUCKET`: Railway Bucket name for meal photo storage.
+- `ENDPOINT`: S3-compatible Railway Bucket endpoint.
+- `ACCESS_KEY_ID`: access key for the bucket.
+- `SECRET_ACCESS_KEY`: secret key for the bucket.
+- `BUCKET_KEY_PREFIX`: object key prefix; defaults to `meal-media`.
 
 For a copy-paste starting point, use [.env.example](/Users/kurinniy/Documents/Projects/ai-me/.env.example).
 For staging, use [.env.staging.example](/Users/kurinniy/Documents/Projects/ai-me/.env.staging.example).
@@ -130,6 +135,22 @@ npm run build
 ```
 
 The build output goes to `frontend/dist` and is served by the Python web runtime and the production Docker image.
+
+## Migrate Meal Photos To Railway Bucket
+
+Once the bucket variables are configured, migrate existing `meal_media.image_bytes` rows with:
+
+```bash
+PYTHONPATH=src python3 scripts/migrate_meal_media_to_bucket.py
+```
+
+Useful options:
+
+- `--batch-size 100`
+- `--max-batches 1`
+- `--dry-run`
+
+The migration is idempotent for already moved rows because it only processes legacy records with `storage_kind=db_blob` and a non-empty `image_bytes`.
 
 ## Telegram Mini App
 
@@ -244,6 +265,11 @@ Recommended per environment:
 - `bot-service`: `APP_RUNTIME_MODE=bot`
 - `digest-worker`: `APP_RUNTIME_MODE=digest_worker`
 - `mini-app-web`: `APP_RUNTIME_MODE=web`
+
+If you migrate meal photos out of MySQL, add the same bucket variables to:
+
+- `bot-service`, because it writes new photos to the bucket;
+- `digest-worker`, because it reads bucket-backed photos while rendering digests.
 
 The web service is stateless. It reads the current user state from MySQL and signs short-lived Mini App session tokens.
 

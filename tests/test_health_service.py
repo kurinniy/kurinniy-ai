@@ -15,6 +15,7 @@ from ai_me.domain.health import (
 from ai_me.domain.user import UserStatus
 from ai_me.services.food_analysis import MealAnalysis
 from ai_me.services.health_service import HealthService
+from ai_me.services.media_storage import StoredMediaObject
 from ai_me.storage.memory import InMemoryStore
 
 
@@ -83,6 +84,33 @@ class StubWaterOnlyPhotoAnalyzer:
             water_ml=700,
             is_water_only=True,
         )
+
+
+class FakeMediaStorage:
+    def __init__(self, key_prefix: str = "test-media") -> None:
+        self._key_prefix = key_prefix
+        self.objects = {}
+        self.bucket_name = "test-bucket"
+
+    @property
+    def enabled(self) -> bool:
+        return True
+
+    @property
+    def key_prefix(self) -> str:
+        return self._key_prefix
+
+    def store_image(self, *, object_key: str, image_bytes: bytes, mime_type: str) -> StoredMediaObject:
+        self.objects[object_key] = image_bytes
+        return StoredMediaObject(
+            storage_kind="railway_bucket",
+            storage_key=object_key,
+            bucket_name=self.bucket_name,
+            byte_size=len(image_bytes),
+        )
+
+    def load_image(self, *, object_key: str) -> bytes:
+        return self.objects[object_key]
 
 
 class HealthServiceTest(unittest.TestCase):
@@ -466,6 +494,37 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(media_after[0].meal_entry_id, meal.entry_id)
         self.assertEqual(media_after[0].telegram_file_id, "telegram-photo-1")
 
+    def test_meal_photo_draft_uses_bucket_storage_when_configured(self) -> None:
+        media_storage = FakeMediaStorage()
+        service = HealthService(
+            self.store,
+            food_photo_analyzer=StubFoodPhotoAnalyzer(),
+            media_storage=media_storage,
+            admin_telegram_user_ids=frozenset({96445950}),
+        )
+
+        draft = service.create_meal_draft_from_photo(
+            self.user.user_id,
+            photo_file_id="telegram-photo-bucket-1",
+            photo_unique_id="unique-bucket-1",
+            image_bytes=b"fake-jpeg-data",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 19, 0),
+            caption="Dinner",
+        )
+        service.confirm_meal_draft(self.user.user_id, draft.draft_id)
+
+        media = service.list_meal_media(self.user.user_id, target_date=self.target_date)
+        self.assertEqual(len(media), 1)
+        self.assertEqual(media[0].storage_kind, "railway_bucket")
+        self.assertTrue(media[0].storage_key.startswith("test-media/%s/" % self.user.user_id))
+        self.assertEqual(media[0].bucket_name, "test-bucket")
+        self.assertEqual(media[0].image_bytes, b"")
+        self.assertEqual(media_storage.objects[media[0].storage_key], b"fake-jpeg-data")
+
+        digest = service.build_daily_food_digest(self.user.user_id, self.target_date)
+        self.assertEqual(digest.meals[0].media_items[0].image_bytes, b"fake-jpeg-data")
+
     def test_range_store_methods_return_expected_meals_and_strip_image_bytes_when_requested(self) -> None:
         self.service.log_meal(
             self.user.user_id,
@@ -501,6 +560,11 @@ class HealthServiceTest(unittest.TestCase):
                 byte_size=3,
                 sha256="sha-range-1",
                 image_bytes=b"abc",
+                storage_kind="railway_bucket",
+                storage_key="bucket/a.jpg",
+                bucket_name="bucket-a",
+                width=120,
+                height=80,
             )
         )
         self.store.create_meal_media(
@@ -532,6 +596,10 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual([item.media_id for item in media], ["media-range-1", "media-range-2"])
         self.assertEqual(media[0].image_bytes, b"")
         self.assertEqual(media[1].image_bytes, b"")
+        self.assertEqual(media[0].storage_key, "bucket/a.jpg")
+        self.assertEqual(media[0].bucket_name, "bucket-a")
+        self.assertEqual(media[0].width, 120)
+        self.assertEqual(media[0].height, 80)
 
     def test_water_only_photo_draft_is_logged_as_water_not_meal(self) -> None:
         self.service.food_photo_analyzer = StubWaterOnlyPhotoAnalyzer()

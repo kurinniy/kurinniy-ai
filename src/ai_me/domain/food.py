@@ -84,3 +84,7 @@ class MealMedia:
     image_bytes: bytes
     meal_entry_id: str = ""
     storage_kind: str = "db_blob"
+    storage_key: str = ""
+    bucket_name: str = ""
+    width: int = 0
+    height: int = 0

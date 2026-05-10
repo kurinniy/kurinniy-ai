@@ -1,6 +1,6 @@
 import unittest
 
-from ai_me.config import AppSettings, DatabaseSettings, TelegramSettings
+from ai_me.config import AppSettings, DatabaseSettings, MediaBucketSettings, TelegramSettings
 
 
 class ConfigTest(unittest.TestCase):
@@ -92,6 +92,35 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(settings.google_drive.enabled)
         self.assertEqual(settings.google_drive.service_account_json, '{"type":"service_account"}')
         self.assertEqual(settings.google_drive.lookback_days, 2)
+
+    def test_media_bucket_settings_can_be_loaded_from_env(self) -> None:
+        settings = AppSettings.from_env(
+            {
+                "MYSQLHOST": "mysql.railway.internal",
+                "MYSQLPORT": "3306",
+                "MYSQLDATABASE": "railway",
+                "MYSQLUSER": "root",
+                "MYSQLPASSWORD": "secret",
+                "TELEGRAM_BOT_TOKEN": "123:abc",
+                "BUCKET": "meal-media",
+                "ENDPOINT": "https://bucket.example.com",
+                "ACCESS_KEY_ID": "key-id",
+                "SECRET_ACCESS_KEY": "secret-key",
+                "BUCKET_KEY_PREFIX": "photo-cache",
+            }
+        )
+        self.assertEqual(
+            settings.media_bucket,
+            MediaBucketSettings(
+                bucket_name="meal-media",
+                endpoint="https://bucket.example.com",
+                access_key_id="key-id",
+                secret_access_key="secret-key",
+                region="auto",
+                key_prefix="photo-cache",
+            ),
+        )
+        self.assertTrue(settings.media_bucket.enabled)
 
     def test_scheduler_poll_interval_defaults_to_two_hours(self) -> None:
         settings = AppSettings.from_env(

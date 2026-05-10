@@ -2,6 +2,7 @@ from ai_me.config import AppSettings
 from ai_me.services.food_analysis import DisabledFoodPhotoAnalyzer, OpenAIFoodPhotoAnalyzer
 from ai_me.services.google_drive_import import DisabledGoogleDriveClient, GoogleDriveHealthImportService, ServiceAccountGoogleDriveClient
 from ai_me.services.health_service import HealthService
+from ai_me.services.media_storage import DisabledMediaStorage, RailwayBucketMediaStorage
 from ai_me.storage.mysql import MySQLStore
 
 
@@ -22,9 +23,13 @@ def build_health_service(settings: AppSettings) -> HealthService:
             service_account_json=settings.google_drive.service_account_json,
             service_account_file=settings.google_drive.service_account_file,
         )
+    media_storage = DisabledMediaStorage()
+    if settings.media_bucket.enabled:
+        media_storage = RailwayBucketMediaStorage(settings.media_bucket)
     return HealthService(
         store=store,
         food_photo_analyzer=analyzer,
+        media_storage=media_storage,
         google_drive_import_service=GoogleDriveHealthImportService(
             store=store,
             google_drive_client=google_drive_client,

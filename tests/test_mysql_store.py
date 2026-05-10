@@ -68,6 +68,16 @@ class MySQLStoreMigrationTest(unittest.TestCase):
         self.assertIn("ALTER TABLE meals ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g", executed_sql)
         self.assertIn("ALTER TABLE meals ADD COLUMN user_id BIGINT NULL AFTER entry_id", executed_sql)
         self.assertIn("ALTER TABLE meal_photo_drafts ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g", executed_sql)
+        self.assertIn(
+            "ALTER TABLE meal_media ADD COLUMN storage_key VARCHAR(255) NOT NULL DEFAULT '' AFTER storage_kind",
+            executed_sql,
+        )
+        self.assertIn(
+            "ALTER TABLE meal_media ADD COLUMN bucket_name VARCHAR(255) NOT NULL DEFAULT '' AFTER storage_key",
+            executed_sql,
+        )
+        self.assertIn("ALTER TABLE meal_media ADD COLUMN width INT NOT NULL DEFAULT 0 AFTER bucket_name", executed_sql)
+        self.assertIn("ALTER TABLE meal_media ADD COLUMN height INT NOT NULL DEFAULT 0 AFTER width", executed_sql)
         self.assertIn("ALTER TABLE finance_transactions ADD COLUMN user_id BIGINT NULL AFTER transaction_key", executed_sql)
         self.assertIn(
             "CREATE UNIQUE INDEX uk_decision_user_key ON decision_log (user_id, decision_key)",
