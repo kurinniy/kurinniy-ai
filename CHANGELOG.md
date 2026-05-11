@@ -20,6 +20,14 @@
 
 ## 2026-05-11
 
+- Версия или commit: `0.12`
+- Фото еды переведены на dual-format storage: новые записи могут сохраняться в Railway Bucket, а legacy BLOB из MySQL продолжают читаться без отдельного cutover.
+- В `meal_media` добавлены bucket metadata (`storage_key`, `bucket_name`, `width`, `height`), а digest и food flows научились догружать изображения из bucket только там, где это реально нужно.
+- Добавлен отдельный скрипт `scripts/migrate_meal_media_to_bucket.py` для батчевого переноса старых `image_bytes` из MySQL в Railway Bucket.
+- Конфигурация переведена на Railway-style bucket variables: `BUCKET`, `ENDPOINT`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `BUCKET_KEY_PREFIX`.
+
+## 2026-05-11
+
 - Версия или commit: `0.11`
 - Weekly digest полностью переделан в фиксированную сетку `3x3`: дни недели раскладываются по постоянным ячейкам, а для дней без фото используется растровый placeholder; 7-я и 9-я ячейки оставлены пустыми.
 - Daily и weekly digest получили расширенную и унифицированную отладку, включая детальные этапы сборки и параметр `prev` для `/weekly_digest_preview`.
