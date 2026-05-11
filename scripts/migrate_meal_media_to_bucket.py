@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import time
 from io import BytesIO
 
 from PIL import Image
@@ -59,6 +60,9 @@ def main() -> int:
                 break
 
             logger.info("Обрабатываю батч %s: %s media rows", batch_no, len(media_items))
+            batch_started_at = time.monotonic()
+            upload_started_at = batch_started_at
+            pending_updates = []
             for media in media_items:
                 object_key = build_meal_media_object_key(
                     key_prefix=media_storage.key_prefix,
@@ -86,17 +90,42 @@ def main() -> int:
                         image_bytes=media.image_bytes,
                         mime_type=media.mime_type,
                     )
-                    store.mark_meal_media_bucket_migrated(
-                        media.media_id,
-                        storage_key=object_key,
-                        bucket_name=media_storage.settings.bucket_name,
-                        width=width,
-                        height=height,
+                    pending_updates.append(
+                        (
+                            media.media_id,
+                            object_key,
+                            media_storage.settings.bucket_name,
+                            width,
+                            height,
+                        )
                     )
                     migrated += 1
                 except Exception:
                     failed += 1
                     logger.exception("Не удалось мигрировать media_id=%s", media.media_id)
+            upload_finished_at = time.monotonic()
+            db_update_seconds = 0.0
+            if pending_updates and not args.dry_run:
+                db_update_started_at = time.monotonic()
+                try:
+                    store.mark_meal_media_bucket_migrated_batch(pending_updates)
+                except Exception:
+                    failed += len(pending_updates)
+                    migrated -= len(pending_updates)
+                    logger.exception("Не удалось сохранить batch %s в MySQL", batch_no)
+                    break
+                db_update_seconds = time.monotonic() - db_update_started_at
+
+            batch_total_seconds = time.monotonic() - batch_started_at
+            logger.info(
+                "Батч %s завершен: migrated=%s failed=%s upload=%.2f сек db_update=%.2f сек total=%.2f сек",
+                batch_no,
+                len(pending_updates),
+                len(media_items) - len(pending_updates),
+                upload_finished_at - upload_started_at,
+                db_update_seconds,
+                batch_total_seconds,
+            )
     finally:
         store.close()
 

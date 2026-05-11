@@ -20,6 +20,12 @@
 
 ## 2026-05-11
 
+- Версия или commit: `0.12.1`
+- Оптимизирован скрипт `scripts/migrate_meal_media_to_bucket.py`: обновление `meal_media` в MySQL теперь выполняется batched `executemany(...)` с одним `commit` на батч вместо отдельного `UPDATE` на каждую запись.
+- В лог миграции добавлены тайминги по этапам `upload`, `db_update` и `total`, чтобы быстрее диагностировать реальный bottleneck при переносе фото.
+
+## 2026-05-11
+
 - Версия или commit: `0.12`
 - Фото еды переведены на dual-format storage: новые записи могут сохраняться в Railway Bucket, а legacy BLOB из MySQL продолжают читаться без отдельного cutover.
 - В `meal_media` добавлены bucket metadata (`storage_key`, `bucket_name`, `width`, `height`), а digest и food flows научились догружать изображения из bucket только там, где это реально нужно.

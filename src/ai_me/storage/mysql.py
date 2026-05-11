@@ -774,6 +774,36 @@ class MySQLStore:
             ("railway_bucket", storage_key, bucket_name, width, height, b"", media_id),
         )
 
+    def mark_meal_media_bucket_migrated_batch(
+        self,
+        updates: List[tuple[str, str, str, int, int]],
+    ) -> None:
+        if not updates:
+            return
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            cursor.executemany(
+                """
+                UPDATE meal_media
+                SET storage_kind = %s,
+                    storage_key = %s,
+                    bucket_name = %s,
+                    width = %s,
+                    height = %s,
+                    image_bytes = %s
+                WHERE media_id = %s
+                """,
+                [
+                    ("railway_bucket", storage_key, bucket_name, width, height, b"", media_id)
+                    for media_id, storage_key, bucket_name, width, height in updates
+                ],
+            )
+            connection.commit()
+        finally:
+            cursor.close()
+            connection.close()
+
     def get_meal_draft(self, user_id: int, draft_id: str) -> Optional[MealPhotoDraft]:
         row = self._fetchone(
             "SELECT * FROM meal_photo_drafts WHERE user_id = %s AND draft_id = %s",

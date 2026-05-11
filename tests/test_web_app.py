@@ -12,7 +12,7 @@ from ai_me.web.app import create_web_app
 
 try:
     from fastapi.testclient import TestClient
-except ImportError:  # pragma: no cover
+except (ImportError, RuntimeError):  # pragma: no cover
     TestClient = None  # type: ignore
 
 

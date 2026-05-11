@@ -15,6 +15,7 @@ class MigrationAwareMySQLStore(MySQLStore):
         }
         self.present_indexes = set()
         self.executed = []
+        self.executed_many = []
         self.users = {}
 
     def _column_exists(self, table_name: str, column_name: str) -> bool:
@@ -27,6 +28,28 @@ class MigrationAwareMySQLStore(MySQLStore):
         normalized = " ".join(query.split())
         self.executed.append((normalized, params))
         return 1
+
+    def _connect(self):
+        store = self
+
+        class FakeCursor:
+            def executemany(self, query: str, params):
+                store.executed_many.append((" ".join(query.split()), list(params)))
+
+            def close(self):
+                return None
+
+        class FakeConnection:
+            def cursor(self):
+                return FakeCursor()
+
+            def commit(self):
+                return None
+
+            def close(self):
+                return None
+
+        return FakeConnection()
 
     def get_user_by_telegram_user_id(self, telegram_user_id: int):
         return self.users.get(telegram_user_id)
@@ -110,6 +133,27 @@ class MySQLStoreMigrationTest(unittest.TestCase):
         executed_sql = [query for query, _ in store.executed]
         self.assertIn("UPDATE meals SET user_id = %s WHERE user_id IS NULL", executed_sql)
         self.assertIn("UPDATE finance_transactions SET user_id = %s WHERE user_id IS NULL", executed_sql)
+
+    def test_mark_meal_media_bucket_migrated_batch_uses_single_executemany(self) -> None:
+        store = MigrationAwareMySQLStore()
+
+        store.mark_meal_media_bucket_migrated_batch(
+            [
+                ("media-1", "prefix/media-1.jpg", "bucket-a", 100, 80),
+                ("media-2", "prefix/media-2.jpg", "bucket-a", 90, 90),
+            ]
+        )
+
+        self.assertEqual(len(store.executed_many), 1)
+        query, params = store.executed_many[0]
+        self.assertIn("UPDATE meal_media SET storage_kind = %s", query)
+        self.assertEqual(
+            params,
+            [
+                ("railway_bucket", "prefix/media-1.jpg", "bucket-a", 100, 80, b"", "media-1"),
+                ("railway_bucket", "prefix/media-2.jpg", "bucket-a", 90, 90, b"", "media-2"),
+            ],
+        )
 
 
 if __name__ == "__main__":
