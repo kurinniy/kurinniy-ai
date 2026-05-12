@@ -123,10 +123,19 @@ class HealthStore(Protocol):
     def add_meal(self, user_id: int, entry: MealEntry) -> None:
         ...
 
+    def get_meal(self, user_id: int, entry_id: str) -> Optional[MealEntry]:
+        ...
+
     def list_meals(self, user_id: int, target_date: date) -> List[MealEntry]:
         ...
 
     def list_meals_in_range(self, user_id: int, start_date: date, end_date: date) -> List[MealEntry]:
+        ...
+
+    def update_meal(self, user_id: int, entry: MealEntry) -> None:
+        ...
+
+    def delete_meal(self, user_id: int, entry_id: str) -> None:
         ...
 
     def create_meal_draft(self, user_id: int, draft: MealPhotoDraft) -> None:

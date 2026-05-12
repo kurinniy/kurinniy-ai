@@ -547,6 +547,18 @@ class MySQLStore:
             ),
         )
 
+    def get_meal(self, user_id: int, entry_id: str) -> Optional[MealEntry]:
+        row = self._fetchone(
+            """
+            SELECT *
+            FROM meals
+            WHERE user_id = %s
+              AND entry_id = %s
+            """,
+            (user_id, entry_id),
+        )
+        return self._to_meal_entry(row) if row else None
+
     def list_meals(self, user_id: int, target_date: date) -> List[MealEntry]:
         day_start = datetime.combine(target_date, time.min)
         day_end = datetime.combine(target_date, time.max)
@@ -561,6 +573,45 @@ class MySQLStore:
             (user_id, day_start, day_end),
         )
         return [self._to_meal_entry(row) for row in rows]
+
+    def update_meal(self, user_id: int, entry: MealEntry) -> None:
+        self._execute(
+            """
+            UPDATE meals
+            SET occurred_at = %s,
+                title = %s,
+                calories = %s,
+                protein_g = %s,
+                fat_g = %s,
+                carbs_g = %s,
+                water_ml = %s,
+                notes = %s
+            WHERE user_id = %s
+              AND entry_id = %s
+            """,
+            (
+                entry.occurred_at,
+                entry.title,
+                entry.calories,
+                entry.protein_g,
+                entry.fat_g,
+                entry.carbs_g,
+                entry.water_ml,
+                entry.notes,
+                user_id,
+                entry.entry_id,
+            ),
+        )
+
+    def delete_meal(self, user_id: int, entry_id: str) -> None:
+        self._execute(
+            """
+            DELETE FROM meals
+            WHERE user_id = %s
+              AND entry_id = %s
+            """,
+            (user_id, entry_id),
+        )
 
     def list_meals_in_range(self, user_id: int, start_date: date, end_date: date) -> List[MealEntry]:
         day_start = datetime.combine(start_date, time.min)
