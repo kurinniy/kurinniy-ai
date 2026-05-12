@@ -705,6 +705,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Рендер изображения:", business_calls[1][1]["text"])
         self.assertIn("Отправка фото в Telegram:", business_calls[1][1]["text"])
         self.assertIn("Полный ответ до отправки текста:", business_calls[1][1]["text"])
+        self.assertEqual(business_calls[1][1]["parse_mode"], "Markdown")
 
     def test_digest_preview_update_for_regular_user_hides_step_block(self) -> None:
         calls = []
@@ -737,6 +738,72 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("Шаги за день:", business_calls[1][1]["text"])
         self.assertNotIn("Комментарий по шагам:", business_calls[1][1]["text"])
         self.assertNotIn("Отладка:", business_calls[1][1]["text"])
+        self.assertEqual(business_calls[1][1]["parse_mode"], "Markdown")
+
+    def test_format_daily_digest_text_groups_meals_by_day_periods(self) -> None:
+        digest = DailyFoodDigest(
+            user_id=1,
+            digest_date=date(2026, 5, 11),
+            meals=[
+                DigestMealSnapshot(
+                    meal_entry_id="meal-1",
+                    occurred_at=datetime(2026, 5, 11, 9, 48),
+                    title="Завтрак",
+                    calories=570,
+                    protein_g=10,
+                    fat_g=20,
+                    carbs_g=30,
+                    media_items=[],
+                ),
+                DigestMealSnapshot(
+                    meal_entry_id="meal-2",
+                    occurred_at=datetime(2026, 5, 11, 14, 19),
+                    title="Обед",
+                    calories=850,
+                    protein_g=20,
+                    fat_g=30,
+                    carbs_g=40,
+                    media_items=[],
+                ),
+                DigestMealSnapshot(
+                    meal_entry_id="meal-3",
+                    occurred_at=datetime(2026, 5, 11, 20, 58),
+                    title="Ужин",
+                    calories=60,
+                    protein_g=5,
+                    fat_g=6,
+                    carbs_g=7,
+                    media_items=[],
+                ),
+            ],
+            total_calories=2230,
+            total_protein_g=114.5,
+            total_fat_g=100.5,
+            total_carbs_g=203.5,
+            water_ml=800,
+            water_goal_ml=2000,
+            steps_goal=10000,
+            commentary=(
+                "За 2026-05-11 подтверждено 3 блюда по фото на 2230 ккал.\n"
+                "Это на 4.7% выше недельной базы, при этом белок был на 9.6% выше среднего."
+            ),
+        )
+
+        text = TelegramHealthBot._format_daily_digest_text(digest, preview=False)
+
+        self.assertIn("**Сводка по еде за 2026-05-11**", text)
+        self.assertIn("\n\nБлюд: 3 блюда\n", text)
+        self.assertIn("Калории: 2 230", text)
+        self.assertIn("Белок: 114.5 г", text)
+        self.assertIn("Жиры: 100.5 г", text)
+        self.assertIn("Углеводы: 203.5 г", text)
+        self.assertIn("Вода: 0.8 л / 2 л", text)
+        self.assertIn("утро\n- 09:48 | Завтрак | 570 ккал", text)
+        self.assertIn("день\n- 14:19 | Обед | 850 ккал", text)
+        self.assertIn("вечер\n- 20:58 | Ужин | 60 ккал", text)
+        self.assertNotIn("ночь\n", text)
+        self.assertNotIn("не было записей", text)
+        self.assertIn("\n\nЗа 2026-05-11 подтверждено 3 блюда по фото на 2230 ккал.", text)
 
     def test_weekly_digest_preview_update_sends_mosaic_photo_and_text(self) -> None:
         calls = []

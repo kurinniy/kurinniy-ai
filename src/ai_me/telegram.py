@@ -153,6 +153,7 @@ class TelegramHealthBot:
                     chat_id,
                     response,
                     reply_markup=self._menu_reply_markup(reply_user) if self._should_show_menu(normalized_text, reply_user) else None,
+                    parse_mode="Markdown" if normalized_text.startswith("/digest_preview") else None,
                 )
 
     def _handle_callback_query(self, callback_query: Dict[str, object]) -> None:
@@ -738,13 +739,21 @@ class TelegramHealthBot:
             params["offset"] = offset
         return self._telegram_api("getUpdates", params)
 
-    def _send_message(self, chat_id: int, text: str, reply_markup: Optional[str] = None):
+    def _send_message(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+    ):
         params = {
             "chat_id": chat_id,
             "text": text,
         }
         if reply_markup is not None:
             params["reply_markup"] = reply_markup
+        if parse_mode is not None:
+            params["parse_mode"] = parse_mode
         return self._telegram_api("sendMessage", params)
 
     def send_text_message(self, chat_id: int, text: str):
@@ -968,6 +977,7 @@ class TelegramHealthBot:
                 step_progress=step_progress,
                 debug_info=debug_info,
             ),
+            parse_mode="Markdown",
         )
         payload: Dict[str, object] = {
             "digest_type": "daily",
@@ -1031,24 +1041,38 @@ class TelegramHealthBot:
         step_progress=None,
         debug_info: Optional[Dict[str, float]] = None,
     ) -> str:
+        grouped_meals = TelegramHealthBot._group_daily_digest_meals(digest.meals)
         lines = [
-            ("Daily digest preview за %s" % digest.digest_date.isoformat())
+            ("**Daily digest preview за %s**" % digest.digest_date.isoformat())
             if preview
-            else ("Сводка по еде за %s" % digest.digest_date.isoformat()),
-            "Блюд: %s" % len(digest.meals),
-            "Калории: %s" % digest.total_calories,
-            "Белок: %.1f г" % digest.total_protein_g,
-            "Жиры: %.1f г" % digest.total_fat_g,
-            "Углеводы: %.1f г" % digest.total_carbs_g,
+            else ("**Сводка по еде за %s**" % digest.digest_date.isoformat()),
+            "",
+            "Блюд: %s"
+            % TelegramHealthBot._format_count_with_noun(len(digest.meals), ("блюдо", "блюда", "блюд")),
+            "Калории: %s" % TelegramHealthBot._format_integer_with_spaces(digest.total_calories),
+            "Белок: %s г" % TelegramHealthBot._format_decimal(digest.total_protein_g),
+            "Жиры: %s г" % TelegramHealthBot._format_decimal(digest.total_fat_g),
+            "Углеводы: %s г" % TelegramHealthBot._format_decimal(digest.total_carbs_g),
             "Вода: %s л / %s л"
             % (
                 TelegramHealthBot._format_liters(digest.water_ml),
                 TelegramHealthBot._format_liters(digest.water_goal_ml),
             ),
+            "",
             "Список блюд:",
         ]
-        for meal in digest.meals:
-            lines.append("- %s | %s | %s ккал" % (meal.occurred_at.strftime("%H:%M"), meal.title, meal.calories))
+        for label in ("утро", "день", "вечер"):
+            lines.append(label)
+            meals = grouped_meals[label]
+            if meals:
+                for meal in meals:
+                    lines.append("- %s | %s | %s ккал" % (meal.occurred_at.strftime("%H:%M"), meal.title, meal.calories))
+            else:
+                lines.append("не было записей")
+        if grouped_meals["ночь"]:
+            lines.append("ночь")
+            for meal in grouped_meals["ночь"]:
+                lines.append("- %s | %s | %s ккал" % (meal.occurred_at.strftime("%H:%M"), meal.title, meal.calories))
         lines.append("")
         lines.append(digest.commentary)
         if step_progress is not None:
@@ -1067,6 +1091,48 @@ class TelegramHealthBot:
         if debug_info is not None:
             TelegramHealthBot._append_digest_debug_lines(lines, debug_info)
         return "\n".join(lines)
+
+    @staticmethod
+    def _group_daily_digest_meals(meals):
+        groups = {
+            "утро": [],
+            "день": [],
+            "вечер": [],
+            "ночь": [],
+        }
+        for meal in meals:
+            hour = meal.occurred_at.hour
+            if 6 <= hour < 12:
+                groups["утро"].append(meal)
+            elif 12 <= hour < 16:
+                groups["день"].append(meal)
+            elif 16 <= hour < 21:
+                groups["вечер"].append(meal)
+            else:
+                groups["ночь"].append(meal)
+        return groups
+
+    @staticmethod
+    def _format_decimal(value: float) -> str:
+        return ("%.1f" % value).rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _format_integer_with_spaces(value: int) -> str:
+        return f"{value:,}".replace(",", " ")
+
+    @staticmethod
+    def _format_count_with_noun(value: int, forms: tuple[str, str, str]) -> str:
+        mod100 = value % 100
+        mod10 = value % 10
+        if 11 <= mod100 <= 14:
+            noun = forms[2]
+        elif mod10 == 1:
+            noun = forms[0]
+        elif 2 <= mod10 <= 4:
+            noun = forms[1]
+        else:
+            noun = forms[2]
+        return f"{value} {noun}"
 
     @staticmethod
     def _format_liters(amount_ml: int) -> str:

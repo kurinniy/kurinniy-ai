@@ -1198,10 +1198,15 @@ class HealthService:
         ) or next((item for item in commentary_data.comparisons if item.calories_delta_pct is not None), None)
         if primary_comparison is not None:
             calories_direction = "выше" if (primary_comparison.calories_delta_pct or 0.0) >= 0 else "ниже"
-            comparison_text = "Это на %.1f%% %s %s-дневной базы" % (
+            baseline_label = (
+                "недельной базы"
+                if primary_comparison.days == 7
+                else "%s-дневной базы" % primary_comparison.days
+            )
+            comparison_text = "Это на %.1f%% %s %s" % (
                 abs(primary_comparison.calories_delta_pct or 0.0),
                 calories_direction,
-                primary_comparison.days,
+                baseline_label,
             )
             if primary_comparison.protein_delta_pct is not None:
                 protein_direction = "выше" if primary_comparison.protein_delta_pct >= 0 else "ниже"
@@ -1236,7 +1241,7 @@ class HealthService:
             calories_streak = commentary_data.stability.calories_streak
             if calories_streak.days >= 2 and calories_streak.direction != "flat":
                 lines.append(
-                    "Это %s-й день подряд с тем же направлением по калорийности относительно 7-дневной базы."
+                    "Это %s-й день подряд с тем же направлением по калорийности относительно недельной базы."
                     % calories_streak.days
                 )
             else:
