@@ -764,6 +764,24 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Приемы пищи", reply_markup)
         self.assertIn("Распознавания", reply_markup)
 
+    def test_history_meals_command_uses_inline_actions_reply_markup(self) -> None:
+        reply_markup = self.bot._reply_markup_for_response(
+            text="/history_meals",
+            original_app_user=self.service.users_by_telegram_id[77],
+            reply_user=self.service.users_by_telegram_id[77],
+        )
+        self.assertIn("Открыть #1", reply_markup)
+        self.assertIn("Изменить #1", reply_markup)
+
+    def test_history_recognitions_command_uses_inline_actions_reply_markup(self) -> None:
+        reply_markup = self.bot._reply_markup_for_response(
+            text="/history_recognitions",
+            original_app_user=self.service.users_by_telegram_id[77],
+            reply_user=self.service.users_by_telegram_id[77],
+        )
+        self.assertIn("Сохранить #1", reply_markup)
+        self.assertIn("Отклонить #1", reply_markup)
+
     def test_history_meals_reply_markup_shows_more_when_needed(self) -> None:
         self.service.meals_by_user_id[2] = [
             MealEntry(

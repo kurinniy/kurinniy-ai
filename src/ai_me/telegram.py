@@ -2080,8 +2080,12 @@ class TelegramHealthBot:
             return self._water_prompt_reply_markup()
         if text.startswith("/water "):
             return self._water_result_reply_markup()
-        if text in {"/history", "/history_meals", "/history_recognitions"}:
+        if text == "/history":
             return self._history_reply_markup()
+        if text == "/history_meals":
+            return self._meal_history_reply_markup(reply_user)
+        if text == "/history_recognitions":
+            return self._recognition_history_reply_markup(reply_user)
         if text in {
             "/start",
             "/help",
@@ -2089,7 +2093,6 @@ class TelegramHealthBot:
             "/user_mode",
             "/admin_mode",
             "/add_food",
-            "/history",
             "/progress",
             "/profile",
             "/how_it_works",
