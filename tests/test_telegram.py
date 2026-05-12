@@ -579,6 +579,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/menu", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Главный экран", response)
         self.assertIn("Ежедневный digest: включен", response)
+        self.assertIn("Как это работает", response)
 
     def test_how_it_works_command_returns_onboarding_steps(self) -> None:
         response = self.bot._route_command("/how_it_works", app_user=self.service.users_by_telegram_id[77])
@@ -955,8 +956,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         markup = json.loads(send_message[1]["reply_markup"])
         self.assertEqual(markup["keyboard"][0][0]["text"], "Добавить еду")
         self.assertEqual(markup["keyboard"][0][1]["text"], "Добавить воду")
-        self.assertEqual(markup["keyboard"][3][0]["text"], "Финансы за месяц")
-        self.assertEqual(markup["keyboard"][3][1]["text"], "Google Drive")
+        self.assertEqual(markup["keyboard"][2][1]["text"], "Как это работает")
+        self.assertEqual(markup["keyboard"][4][0]["text"], "Финансы за месяц")
+        self.assertEqual(markup["keyboard"][4][1]["text"], "Google Drive")
 
     def test_user_mode_command_updates_reply_keyboard_immediately(self) -> None:
         messages = []
@@ -984,6 +986,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("Google Drive", flat)
         self.assertIn("Добавить еду", flat)
         self.assertIn("Прогресс", flat)
+        self.assertIn("Как это работает", flat)
 
     def test_help_message_for_regular_user_hides_admin_buttons(self) -> None:
         messages = []
@@ -1012,6 +1015,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("Импорт Т-Банк", flat)
         self.assertIn("Добавить еду", flat)
         self.assertIn("Профиль", flat)
+        self.assertIn("Как это работает", flat)
 
     def test_help_message_for_admin_in_user_mode_hides_admin_buttons(self) -> None:
         self.service.set_admin_mode(1, enabled=False)
@@ -1040,6 +1044,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("Google Drive", flat)
         self.assertNotIn("Импорт Т-Банк", flat)
         self.assertIn("Добавить еду", flat)
+        self.assertIn("Как это работает", flat)
 
     def test_start_message_for_new_user_attaches_welcome_keyboard(self) -> None:
         messages = []
