@@ -816,56 +816,6 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual({draft.status for draft in drafts}, {MealDraftStatus.PENDING, MealDraftStatus.CONFIRMED, MealDraftStatus.REJECTED})
         self.assertEqual(self.service.get_meal_draft_any_status(self.user.user_id, third.draft_id).status, MealDraftStatus.PENDING)
 
-    def test_update_meal_entry_changes_saved_values(self) -> None:
-        self.service.log_meal(
-            self.user.user_id,
-            MealEntry(
-                entry_id="meal-1",
-                occurred_at=datetime(2026, 5, 6, 12, 0),
-                title="Lunch",
-                calories=450,
-                protein_g=25,
-                fat_g=10,
-                carbs_g=40,
-            ),
-        )
-
-        updated = self.service.update_meal_entry(
-            self.user.user_id,
-            "meal-1",
-            title="Lunch updated",
-            occurred_at=datetime(2026, 5, 6, 13, 30),
-            calories=520,
-            protein_g=33,
-            fat_g=14,
-            carbs_g=48,
-        )
-
-        self.assertEqual(updated.title, "Lunch updated")
-        self.assertEqual(updated.occurred_at, datetime(2026, 5, 6, 13, 30))
-        self.assertEqual(updated.calories, 520)
-        self.assertEqual(self.service.get_meal_entry(self.user.user_id, "meal-1").protein_g, 33)
-
-    def test_delete_meal_entry_removes_saved_meal_from_summary(self) -> None:
-        self.service.log_meal(
-            self.user.user_id,
-            MealEntry(
-                entry_id="meal-1",
-                occurred_at=datetime(2026, 5, 6, 12, 0),
-                title="Lunch",
-                calories=450,
-                protein_g=25,
-            ),
-        )
-
-        deleted = self.service.delete_meal_entry(self.user.user_id, "meal-1")
-        summary = self.service.get_daily_summary(self.user.user_id, self.target_date)
-
-        self.assertEqual(deleted.title, "Lunch")
-        self.assertEqual(summary.meals_count, 0)
-        with self.assertRaises(ValueError):
-            self.service.get_meal_entry(self.user.user_id, "meal-1")
-
 
 if __name__ == "__main__":
     unittest.main()

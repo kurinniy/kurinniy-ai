@@ -723,53 +723,13 @@ class HealthService:
         *,
         lookback_days: int = 365,
     ) -> MealEntry:
-        meal = self.store.get_meal(user_id, entry_id)
-        if meal is None:
-            raise ValueError("Прием пищи не найден: %s" % entry_id)
-        return meal
-
-    def update_meal_entry(
-        self,
-        user_id: int,
-        entry_id: str,
-        *,
-        title: Optional[str] = None,
-        occurred_at: Optional[datetime] = None,
-        calories: Optional[int] = None,
-        protein_g: Optional[float] = None,
-        fat_g: Optional[float] = None,
-        carbs_g: Optional[float] = None,
-    ) -> MealEntry:
-        meal = self.get_meal_entry(user_id, entry_id)
-        updated = replace(
-            meal,
-            title=title if title is not None else meal.title,
-            occurred_at=occurred_at if occurred_at is not None else meal.occurred_at,
-            calories=calories if calories is not None else meal.calories,
-            protein_g=protein_g if protein_g is not None else meal.protein_g,
-            fat_g=fat_g if fat_g is not None else meal.fat_g,
-            carbs_g=carbs_g if carbs_g is not None else meal.carbs_g,
-        )
-        self.store.update_meal(user_id, updated)
-        return updated
-
-    def scale_meal_entry_portion(self, user_id: int, entry_id: str, factor: float) -> MealEntry:
-        meal = self.get_meal_entry(user_id, entry_id)
-        updated = replace(
-            meal,
-            calories=max(0, int(round(meal.calories * factor))),
-            protein_g=round(meal.protein_g * factor, 1),
-            fat_g=round(meal.fat_g * factor, 1),
-            carbs_g=round(meal.carbs_g * factor, 1),
-            water_ml=max(0, int(round(meal.water_ml * factor))),
-        )
-        self.store.update_meal(user_id, updated)
-        return updated
-
-    def delete_meal_entry(self, user_id: int, entry_id: str) -> MealEntry:
-        meal = self.get_meal_entry(user_id, entry_id)
-        self.store.delete_meal(user_id, entry_id)
-        return meal
+        end_date = date.today()
+        start_date = end_date - timedelta(days=lookback_days)
+        meals = self.store.list_meals_in_range(user_id, start_date, end_date)
+        for meal in meals:
+            if meal.entry_id == entry_id:
+                return meal
+        raise ValueError("Прием пищи не найден: %s" % entry_id)
 
     def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
         return self.store.list_meal_media(user_id, target_date=target_date)

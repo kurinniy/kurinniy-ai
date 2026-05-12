@@ -102,7 +102,7 @@ class DummyHealthService:
             ),
             MealEntry(
                 entry_id="meal-2",
-                occurred_at=datetime(2026, 5, 5, 9, 10),
+                occurred_at=datetime(2026, 5, 6, 9, 10),
                 title="Омлет",
                 calories=310,
                 protein_g=24,
@@ -439,14 +439,13 @@ class DummyHealthService:
 
     def get_daily_summary(self, user_id, target_date):
         water_ml = sum(entry.amount_ml for logged_user_id, entry in self.logged_water_entries if logged_user_id == user_id)
-        meals = [meal for meal in self.meals_by_user_id.get(user_id, []) if meal.occurred_at.date() == target_date]
         return DailyHealthSummary(
             target_date=target_date,
-            meals_count=len(meals),
-            calories=sum(meal.calories for meal in meals),
-            protein_g=sum(meal.protein_g for meal in meals),
-            fat_g=sum(meal.fat_g for meal in meals),
-            carbs_g=sum(meal.carbs_g for meal in meals),
+            meals_count=1,
+            calories=620,
+            protein_g=38,
+            fat_g=18,
+            carbs_g=71,
             water_ml=water_ml,
             sleep_hours=0,
             steps=0,
@@ -467,38 +466,6 @@ class DummyHealthService:
             if meal.entry_id == entry_id:
                 return meal
         raise ValueError("Прием пищи не найден.")
-
-    def update_meal_entry(self, user_id, entry_id, **kwargs):
-        meal = self.get_meal_entry(user_id, entry_id)
-        updated = replace(meal, **kwargs)
-        meals = self.meals_by_user_id.setdefault(user_id, [])
-        for index, current in enumerate(meals):
-            if current.entry_id == entry_id:
-                meals[index] = updated
-                break
-        return updated
-
-    def scale_meal_entry_portion(self, user_id, entry_id, factor):
-        meal = self.get_meal_entry(user_id, entry_id)
-        updated = replace(
-            meal,
-            calories=max(0, int(round(meal.calories * factor))),
-            protein_g=round(meal.protein_g * factor, 1),
-            fat_g=round(meal.fat_g * factor, 1),
-            carbs_g=round(meal.carbs_g * factor, 1),
-            water_ml=max(0, int(round(meal.water_ml * factor))),
-        )
-        meals = self.meals_by_user_id.setdefault(user_id, [])
-        for index, current in enumerate(meals):
-            if current.entry_id == entry_id:
-                meals[index] = updated
-                break
-        return updated
-
-    def delete_meal_entry(self, user_id, entry_id):
-        meal = self.get_meal_entry(user_id, entry_id)
-        self.meals_by_user_id[user_id] = [item for item in self.meals_by_user_id.get(user_id, []) if item.entry_id != entry_id]
-        return meal
 
     def build_step_progress_insight(self, user_id, reference_date, target_steps=None):
         return StepProgressInsight(
@@ -1876,173 +1843,6 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         send_message = [item for item in calls if item[0] == "sendMessage"][-1]
         self.assertIn("отправьте новое фото", send_message[1]["text"].lower())
-
-    def test_history_meal_edit_callback_opens_saved_meal_edit_menu(self) -> None:
-        calls = []
-
-        def fake_telegram_api(method, params):
-            calls.append((method, params))
-            return True
-
-        self.bot._telegram_api = fake_telegram_api
-        self.bot._handle_callback_query(
-            {
-                "id": "query-1",
-                "data": "history_meal_edit:meal-1:0",
-                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                "message": {
-                    "message_id": 555,
-                    "chat": {"id": 777, "type": "private"},
-                },
-            }
-        )
-
-        self.assertEqual(calls[1][0], "editMessageText")
-        self.assertIn("Что изменить", calls[1][1]["text"])
-        self.assertIn("Изменить название", calls[1][1]["reply_markup"])
-        self.assertIn("Удалить запись", calls[1][1]["reply_markup"])
-
-    def test_saved_meal_title_edit_updates_meal_and_summary(self) -> None:
-        messages = []
-
-        def fake_telegram_api(method, params):
-            messages.append((method, params))
-            return True
-
-        self.bot._telegram_api = fake_telegram_api
-        self.bot._handle_callback_query(
-            {
-                "id": "query-1",
-                "data": "meal_entry_edit_title:meal-1:0",
-                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                "message": {
-                    "message_id": 555,
-                    "chat": {"id": 777, "type": "private"},
-                },
-            }
-        )
-        self.bot._handle_update(
-            {
-                "update_id": 2,
-                "message": {
-                    "text": "Курица терияки с рисом",
-                    "chat": {"id": 777, "type": "private"},
-                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                },
-            }
-        )
-
-        send_message = [item for item in messages if item[0] == "sendMessage"][-1]
-        self.assertIn("Изменения сохранены.", send_message[1]["text"])
-        self.assertIn("Курица терияки с рисом", send_message[1]["text"])
-        self.assertEqual(self.service.get_meal_entry(1, "meal-1").title, "Курица терияки с рисом")
-
-    def test_saved_meal_time_edit_rejects_invalid_input(self) -> None:
-        messages = []
-
-        def fake_telegram_api(method, params):
-            messages.append((method, params))
-            return True
-
-        self.bot._telegram_api = fake_telegram_api
-        self.bot._handle_callback_query(
-            {
-                "id": "query-1",
-                "data": "meal_entry_edit_time:meal-1:0",
-                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                "message": {
-                    "message_id": 555,
-                    "chat": {"id": 777, "type": "private"},
-                },
-            }
-        )
-        self.bot._handle_update(
-            {
-                "update_id": 2,
-                "message": {
-                    "text": "24:90",
-                    "chat": {"id": 777, "type": "private"},
-                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                },
-            }
-        )
-
-        send_message = [item for item in messages if item[0] == "sendMessage"][-1]
-        self.assertIn("Введите время в формате HH:MM", send_message[1]["text"])
-
-    def test_saved_meal_macros_edit_updates_summary(self) -> None:
-        messages = []
-
-        def fake_telegram_api(method, params):
-            messages.append((method, params))
-            return True
-
-        self.bot._telegram_api = fake_telegram_api
-        self.bot._handle_callback_query(
-            {
-                "id": "query-1",
-                "data": "meal_entry_edit_macros:meal-1:0",
-                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                "message": {
-                    "message_id": 555,
-                    "chat": {"id": 777, "type": "private"},
-                },
-            }
-        )
-        self.bot._handle_update(
-            {
-                "update_id": 2,
-                "message": {
-                    "text": "480 40 14 44",
-                    "chat": {"id": 777, "type": "private"},
-                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                },
-            }
-        )
-
-        send_message = [item for item in messages if item[0] == "sendMessage"][-1]
-        self.assertIn("480 ккал", send_message[1]["text"])
-        meal = self.service.get_meal_entry(1, "meal-1")
-        self.assertEqual(meal.calories, 480)
-        self.assertEqual(meal.protein_g, 40)
-
-    def test_saved_meal_delete_requires_confirmation_and_recalculates_summary(self) -> None:
-        calls = []
-
-        def fake_telegram_api(method, params):
-            calls.append((method, params))
-            return True
-
-        self.bot._telegram_api = fake_telegram_api
-        self.bot._handle_callback_query(
-            {
-                "id": "query-1",
-                "data": "meal_entry_delete_confirm:meal-1:0",
-                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                "message": {
-                    "message_id": 555,
-                    "chat": {"id": 777, "type": "private"},
-                },
-            }
-        )
-        self.assertIn("Удалить запись", calls[1][1]["text"])
-        self.assertIn("Да, удалить", calls[1][1]["reply_markup"])
-
-        self.bot._handle_callback_query(
-            {
-                "id": "query-2",
-                "data": "meal_entry_delete:meal-1:0",
-                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                "message": {
-                    "message_id": 556,
-                    "chat": {"id": 777, "type": "private"},
-                },
-            }
-        )
-
-        send_message = [item for item in calls if item[0] == "sendMessage"][-1]
-        self.assertIn("Запись удалена.", send_message[1]["text"])
-        self.assertIn("0 приема пищи", send_message[1]["text"])
 
     def test_edit_title_flow_updates_draft_card(self) -> None:
         messages = []
