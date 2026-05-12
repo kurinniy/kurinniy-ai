@@ -22,9 +22,11 @@
 2. Каждый production-релиз обязан менять `frontend/package.json`.
 3. Для пользовательских фич повышать `MINOR`: `0.2 -> 0.3`.
 4. Для багфиксов без новой функциональности повышать `PATCH`: `0.2.1 -> 0.2.2`.
-5. Перед merge `stage -> main` обязательно запускать:
-   `PYTHONPATH=src python3 scripts/release_guard.py origin/main HEAD`
-6. Если `release_guard.py` падает, релиз в `main` не делать.
+5. Для production-релиза создавать git-tag версии в формате `vX.Y` или `vX.Y.Z`.
+6. Версию, `frontend/package.json` и `CHANGELOG.md` обновлять на `main` в момент релиза, а не патчить для этого `stage`.
+7. Для релиза использовать `scripts/release_main.py` или эквивалентный поток с теми же проверками.
+8. Перед push релиза в `main` обязательно прогонять `release_guard` на итоговом release-коммите.
+9. Если `release_guard.py` падает, релиз в `main` не делать.
 
 ### Changelog
 
