@@ -563,9 +563,41 @@ class TelegramHealthBotTest(unittest.TestCase):
             first_name="New",
             app_user=None,
         )
-        self.assertIn("Подключение завершено", response)
-        self.assertIn("/summary", response)
+        self.assertIn("Привет, New!", response)
+        self.assertIn("Что можно сделать прямо сейчас", response)
+        self.assertIn("Добавить еду", response)
         self.assertIn(999, self.service.users_by_telegram_id)
+
+    def test_start_for_existing_user_returns_home_screen(self) -> None:
+        response = self.bot._route_command("/start", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Главный экран", response)
+        self.assertIn("Добавить еду", response)
+        self.assertIn("Добавить воду", response)
+        self.assertNotIn("Бот уже подключен", response)
+
+    def test_menu_for_existing_user_returns_home_screen(self) -> None:
+        response = self.bot._route_command("/menu", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Главный экран", response)
+        self.assertIn("Ежедневный digest: включен", response)
+
+    def test_how_it_works_command_returns_onboarding_steps(self) -> None:
+        response = self.bot._route_command("/how_it_works", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Как это работает", response)
+        self.assertIn("1. Отправьте фото еды", response)
+        self.assertIn("4. После подтверждения запись попадет", response)
+
+    def test_placeholder_sections_do_not_fall_back_to_unknown_command(self) -> None:
+        response = self.bot._route_command("/progress", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Этот раздел скоро появится", response)
+        self.assertNotIn("Неизвестная команда", response)
+
+    def test_add_food_command_explains_photo_flow(self) -> None:
+        response = self.bot._route_command("/add_food", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Просто отправьте фото еды", response)
+
+    def test_add_water_command_uses_soft_placeholder(self) -> None:
+        response = self.bot._route_command("/add_water", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Быстрое добавление воды скоро появится", response)
 
     def test_digest_status_command_returns_current_settings(self) -> None:
         response = self.bot._route_command("/digest_status", app_user=self.service.users_by_telegram_id[42])
@@ -921,9 +953,10 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         send_message = next(item for item in messages if item[0] == "sendMessage")
         markup = json.loads(send_message[1]["reply_markup"])
-        self.assertEqual(markup["keyboard"][0][0]["text"], "Сводка за сегодня")
-        self.assertEqual(markup["keyboard"][1][0]["text"], "Google Drive")
-        self.assertEqual(markup["keyboard"][1][1]["text"], "Импорт Т-Банк")
+        self.assertEqual(markup["keyboard"][0][0]["text"], "Добавить еду")
+        self.assertEqual(markup["keyboard"][0][1]["text"], "Добавить воду")
+        self.assertEqual(markup["keyboard"][3][0]["text"], "Финансы за месяц")
+        self.assertEqual(markup["keyboard"][3][1]["text"], "Google Drive")
 
     def test_user_mode_command_updates_reply_keyboard_immediately(self) -> None:
         messages = []
@@ -949,7 +982,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         flat = [button["text"] for row in markup["keyboard"] for button in row]
         self.assertNotIn("Финансы за месяц", flat)
         self.assertNotIn("Google Drive", flat)
-        self.assertIn("Сводка за сегодня", flat)
+        self.assertIn("Добавить еду", flat)
+        self.assertIn("Прогресс", flat)
 
     def test_help_message_for_regular_user_hides_admin_buttons(self) -> None:
         messages = []
@@ -976,8 +1010,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("Финансы за месяц", flat)
         self.assertNotIn("Google Drive", flat)
         self.assertNotIn("Импорт Т-Банк", flat)
-        self.assertIn("Сводка за сегодня", flat)
-        self.assertIn("Черновики еды", flat)
+        self.assertIn("Добавить еду", flat)
+        self.assertIn("Профиль", flat)
 
     def test_help_message_for_admin_in_user_mode_hides_admin_buttons(self) -> None:
         self.service.set_admin_mode(1, enabled=False)
@@ -1005,6 +1039,32 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("Финансы за месяц", flat)
         self.assertNotIn("Google Drive", flat)
         self.assertNotIn("Импорт Т-Банк", flat)
+        self.assertIn("Добавить еду", flat)
+
+    def test_start_message_for_new_user_attaches_welcome_keyboard(self) -> None:
+        messages = []
+
+        def fake_telegram_api(method, params):
+            messages.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/start",
+                    "chat": {"id": 999, "type": "private"},
+                    "from": {"id": 999, "username": "newuser", "first_name": "New"},
+                },
+            }
+        )
+
+        send_message = next(item for item in messages if item[0] == "sendMessage")
+        markup = json.loads(send_message[1]["reply_markup"])
+        self.assertEqual(markup["keyboard"][0][0]["text"], "Добавить еду")
+        self.assertEqual(markup["keyboard"][1][0]["text"], "Добавить воду")
+        self.assertEqual(markup["keyboard"][2][0]["text"], "Как это работает")
 
     def test_sync_bot_commands_registers_menu_entries(self) -> None:
         calls = []

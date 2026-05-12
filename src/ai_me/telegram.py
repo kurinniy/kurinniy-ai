@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 
 class TelegramHealthBot:
     BUTTON_TO_COMMAND = {
+        "Добавить еду": "/add_food",
+        "Добавить воду": "/add_water",
+        "История": "/history",
+        "Прогресс": "/progress",
+        "Профиль": "/profile",
+        "Как это работает": "/how_it_works",
         "Сводка за сегодня": "/summary",
         "Финансы за месяц": "/finance_month",
         "Google Drive": "/drive_status",
@@ -152,7 +158,11 @@ class TelegramHealthBot:
                 self._send_message(
                     chat_id,
                     response,
-                    reply_markup=self._menu_reply_markup(reply_user) if self._should_show_menu(normalized_text, reply_user) else None,
+                    reply_markup=self._reply_markup_for_response(
+                        text=normalized_text,
+                        original_app_user=app_user,
+                        reply_user=reply_user,
+                    ),
                     parse_mode="Markdown" if normalized_text.startswith("/digest_preview") else None,
                 )
 
@@ -298,12 +308,27 @@ class TelegramHealthBot:
             if command == "/help":
                 return self._help_text(app_user)
             if command == "/menu":
-                return self._help_text(app_user)
+                if app_user is None:
+                    return self._registration_required_text()
+                return self._home_text(app_user)
             if command == "/whoami":
                 return self._handle_whoami(chat_id=chat_id, user_id=user_id, app_user=app_user)
 
             if app_user is None:
                 return self._registration_required_text()
+
+            if command == "/add_food":
+                return self._add_food_text()
+            if command == "/add_water":
+                return self._add_water_text()
+            if command == "/history":
+                return self._coming_soon_text("История")
+            if command == "/progress":
+                return self._coming_soon_text("Прогресс")
+            if command == "/profile":
+                return self._coming_soon_text("Профиль")
+            if command == "/how_it_works":
+                return self._how_it_works_text()
 
             if command == "/import_tbank":
                 self._ensure_admin(app_user)
@@ -362,7 +387,7 @@ class TelegramHealthBot:
         app_user: Optional[AppUser],
     ) -> str:
         if app_user is not None:
-            return "Бот уже подключен.\n\n%s" % self._help_text(app_user)
+            return self._home_text(app_user)
         if chat_id is None or user_id is None:
             return self._registration_required_text()
         registered_user = self.service.register_user(
@@ -372,10 +397,7 @@ class TelegramHealthBot:
             first_name=first_name,
             now=self._local_now(),
         )
-        return (
-            "Подключение завершено.\n"
-            "Ваш аккаунт активирован.\n\n%s"
-        ) % self._help_text(registered_user)
+        return self._welcome_text(registered_user)
 
     def _handle_whoami(self, chat_id: Optional[int], user_id: Optional[int], app_user: Optional[AppUser]) -> str:
         lines = [
@@ -683,6 +705,7 @@ class TelegramHealthBot:
             )
 
         commands = [
+            "Справка",
             "Окружение: %s" % self.settings.environment_name,
             format_version_line(),
             format_release_date_line(),
@@ -721,6 +744,63 @@ class TelegramHealthBot:
                 ]
             )
         return "\n".join(commands)
+
+    def _welcome_text(self, app_user: AppUser) -> str:
+        first_name = app_user.first_name or "Привет"
+        return (
+            "Привет, %s!\n"
+            "Я помогу вести питание без ручного ввода: отправляй фото еды, а я соберу черновик, сводку и digest.\n\n"
+            "Что можно сделать прямо сейчас:\n"
+            "- Добавить еду\n"
+            "- Добавить воду\n"
+            "- Как это работает"
+        ) % first_name
+
+    def _home_text(self, app_user: AppUser) -> str:
+        digest_settings = self.service.get_digest_settings(app_user.user_id)
+        daily_status = "включен" if digest_settings.daily_digest_enabled else "выключен"
+        weekly_status = "включен" if digest_settings.weekly_digest_enabled else "выключен"
+        return (
+            "Главный экран\n"
+            "Просто отправьте фото еды одним сообщением — я распознаю блюдо и создам черновик для подтверждения.\n\n"
+            "Сейчас:\n"
+            "- Ежедневный digest: %s\n"
+            "- Недельный digest: %s\n\n"
+            "Основные действия:\n"
+            "- Добавить еду\n"
+            "- Добавить воду\n"
+            "- История\n"
+            "- Прогресс\n"
+            "- Профиль"
+        ) % (daily_status, weekly_status)
+
+    @staticmethod
+    def _add_food_text() -> str:
+        return (
+            "Добавить еду\n"
+            "Просто отправьте фото еды одним сообщением. Я распознаю блюдо и создам черновик для подтверждения."
+        )
+
+    @staticmethod
+    def _add_water_text() -> str:
+        return (
+            "Добавить воду\n"
+            "Быстрое добавление воды скоро появится. Пока можно отправить фото напитка или открыть /help."
+        )
+
+    @staticmethod
+    def _coming_soon_text(section_name: str) -> str:
+        return "%s\nЭтот раздел скоро появится. Пока можно отправить фото еды или открыть /help." % section_name
+
+    @staticmethod
+    def _how_it_works_text() -> str:
+        return (
+            "Как это работает\n"
+            "1. Отправьте фото еды одним сообщением.\n"
+            "2. Я распознаю блюдо и соберу черновик приема пищи.\n"
+            "3. Вы подтвердите или отклоните черновик.\n"
+            "4. После подтверждения запись попадет в сводку и digest."
+        )
 
     def _format_new_decisions(self, decisions: Iterable) -> str:
         decision_list = list(decisions)
@@ -1374,27 +1454,60 @@ class TelegramHealthBot:
     def _normalize_command_text(cls, text: str) -> str:
         return cls.BUTTON_TO_COMMAND.get(text, text)
 
-    @staticmethod
-    def _should_show_menu(text: str, app_user: Optional[AppUser]) -> bool:
-        return app_user is not None and text in {"/start", "/help", "/menu", "/user_mode", "/admin_mode"}
+    def _reply_markup_for_response(
+        self,
+        text: str,
+        original_app_user: Optional[AppUser],
+        reply_user: Optional[AppUser],
+    ) -> Optional[str]:
+        if text == "/start" and original_app_user is None and reply_user is not None:
+            return self._welcome_reply_markup()
+        if reply_user is None:
+            return None
+        if text in {
+            "/start",
+            "/help",
+            "/menu",
+            "/user_mode",
+            "/admin_mode",
+            "/add_food",
+            "/add_water",
+            "/history",
+            "/progress",
+            "/profile",
+            "/how_it_works",
+        }:
+            return self._menu_reply_markup(reply_user)
+        return None
+
+    @classmethod
+    def _welcome_reply_markup(cls) -> str:
+        return json.dumps(
+            {
+                "resize_keyboard": True,
+                "keyboard": [
+                    [{"text": "Добавить еду"}],
+                    [{"text": "Добавить воду"}],
+                    [{"text": "Как это работает"}],
+                ],
+            },
+            ensure_ascii=False,
+        )
 
     @classmethod
     def _menu_reply_markup(cls, app_user: AppUser) -> str:
         keyboard = [
-            [{"text": "Сводка за сегодня"}],
-            [{"text": "Открытые решения"}],
-            [{"text": "Черновики еды"}],
-            [{"text": "Кто я"}],
-            [{"text": "Помощь"}],
+            [{"text": "Добавить еду"}, {"text": "Добавить воду"}],
+            [{"text": "История"}, {"text": "Прогресс"}],
+            [{"text": "Профиль"}, {"text": "Помощь"}],
         ]
         if app_user.has_admin_access:
             keyboard = [
-                [{"text": "Сводка за сегодня"}, {"text": "Финансы за месяц"}],
-                [{"text": "Google Drive"}, {"text": "Импорт Т-Банк"}],
-                [{"text": "Открытые решения"}],
-                [{"text": "Черновики еды"}],
-                [{"text": "Кто я"}],
-                [{"text": "Помощь"}],
+                [{"text": "Добавить еду"}, {"text": "Добавить воду"}],
+                [{"text": "История"}, {"text": "Прогресс"}],
+                [{"text": "Профиль"}, {"text": "Помощь"}],
+                [{"text": "Финансы за месяц"}, {"text": "Google Drive"}],
+                [{"text": "Импорт Т-Банк"}, {"text": "Открытые решения"}],
             ]
         return json.dumps(
             {
