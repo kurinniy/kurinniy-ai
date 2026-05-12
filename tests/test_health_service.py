@@ -373,6 +373,32 @@ class HealthServiceTest(unittest.TestCase):
 
         self.assertEqual(summary.water_ml, 800)
 
+    def test_updated_meal_draft_is_saved_into_final_meal(self) -> None:
+        draft = self.service.create_meal_draft_from_photo(
+            self.user.user_id,
+            photo_file_id="telegram-photo-1",
+            photo_unique_id="unique-1",
+            image_bytes=b"fake-jpeg-data",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 19, 0),
+            caption="Dinner",
+        )
+
+        updated = self.service.update_meal_draft(
+            self.user.user_id,
+            draft.draft_id,
+            title="Гречка с курицей",
+            summary="Гречка и куриная грудка",
+            occurred_at=datetime(2026, 5, 6, 20, 15),
+        )
+        meal = self.service.confirm_meal_draft(self.user.user_id, draft.draft_id)
+        summary = self.service.get_daily_summary(self.user.user_id, self.target_date)
+
+        self.assertEqual(updated.title, "Гречка с курицей")
+        self.assertEqual(meal.title, "Гречка с курицей")
+        self.assertEqual(meal.occurred_at, datetime(2026, 5, 6, 20, 15))
+        self.assertEqual(summary.meals_count, 1)
+
     def test_register_user_creates_second_user_and_keeps_data_isolated(self) -> None:
         second_user = self.service.register_user(
             telegram_user_id=111,

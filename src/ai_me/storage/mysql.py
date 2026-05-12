@@ -788,6 +788,41 @@ class MySQLStore:
         )
         return [self._to_meal_draft(row) for row in rows]
 
+    def update_meal_draft(self, user_id: int, draft: MealPhotoDraft) -> None:
+        self._execute(
+            """
+            UPDATE meal_photo_drafts
+            SET occurred_at = %s,
+                title = %s,
+                summary = %s,
+                calories = %s,
+                protein_g = %s,
+                fat_g = %s,
+                carbs_g = %s,
+                water_ml = %s,
+                confidence = %s,
+                source = %s,
+                items_json = %s
+            WHERE user_id = %s
+              AND draft_id = %s
+            """,
+            (
+                draft.occurred_at,
+                draft.title,
+                draft.summary,
+                draft.calories,
+                draft.protein_g,
+                draft.fat_g,
+                draft.carbs_g,
+                draft.water_ml,
+                draft.confidence,
+                draft.source,
+                json.dumps([item.__dict__ for item in draft.items], sort_keys=True),
+                user_id,
+                draft.draft_id,
+            ),
+        )
+
     def update_meal_draft_status(self, user_id: int, draft_id: str, status: MealDraftStatus) -> None:
         self._execute(
             """

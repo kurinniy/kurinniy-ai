@@ -373,6 +373,9 @@ class InMemoryStore:
         ]
         return sorted(drafts, key=lambda item: item.created_at)
 
+    def update_meal_draft(self, user_id: int, draft: MealPhotoDraft) -> None:
+        self._meal_drafts.setdefault(user_id, {})[draft.draft_id] = draft
+
     def update_meal_draft_status(self, user_id: int, draft_id: str, status: MealDraftStatus) -> None:
         current = self._meal_drafts[user_id][draft_id]
         self._meal_drafts[user_id][draft_id] = MealPhotoDraft(

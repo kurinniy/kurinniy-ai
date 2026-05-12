@@ -159,6 +159,9 @@ class HealthStore(Protocol):
     def list_meal_drafts(self, user_id: int, status: MealDraftStatus) -> List[MealPhotoDraft]:
         ...
 
+    def update_meal_draft(self, user_id: int, draft: MealPhotoDraft) -> None:
+        ...
+
     def update_meal_draft_status(self, user_id: int, draft_id: str, status: MealDraftStatus) -> None:
         ...
 

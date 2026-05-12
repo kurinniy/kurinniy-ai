@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import time
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from typing import Dict, FrozenSet, List, Optional
@@ -626,6 +627,49 @@ class HealthService:
         draft = self._require_meal_draft(user_id, draft_id, MealDraftStatus.PENDING)
         self.store.update_meal_draft_status(user_id, draft_id, MealDraftStatus.REJECTED)
         return draft
+
+    def get_meal_draft(self, user_id: int, draft_id: str) -> MealPhotoDraft:
+        return self._require_meal_draft(user_id, draft_id, MealDraftStatus.PENDING)
+
+    def update_meal_draft(
+        self,
+        user_id: int,
+        draft_id: str,
+        *,
+        title: Optional[str] = None,
+        summary: Optional[str] = None,
+        occurred_at: Optional[datetime] = None,
+        calories: Optional[int] = None,
+        protein_g: Optional[float] = None,
+        fat_g: Optional[float] = None,
+        carbs_g: Optional[float] = None,
+    ) -> MealPhotoDraft:
+        draft = self._require_meal_draft(user_id, draft_id, MealDraftStatus.PENDING)
+        updated = replace(
+            draft,
+            title=title if title is not None else draft.title,
+            summary=summary if summary is not None else draft.summary,
+            occurred_at=occurred_at if occurred_at is not None else draft.occurred_at,
+            calories=calories if calories is not None else draft.calories,
+            protein_g=protein_g if protein_g is not None else draft.protein_g,
+            fat_g=fat_g if fat_g is not None else draft.fat_g,
+            carbs_g=carbs_g if carbs_g is not None else draft.carbs_g,
+        )
+        self.store.update_meal_draft(user_id, updated)
+        return updated
+
+    def scale_meal_draft_portion(self, user_id: int, draft_id: str, factor: float) -> MealPhotoDraft:
+        draft = self._require_meal_draft(user_id, draft_id, MealDraftStatus.PENDING)
+        updated = replace(
+            draft,
+            calories=max(0, int(round(draft.calories * factor))),
+            protein_g=round(draft.protein_g * factor, 1),
+            fat_g=round(draft.fat_g * factor, 1),
+            carbs_g=round(draft.carbs_g * factor, 1),
+            water_ml=max(0, int(round(draft.water_ml * factor))),
+        )
+        self.store.update_meal_draft(user_id, updated)
+        return updated
 
     def list_meal_drafts(
         self,

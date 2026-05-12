@@ -61,6 +61,7 @@ class TelegramHealthBot:
         self._photo_processing_user_ids = set()
         self._photo_rate_limit_until_by_user: Dict[int, datetime] = {}
         self._pending_custom_water_user_ids = set()
+        self._pending_draft_edit_states: Dict[int, Dict[str, str]] = {}
 
     def run_forever(self) -> None:
         self._ensure_polling_mode()
@@ -155,6 +156,15 @@ class TelegramHealthBot:
             logger.info("Received text command chat_id=%s user_id=%s text=%s", chat_id, user_id, text.strip())
             raw_text = text.strip()
             normalized_text = self._normalize_command_text(raw_text)
+            pending_draft_response = self._handle_pending_draft_edit_input(
+                app_user=app_user,
+                raw_text=raw_text,
+                normalized_text=normalized_text,
+            )
+            if pending_draft_response is not None:
+                pending_text, pending_markup = pending_draft_response
+                self._send_message(chat_id, pending_text, reply_markup=pending_markup)
+                return
             pending_response = self._handle_pending_custom_water_input(
                 app_user=app_user,
                 raw_text=raw_text,
@@ -261,15 +271,149 @@ class TelegramHealthBot:
                     "Вода сохранена: %s л.\n%s" % (self._format_liters(meal.water_ml), self._format_new_decisions(decisions)),
                 )
             else:
+                self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
                 self._send_message(
                     chat_id,
-                    "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions)),
+                    self._format_saved_meal_text(app_user, meal.title, meal.occurred_at.date()),
+                    reply_markup=self._post_save_meal_reply_markup(),
                 )
+            return
+
+        if data.startswith("meal_edit_menu:"):
+            draft_id = data.split(":", 1)[1]
+            self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+            draft = self.service.get_meal_draft(app_user.user_id, draft_id)
+            self._try_answer_callback_query(query_id, "Можно исправить черновик.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_meal_draft_edit_menu_text(draft),
+                    reply_markup=self._meal_draft_edit_menu_reply_markup(draft),
+                )
+            return
+
+        if data.startswith("meal_edit_back:"):
+            draft_id = data.split(":", 1)[1]
+            self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+            draft = self.service.get_meal_draft(app_user.user_id, draft_id)
+            self._try_answer_callback_query(query_id, "Возвращаю черновик.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_meal_draft_card_text(draft),
+                    reply_markup=self._meal_draft_card_reply_markup(draft),
+                )
+            return
+
+        if data.startswith("meal_edit_title:"):
+            draft_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, draft_id, "title")
+            self._try_answer_callback_query(query_id, "Введите новое название.")
+            self._send_message(
+                chat_id,
+                "Введите новое название блюда.",
+                reply_markup=self._draft_edit_prompt_reply_markup(draft_id),
+            )
+            return
+
+        if data.startswith("meal_edit_summary:"):
+            draft_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, draft_id, "summary")
+            self._try_answer_callback_query(query_id, "Введите новый состав.")
+            self._send_message(
+                chat_id,
+                "Введите краткое описание или состав блюда.",
+                reply_markup=self._draft_edit_prompt_reply_markup(draft_id),
+            )
+            return
+
+        if data.startswith("meal_edit_time:"):
+            draft_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, draft_id, "time")
+            self._try_answer_callback_query(query_id, "Введите новое время.")
+            self._send_message(
+                chat_id,
+                "Введите время в формате HH:MM или выберите «Сейчас».",
+                reply_markup=self._draft_time_prompt_reply_markup(draft_id),
+            )
+            return
+
+        if data.startswith("meal_edit_time_now:"):
+            draft_id = data.split(":", 1)[1]
+            draft = self.service.update_meal_draft(
+                app_user.user_id,
+                draft_id,
+                occurred_at=self._local_now(),
+            )
+            self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+            self._try_answer_callback_query(query_id, "Время обновлено.")
+            self._send_message(
+                chat_id,
+                self._format_meal_draft_card_text(draft),
+                reply_markup=self._meal_draft_card_reply_markup(draft),
+            )
+            return
+
+        if data.startswith("meal_edit_macros:"):
+            draft_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, draft_id, "macros")
+            self._try_answer_callback_query(query_id, "Введите калории и БЖУ.")
+            self._send_message(
+                chat_id,
+                "Введите: калории белки жиры углеводы. Например: 420 31 12 46",
+                reply_markup=self._draft_edit_prompt_reply_markup(draft_id),
+            )
+            return
+
+        if data.startswith("meal_edit_portion_menu:"):
+            draft_id = data.split(":", 1)[1]
+            self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+            draft = self.service.get_meal_draft(app_user.user_id, draft_id)
+            self._try_answer_callback_query(query_id, "Выберите порцию.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_meal_draft_portion_text(draft),
+                    reply_markup=self._meal_draft_portion_reply_markup(draft),
+                )
+            return
+
+        if data.startswith("meal_edit_portion:"):
+            _, draft_id, portion_kind = data.split(":", 2)
+            factor = {
+                "smaller": 0.8,
+                "standard": 1.0,
+                "bigger": 1.2,
+            }[portion_kind]
+            draft = self.service.scale_meal_draft_portion(app_user.user_id, draft_id, factor)
+            self._try_answer_callback_query(query_id, "Порция обновлена.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_meal_draft_card_text(draft),
+                    reply_markup=self._meal_draft_card_reply_markup(draft),
+                )
+            return
+
+        if data.startswith("meal_rewrite_prompt:"):
+            draft_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, draft_id, "rewrite")
+            self._try_answer_callback_query(query_id, "Опишите правильное блюдо.")
+            self._send_message(
+                chat_id,
+                "Введите правильное название блюда или короткое описание.\nНапример: гречка с куриной грудкой",
+                reply_markup=self._draft_edit_prompt_reply_markup(draft_id),
+            )
             return
 
         if data.startswith("meal_reject:"):
             draft_id = data.split(":", 1)[1]
             logger.info("Rejecting meal draft_id=%s user_id=%s", draft_id, app_user.user_id)
+            self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
             self._try_answer_callback_query(query_id, "Отклоняю черновик...")
             try:
                 draft = self.service.reject_meal_draft(app_user.user_id, draft_id)
@@ -929,19 +1073,31 @@ class TelegramHealthBot:
             mime_type="image/jpeg",
         )
 
-    def _edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
-        self._telegram_api(
-            "editMessageText",
-            {
-                "chat_id": chat_id,
-                "message_id": message_id,
-                "text": text,
-            },
-        )
+    def _edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        reply_markup: Optional[str] = None,
+    ) -> None:
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        self._telegram_api("editMessageText", payload)
 
-    def _try_edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
+    def _try_edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        reply_markup: Optional[str] = None,
+    ) -> None:
         try:
-            self._edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
+            self._edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup)
         except Exception as exc:  # pragma: no cover
             logger.warning(
                 "Callback message edit failed chat_id=%s message_id=%s error=%s",
@@ -991,64 +1147,12 @@ class TelegramHealthBot:
                 },
             )
             return
-        items_text = "\n".join(
-            "- %s (%s): %s ккал, Б %.1f / Ж %.1f / У %.1f"
-            % (
-                item.title,
-                item.portion_text,
-                item.calories,
-                item.protein_g,
-                item.fat_g,
-                item.carbs_g,
-            )
-            for item in draft.items
-        )
-        text = (
-            "Черновик приема пищи\n"
-            "Блюдо: %s\n"
-            "Состав: %s\n"
-            "Калории: %s\n"
-            "Белки: %.1f г\n"
-            "Жиры: %.1f г\n"
-            "Углеводы: %.1f г\n"
-            "Уверенность: %.2f\n"
-            "ID черновика: %s"
-            % (
-                draft.title,
-                draft.summary,
-                draft.calories,
-                draft.protein_g,
-                draft.fat_g,
-                draft.carbs_g,
-                draft.confidence,
-                draft.draft_id,
-            )
-        )
-        if items_text:
-            text += "\nИнгредиенты:\n%s" % items_text
-
         self._telegram_api(
             "sendMessage",
             {
                 "chat_id": chat_id,
-                "text": text,
-                "reply_markup": json.dumps(
-                    {
-                        "inline_keyboard": [
-                            [
-                                {
-                                    "text": "Подтвердить",
-                                    "callback_data": "meal_confirm:%s" % draft.draft_id,
-                                },
-                                {
-                                    "text": "Отклонить",
-                                    "callback_data": "meal_reject:%s" % draft.draft_id,
-                                },
-                            ]
-                        ]
-                    },
-                    ensure_ascii=False,
-                ),
+                "text": self._format_meal_draft_card_text(draft),
+                "reply_markup": self._meal_draft_card_reply_markup(draft),
             },
         )
 
@@ -1665,6 +1769,238 @@ class TelegramHealthBot:
             "Бот работает только в личных сообщениях.\n"
             "Отправьте команду /start, чтобы начать работу."
         )
+
+    def _handle_pending_draft_edit_input(
+        self,
+        app_user: Optional[AppUser],
+        raw_text: str,
+        normalized_text: str,
+    ) -> Optional[tuple[str, str]]:
+        if app_user is None:
+            return None
+        state = self._pending_draft_edit_states.get(app_user.user_id)
+        if state is None:
+            return None
+        if normalized_text in {"/menu", "/help", "/start", "/add_food", "/add_water", "/progress"}:
+            self._clear_pending_draft_edit_state(app_user.user_id)
+            return None
+        draft_id = state["draft_id"]
+        field = state["field"]
+        try:
+            if field == "title":
+                draft = self.service.update_meal_draft(app_user.user_id, draft_id, title=raw_text.strip())
+            elif field == "summary":
+                draft = self.service.update_meal_draft(app_user.user_id, draft_id, summary=raw_text.strip())
+            elif field == "rewrite":
+                cleaned = raw_text.strip()
+                draft = self.service.update_meal_draft(app_user.user_id, draft_id, title=cleaned, summary=cleaned)
+            elif field == "time":
+                draft = self.service.update_meal_draft(
+                    app_user.user_id,
+                    draft_id,
+                    occurred_at=self._parse_draft_time(raw_text, self.service.get_meal_draft(app_user.user_id, draft_id)),
+                )
+            elif field == "macros":
+                calories, protein_g, fat_g, carbs_g = self._parse_draft_macros(raw_text)
+                draft = self.service.update_meal_draft(
+                    app_user.user_id,
+                    draft_id,
+                    calories=calories,
+                    protein_g=protein_g,
+                    fat_g=fat_g,
+                    carbs_g=carbs_g,
+                )
+            else:
+                return None
+        except ValueError as exc:
+            return str(exc), self._draft_edit_prompt_reply_markup(draft_id)
+        self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+        return self._format_meal_draft_card_text(draft), self._meal_draft_card_reply_markup(draft)
+
+    def _set_pending_draft_edit_state(self, user_id: int, draft_id: str, field: str) -> None:
+        self._pending_draft_edit_states[user_id] = {"draft_id": draft_id, "field": field}
+
+    def _clear_pending_draft_edit_state(self, user_id: int, draft_id: Optional[str] = None) -> None:
+        state = self._pending_draft_edit_states.get(user_id)
+        if state is None:
+            return
+        if draft_id is not None and state.get("draft_id") != draft_id:
+            return
+        self._pending_draft_edit_states.pop(user_id, None)
+
+    @staticmethod
+    def _format_meal_draft_card_text(draft: MealPhotoDraft) -> str:
+        return (
+            "Похоже, это %s.\n\n"
+            "%s ккал\n"
+            "Б %s г • Ж %s г • У %s г\n"
+            "Время: %s\n"
+            "Состав: %s"
+        ) % (
+            draft.title,
+            draft.calories,
+            TelegramHealthBot._format_decimal(draft.protein_g),
+            TelegramHealthBot._format_decimal(draft.fat_g),
+            TelegramHealthBot._format_decimal(draft.carbs_g),
+            draft.occurred_at.strftime("%H:%M"),
+            draft.summary,
+        )
+
+    @staticmethod
+    def _format_meal_draft_edit_menu_text(draft: MealPhotoDraft) -> str:
+        return "Что изменить в черновике «%s»?" % draft.title
+
+    @staticmethod
+    def _format_meal_draft_portion_text(draft: MealPhotoDraft) -> str:
+        return (
+            "Какую порцию поставить?\n"
+            "Сейчас: %s ккал, Б %s г • Ж %s г • У %s г"
+        ) % (
+            draft.calories,
+            TelegramHealthBot._format_decimal(draft.protein_g),
+            TelegramHealthBot._format_decimal(draft.fat_g),
+            TelegramHealthBot._format_decimal(draft.carbs_g),
+        )
+
+    @staticmethod
+    def _meal_draft_card_reply_markup(draft: MealPhotoDraft) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Сохранить", "callback_data": "meal_confirm:%s" % draft.draft_id},
+                        {"text": "Изменить", "callback_data": "meal_edit_menu:%s" % draft.draft_id},
+                    ],
+                    [
+                        {"text": "Не то блюдо", "callback_data": "meal_rewrite_prompt:%s" % draft.draft_id},
+                        {"text": "Отмена", "callback_data": "meal_reject:%s" % draft.draft_id},
+                    ],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _meal_draft_edit_menu_reply_markup(draft: MealPhotoDraft) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Название", "callback_data": "meal_edit_title:%s" % draft.draft_id},
+                        {"text": "Порция", "callback_data": "meal_edit_portion_menu:%s" % draft.draft_id},
+                    ],
+                    [
+                        {"text": "Время", "callback_data": "meal_edit_time:%s" % draft.draft_id},
+                        {"text": "Состав", "callback_data": "meal_edit_summary:%s" % draft.draft_id},
+                    ],
+                    [
+                        {"text": "Калории и БЖУ", "callback_data": "meal_edit_macros:%s" % draft.draft_id},
+                    ],
+                    [
+                        {"text": "Назад к черновику", "callback_data": "meal_edit_back:%s" % draft.draft_id},
+                    ],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _meal_draft_portion_reply_markup(draft: MealPhotoDraft) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Меньше", "callback_data": "meal_edit_portion:%s:smaller" % draft.draft_id},
+                        {"text": "Стандарт", "callback_data": "meal_edit_portion:%s:standard" % draft.draft_id},
+                        {"text": "Больше", "callback_data": "meal_edit_portion:%s:bigger" % draft.draft_id},
+                    ],
+                    [
+                        {"text": "Назад к черновику", "callback_data": "meal_edit_back:%s" % draft.draft_id},
+                    ],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _draft_edit_prompt_reply_markup(draft_id: str) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [{"text": "Назад к черновику", "callback_data": "meal_edit_back:%s" % draft_id}],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _draft_time_prompt_reply_markup(draft_id: str) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Сейчас", "callback_data": "meal_edit_time_now:%s" % draft_id},
+                        {"text": "Назад к черновику", "callback_data": "meal_edit_back:%s" % draft_id},
+                    ]
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    def _format_saved_meal_text(self, app_user: AppUser, title: str, target_date: date) -> str:
+        summary = self.service.get_daily_summary(app_user.user_id, target_date)
+        return (
+            "Сохранено: %s.\n\n"
+            "Сегодня:\n"
+            "%s приема пищи\n"
+            "Белок: %s / %s г\n"
+            "Вода: %s / %s л"
+        ) % (
+            title,
+            summary.meals_count,
+            self._format_decimal(summary.protein_g),
+            self._format_decimal(summary.goals.protein_g),
+            self._format_liters_fixed(summary.water_ml),
+            self._format_liters_fixed(summary.goals.water_ml),
+        )
+
+    @classmethod
+    def _post_save_meal_reply_markup(cls) -> str:
+        return json.dumps(
+            {
+                "resize_keyboard": True,
+                "keyboard": [
+                    [{"text": "Добавить воду"}],
+                    [{"text": "История"}, {"text": "Прогресс"}],
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _parse_draft_macros(raw_text: str) -> tuple[int, float, float, float]:
+        normalized = raw_text.replace(",", " ")
+        parts = [part for part in normalized.split() if part]
+        if len(parts) != 4:
+            raise ValueError("Введите 4 значения: калории белки жиры углеводы. Например: 420 31 12 46")
+        try:
+            calories = int(parts[0])
+            protein_g = float(parts[1])
+            fat_g = float(parts[2])
+            carbs_g = float(parts[3])
+        except ValueError as exc:
+            raise ValueError("Калории и БЖУ должны быть числами.") from exc
+        if calories < 0 or protein_g < 0 or fat_g < 0 or carbs_g < 0:
+            raise ValueError("Калории и БЖУ не могут быть отрицательными.")
+        return calories, protein_g, fat_g, carbs_g
+
+    @staticmethod
+    def _parse_draft_time(raw_text: str, draft: MealPhotoDraft) -> datetime:
+        try:
+            parsed_time = datetime.strptime(raw_text.strip(), "%H:%M").time()
+        except ValueError as exc:
+            raise ValueError("Введите время в формате HH:MM, например: 13:45") from exc
+        return datetime.combine(draft.occurred_at.date(), parsed_time)
 
     def _handle_pending_custom_water_input(
         self,
