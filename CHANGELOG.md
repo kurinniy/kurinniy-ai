@@ -18,6 +18,13 @@
 
 - Изменения в работе, которые еще не были выложены в production.
 
+## 2026-05-12
+
+- Версия или commit: `0.12.2`
+- Удалён legacy-путь хранения фото еды в MySQL: новые фото теперь сохраняются только в Railway Bucket, а в `meal_media` остаются только metadata и ссылки на bucket objects.
+- MySQL schema cleanup теперь дропает колонку `meal_media.image_bytes`, а obsolete скрипт `scripts/migrate_meal_media_to_bucket.py` удалён из репозитория.
+- Тесты и health-service обновлены под обязательный bucket-backed storage без fallback на `db_blob`.
+
 ## 2026-05-11
 
 - Версия или commit: `0.12.1`
