@@ -673,7 +673,7 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual([trend.days for trend in digest.trend_windows], [7, 14, 30])
         self.assertEqual(digest.commentary_data.meal_pattern.largest_meal.title, "Chicken rice bowl")
         self.assertGreaterEqual(len(digest.commentary_data.comparisons), 3)
-        self.assertIn("недельной базы", digest.commentary)
+        self.assertIn("базы последних 7ми дней", digest.commentary)
 
     def test_build_daily_food_digest_excludes_confirmed_water_only_photos(self) -> None:
         meal_draft = self.service.create_meal_draft_from_photo(
