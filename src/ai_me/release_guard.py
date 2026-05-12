@@ -36,6 +36,13 @@ def extract_current_version(version_source: str) -> str:
     return match.group(1)
 
 
+def extract_major_minor(version: str) -> str:
+    parts = version.split(".")
+    if len(parts) < 2:
+        raise ValueError("Версия должна содержать хотя бы major.minor.")
+    return ".".join(parts[:2])
+
+
 def extract_latest_release_block(changelog_text: str) -> str:
     matches = list(re.finditer(r"^## \d{4}-\d{2}-\d{2}$", changelog_text, re.MULTILINE))
     if not matches:
@@ -71,7 +78,7 @@ def validate_release_guard(
     version_line = f"- Версия или commit: `{current_version}`"
     if version_line not in latest_release_block:
         errors.append("Верхний релизный блок CHANGELOG.md не содержит текущую версию.")
-    if not frontend_version.startswith(f"{current_version}."):
+    if extract_major_minor(frontend_version) != extract_major_minor(current_version):
         errors.append("Версия в frontend/package.json не совпадает с APP_VERSION по major.minor.")
 
     return ReleaseGuardResult(ok=not errors, errors=errors)

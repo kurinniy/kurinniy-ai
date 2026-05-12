@@ -70,3 +70,25 @@ class ReleaseGuardTest(unittest.TestCase):
             "Версия в frontend/package.json не совпадает с APP_VERSION по major.minor.",
             result.errors,
         )
+
+    def test_release_guard_allows_patch_backend_version_with_matching_frontend_major_minor(self) -> None:
+        result = validate_release_guard(
+            changed_files=[
+                "src/ai_me/version.py",
+                "frontend/package.json",
+                "CHANGELOG.md",
+                "src/ai_me/storage/mysql.py",
+            ],
+            version_source='APP_VERSION = "0.12.2"\nAPP_RELEASE_DATE = "2026-05-12"\n',
+            changelog_text=(
+                "# CHANGELOG\n\n"
+                "## Unreleased\n\n"
+                "- pending\n\n"
+                "## 2026-05-12\n\n"
+                "- Версия или commit: `0.12.2`\n"
+                "- Release text\n"
+            ),
+            frontend_package_text='{"version":"0.12.2"}',
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.errors, [])
