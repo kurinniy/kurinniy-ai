@@ -192,16 +192,33 @@ class TelegramHealthBot:
             )
             if response:
                 reply_user = self.service.get_user_by_telegram_user_id(user_id) or app_user
-                self._send_message(
-                    chat_id,
-                    response,
-                    reply_markup=self._reply_markup_for_response(
-                        text=normalized_text,
-                        original_app_user=app_user,
-                        reply_user=reply_user,
-                    ),
-                    parse_mode="Markdown" if normalized_text.startswith("/digest_preview") else None,
+                reply_markup = self._reply_markup_for_response(
+                    text=normalized_text,
+                    original_app_user=app_user,
+                    reply_user=reply_user,
                 )
+                parse_mode = "Markdown" if normalized_text.startswith("/digest_preview") else None
+                try:
+                    self._send_message(
+                        chat_id,
+                        response,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode,
+                    )
+                except Exception as exc:
+                    if reply_markup is None:
+                        raise
+                    logger.warning(
+                        "sendMessage with reply_markup failed chat_id=%s text=%s error=%s; retrying without markup",
+                        chat_id,
+                        normalized_text,
+                        exc,
+                    )
+                    self._send_message(
+                        chat_id,
+                        response,
+                        parse_mode=parse_mode,
+                    )
 
     def _handle_callback_query(self, callback_query: Dict[str, object]) -> None:
         user = callback_query.get("from", {})

@@ -1893,6 +1893,35 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Исправить", response_markup)
         self.assertEqual(self.service.get_meal_entry(1, "meal-1").title, "Исправленная курица")
 
+    def test_history_fix_last_retries_without_markup_when_send_message_fails(self) -> None:
+        calls = []
+        first_send = {"done": False}
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            if method == "sendMessage" and not first_send["done"]:
+                first_send["done"] = True
+                raise RuntimeError("telegram 400")
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "Исправить последнюю запись",
+                    "chat": {"id": 778, "type": "private"},
+                    "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                },
+            }
+        )
+
+        send_calls = [params for method, params in calls if method == "sendMessage"]
+        self.assertEqual(len(send_calls), 2)
+        self.assertIn("reply_markup", send_calls[0])
+        self.assertNotIn("reply_markup", send_calls[1])
+        self.assertIn("Последняя запись", send_calls[1]["text"])
+
     def test_edit_title_flow_updates_draft_card(self) -> None:
         messages = []
 
