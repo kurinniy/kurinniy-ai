@@ -136,21 +136,9 @@ npm run build
 
 The build output goes to `frontend/dist` and is served by the Python web runtime and the production Docker image.
 
-## Migrate Meal Photos To Railway Bucket
+## Meal Photo Storage
 
-Once the bucket variables are configured, migrate existing `meal_media.image_bytes` rows with:
-
-```bash
-PYTHONPATH=src python3 scripts/migrate_meal_media_to_bucket.py
-```
-
-Useful options:
-
-- `--batch-size 100`
-- `--max-batches 1`
-- `--dry-run`
-
-The migration is idempotent for already moved rows because it only processes legacy records with `storage_kind=db_blob` and a non-empty `image_bytes`.
+Meal photos are stored in the configured Railway Bucket. MySQL keeps only media metadata and links to bucket objects.
 
 ## Telegram Mini App
 

@@ -116,9 +116,11 @@ class FakeMediaStorage:
 class HealthServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.store = InMemoryStore()
+        self.media_storage = FakeMediaStorage()
         self.service = HealthService(
             self.store,
             food_photo_analyzer=StubFoodPhotoAnalyzer(),
+            media_storage=self.media_storage,
             admin_telegram_user_ids=frozenset({96445950}),
         )
         self.user = self.store.create_user(
@@ -524,6 +526,24 @@ class HealthServiceTest(unittest.TestCase):
 
         digest = service.build_daily_food_digest(self.user.user_id, self.target_date)
         self.assertEqual(digest.meals[0].media_items[0].image_bytes, b"fake-jpeg-data")
+
+    def test_meal_photo_draft_requires_bucket_storage(self) -> None:
+        service = HealthService(
+            self.store,
+            food_photo_analyzer=StubFoodPhotoAnalyzer(),
+            admin_telegram_user_ids=frozenset({96445950}),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Bucket storage is not configured"):
+            service.create_meal_draft_from_photo(
+                self.user.user_id,
+                photo_file_id="telegram-photo-no-bucket",
+                photo_unique_id="unique-no-bucket",
+                image_bytes=b"fake-jpeg-data",
+                mime_type="image/jpeg",
+                occurred_at=datetime(2026, 5, 6, 19, 0),
+                caption="Dinner",
+            )
 
     def test_range_store_methods_return_expected_meals_and_strip_image_bytes_when_requested(self) -> None:
         self.service.log_meal(

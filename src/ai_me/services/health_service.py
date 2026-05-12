@@ -546,7 +546,7 @@ class HealthService:
         )
         self.store.create_meal_draft(user_id, draft)
         media_id = str(uuid4())
-        stored_media_payload = self._upload_media_if_configured(
+        stored_media_payload = self._store_media_in_bucket(
             user_id=user_id,
             media_id=media_id,
             occurred_at=draft.occurred_at,
@@ -758,7 +758,7 @@ class HealthService:
         return hydrated_highlights
 
     def _hydrate_media_bytes(self, media: MealMedia) -> MealMedia:
-        if media.image_bytes or not media.storage_key or media.storage_kind == "db_blob":
+        if media.image_bytes or not media.storage_key:
             return media
         image_bytes = self.media_storage.load_image(object_key=media.storage_key)
         return MealMedia(
@@ -781,7 +781,7 @@ class HealthService:
             height=media.height,
         )
 
-    def _upload_media_if_configured(
+    def _store_media_in_bucket(
         self,
         *,
         user_id: int,
@@ -799,16 +799,8 @@ class HealthService:
             width = 0
             height = 0
 
-        payload: Dict[str, object] = {
-            "storage_kind": "db_blob",
-            "storage_key": "",
-            "bucket_name": "",
-            "image_bytes": image_bytes,
-            "width": width,
-            "height": height,
-        }
         if not self.media_storage.enabled:
-            return payload
+            raise RuntimeError("Bucket storage is not configured for meal media uploads.")
 
         stored = self.media_storage.store_image(
             object_key=self._build_media_storage_key(
@@ -820,15 +812,14 @@ class HealthService:
             image_bytes=image_bytes,
             mime_type=mime_type,
         )
-        payload.update(
-            {
-                "storage_kind": stored.storage_kind,
-                "storage_key": stored.storage_key,
-                "bucket_name": stored.bucket_name,
-                "image_bytes": b"",
-            }
-        )
-        return payload
+        return {
+            "storage_kind": stored.storage_kind,
+            "storage_key": stored.storage_key,
+            "bucket_name": stored.bucket_name,
+            "image_bytes": b"",
+            "width": width,
+            "height": height,
+        }
 
     def _build_media_storage_key(self, *, user_id: int, media_id: str, occurred_at: datetime, mime_type: str) -> str:
         return build_meal_media_object_key(

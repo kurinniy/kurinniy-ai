@@ -83,7 +83,7 @@ class MealMedia:
     sha256: str
     image_bytes: bytes
     meal_entry_id: str = ""
-    storage_kind: str = "db_blob"
+    storage_kind: str = "railway_bucket"
     storage_key: str = ""
     bucket_name: str = ""
     width: int = 0

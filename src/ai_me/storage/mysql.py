@@ -641,10 +641,9 @@ class MySQLStore:
                 storage_key,
                 bucket_name,
                 width,
-                height,
-                image_bytes
+                height
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 media.media_id,
@@ -663,13 +662,29 @@ class MySQLStore:
                 media.bucket_name,
                 media.width,
                 media.height,
-                media.image_bytes,
             ),
         )
 
     def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
         query = """
-            SELECT *
+            SELECT
+                media_id,
+                user_id,
+                draft_id,
+                meal_entry_id,
+                occurred_at,
+                created_at,
+                mime_type,
+                telegram_file_id,
+                telegram_unique_id,
+                byte_size,
+                sha256,
+                storage_kind,
+                storage_key,
+                bucket_name,
+                width,
+                height,
+                NULL AS image_bytes
             FROM meal_media
             WHERE user_id = %s
         """
@@ -692,7 +707,7 @@ class MySQLStore:
     ) -> List[MealMedia]:
         day_start = datetime.combine(start_date, time.min)
         day_end = datetime.combine(end_date, time.max)
-        select_fields = "*" if include_image_bytes else (
+        select_fields = (
             "media_id, user_id, draft_id, meal_entry_id, occurred_at, created_at, mime_type, "
             "telegram_file_id, telegram_unique_id, byte_size, sha256, storage_kind, storage_key, "
             "bucket_name, width, height, NULL AS image_bytes"
@@ -716,7 +731,24 @@ class MySQLStore:
         placeholders = ", ".join(["%s"] * len(media_ids))
         rows = self._fetchall(
             """
-            SELECT *
+            SELECT
+                media_id,
+                user_id,
+                draft_id,
+                meal_entry_id,
+                occurred_at,
+                created_at,
+                mime_type,
+                telegram_file_id,
+                telegram_unique_id,
+                byte_size,
+                sha256,
+                storage_kind,
+                storage_key,
+                bucket_name,
+                width,
+                height,
+                NULL AS image_bytes
             FROM meal_media
             WHERE user_id = %s
               AND media_id IN ({placeholders})
@@ -736,73 +768,6 @@ class MySQLStore:
             """,
             (meal_entry_id, user_id, draft_id),
         )
-
-    def list_legacy_meal_media_for_migration(self, limit: int = 100) -> List[MealMedia]:
-        rows = self._fetchall(
-            """
-            SELECT *
-            FROM meal_media
-            WHERE storage_kind = %s
-              AND OCTET_LENGTH(image_bytes) > 0
-            ORDER BY occurred_at ASC, created_at ASC
-            LIMIT %s
-            """,
-            ("db_blob", limit),
-        )
-        return [self._to_meal_media(row) for row in rows]
-
-    def mark_meal_media_bucket_migrated(
-        self,
-        media_id: str,
-        *,
-        storage_key: str,
-        bucket_name: str,
-        width: int,
-        height: int,
-    ) -> None:
-        self._execute(
-            """
-            UPDATE meal_media
-            SET storage_kind = %s,
-                storage_key = %s,
-                bucket_name = %s,
-                width = %s,
-                height = %s,
-                image_bytes = %s
-            WHERE media_id = %s
-            """,
-            ("railway_bucket", storage_key, bucket_name, width, height, b"", media_id),
-        )
-
-    def mark_meal_media_bucket_migrated_batch(
-        self,
-        updates: List[tuple[str, str, str, int, int]],
-    ) -> None:
-        if not updates:
-            return
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            cursor.executemany(
-                """
-                UPDATE meal_media
-                SET storage_kind = %s,
-                    storage_key = %s,
-                    bucket_name = %s,
-                    width = %s,
-                    height = %s,
-                    image_bytes = %s
-                WHERE media_id = %s
-                """,
-                [
-                    ("railway_bucket", storage_key, bucket_name, width, height, b"", media_id)
-                    for media_id, storage_key, bucket_name, width, height in updates
-                ],
-            )
-            connection.commit()
-        finally:
-            cursor.close()
-            connection.close()
 
     def get_meal_draft(self, user_id: int, draft_id: str) -> Optional[MealPhotoDraft]:
         row = self._fetchone(
@@ -1359,7 +1324,6 @@ class MySQLStore:
                 bucket_name VARCHAR(255) NOT NULL DEFAULT '',
                 width INT NOT NULL DEFAULT 0,
                 height INT NOT NULL DEFAULT 0,
-                image_bytes LONGBLOB NOT NULL,
                 INDEX idx_meal_media_user_occurred_at (user_id, occurred_at),
                 INDEX idx_meal_media_user_draft_id (user_id, draft_id),
                 INDEX idx_meal_media_user_meal_entry_id (user_id, meal_entry_id)
@@ -1475,6 +1439,7 @@ class MySQLStore:
         self._ensure_column("meal_media", "bucket_name", "ALTER TABLE meal_media ADD COLUMN bucket_name VARCHAR(255) NOT NULL DEFAULT '' AFTER storage_key")
         self._ensure_column("meal_media", "width", "ALTER TABLE meal_media ADD COLUMN width INT NOT NULL DEFAULT 0 AFTER bucket_name")
         self._ensure_column("meal_media", "height", "ALTER TABLE meal_media ADD COLUMN height INT NOT NULL DEFAULT 0 AFTER width")
+        self._drop_column_if_exists("meal_media", "image_bytes", "ALTER TABLE meal_media DROP COLUMN image_bytes")
 
         self._ensure_column(
             "health_goals",
@@ -1637,6 +1602,12 @@ class MySQLStore:
         if self._column_exists(table_name, column_name):
             return
         logger.info("Applying MySQL schema migration: add %s.%s", table_name, column_name)
+        self._execute(alter_statement, ())
+
+    def _drop_column_if_exists(self, table_name: str, column_name: str, alter_statement: str) -> None:
+        if not self._column_exists(table_name, column_name):
+            return
+        logger.info("Applying MySQL schema migration: drop %s.%s", table_name, column_name)
         self._execute(alter_statement, ())
 
     def _ensure_index(self, table_name: str, index_name: str, create_statement: str) -> None:

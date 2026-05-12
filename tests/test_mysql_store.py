@@ -12,6 +12,7 @@ class MigrationAwareMySQLStore(MySQLStore):
             ("meals", "fat_g"),
             ("health_goals", "target_date"),
             ("finance_transactions", "transaction_key"),
+            ("meal_media", "image_bytes"),
         }
         self.present_indexes = set()
         self.executed = []
@@ -101,6 +102,7 @@ class MySQLStoreMigrationTest(unittest.TestCase):
         )
         self.assertIn("ALTER TABLE meal_media ADD COLUMN width INT NOT NULL DEFAULT 0 AFTER bucket_name", executed_sql)
         self.assertIn("ALTER TABLE meal_media ADD COLUMN height INT NOT NULL DEFAULT 0 AFTER width", executed_sql)
+        self.assertIn("ALTER TABLE meal_media DROP COLUMN image_bytes", executed_sql)
         self.assertIn("ALTER TABLE finance_transactions ADD COLUMN user_id BIGINT NULL AFTER transaction_key", executed_sql)
         self.assertIn(
             "CREATE UNIQUE INDEX uk_decision_user_key ON decision_log (user_id, decision_key)",
@@ -133,28 +135,6 @@ class MySQLStoreMigrationTest(unittest.TestCase):
         executed_sql = [query for query, _ in store.executed]
         self.assertIn("UPDATE meals SET user_id = %s WHERE user_id IS NULL", executed_sql)
         self.assertIn("UPDATE finance_transactions SET user_id = %s WHERE user_id IS NULL", executed_sql)
-
-    def test_mark_meal_media_bucket_migrated_batch_uses_single_executemany(self) -> None:
-        store = MigrationAwareMySQLStore()
-
-        store.mark_meal_media_bucket_migrated_batch(
-            [
-                ("media-1", "prefix/media-1.jpg", "bucket-a", 100, 80),
-                ("media-2", "prefix/media-2.jpg", "bucket-a", 90, 90),
-            ]
-        )
-
-        self.assertEqual(len(store.executed_many), 1)
-        query, params = store.executed_many[0]
-        self.assertIn("UPDATE meal_media SET storage_kind = %s", query)
-        self.assertEqual(
-            params,
-            [
-                ("railway_bucket", "prefix/media-1.jpg", "bucket-a", 100, 80, b"", "media-1"),
-                ("railway_bucket", "prefix/media-2.jpg", "bucket-a", 90, 90, b"", "media-2"),
-            ],
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
