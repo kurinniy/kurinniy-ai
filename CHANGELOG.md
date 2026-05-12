@@ -20,6 +20,13 @@
 
 ## 2026-05-12
 
+- Версия или commit: `0.14`
+- В Telegram-боте реализованы первые три этапа нового UX roadmap: новый welcome/home screen, action-first навигация, отдельная кнопка `Как это работает` и переработанная reply-клавиатура.
+- Добавлен быстрый сценарий логирования воды: пресеты, ручной ввод объема, дружелюбная валидация и быстрые действия после сохранения.
+- Добавлено редактирование food draft перед сохранением: можно менять название, порцию, время, состав и КБЖУ, а сценарий `Не то блюдо` теперь переписывает черновик по тексту пользователя.
+
+## 2026-05-12
+
 - Версия или commit: `0.13.1`
 - Добавлен новый релизный поток через [scripts/release_main.py](/Users/kurinniy/Documents/Projects/ai-me/scripts/release_main.py): он поднимает версию на `main`, обновляет `CHANGELOG.md`, прогоняет `release_guard` и создаёт git tag релиза.
 - Вынесены release helpers в [src/ai_me/release_tools.py](/Users/kurinniy/Documents/Projects/ai-me/src/ai_me/release_tools.py), а правила релизов в [AGENTS.md](/Users/kurinniy/Documents/Projects/ai-me/AGENTS.md) обновлены под tag-based workflow.
