@@ -752,6 +752,18 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/history_delete_last", app_user=self.service.users_by_telegram_id[77])
         self.assertEqual(response, "Удалить последнюю запись?")
 
+    def test_history_delete_last_reply_markup_uses_visible_buttons(self) -> None:
+        self.bot._route_command("/history_delete_last", app_user=self.service.users_by_telegram_id[77])
+        reply_markup = self.bot._reply_markup_for_response(
+            text="/history_delete_last",
+            original_app_user=self.service.users_by_telegram_id[77],
+            reply_user=self.service.users_by_telegram_id[77],
+        )
+        self.assertIn("Да, удалить", reply_markup)
+        self.assertIn("Отмена", reply_markup)
+        self.assertIn("\"keyboard\"", reply_markup)
+        self.assertNotIn("callback_data", reply_markup)
+
     def test_history_falls_back_to_app_when_entry_is_outside_recovery_window(self) -> None:
         self.bot._local_now = lambda: datetime(2026, 5, 6, 13, 10)
         response = self.bot._route_command("/history_fix_last", app_user=self.service.users_by_telegram_id[77])
@@ -765,6 +777,32 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._local_now = lambda: datetime(2026, 5, 6, 12, 50)
         response = self.bot._route_command("/history_delete_last", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Быстрое удаление доступно только", response)
+
+    def test_pending_history_delete_confirm_deletes_last_meal(self) -> None:
+        self.bot._set_pending_last_meal_delete(2, "meal-1")
+        response = self.bot._handle_pending_last_meal_delete_input(
+            app_user=self.service.users_by_telegram_id[77],
+            raw_text="Да, удалить",
+            normalized_text="Да, удалить",
+        )
+        self.assertIsNotNone(response)
+        text, reply_markup = response
+        self.assertIn("Последняя запись удалена.", text)
+        self.assertIn("История и правки в приложении", reply_markup)
+        self.assertEqual(len(self.service.meals_by_user_id[2]), 1)
+
+    def test_pending_history_delete_cancel_keeps_last_meal(self) -> None:
+        self.bot._set_pending_last_meal_delete(2, "meal-1")
+        response = self.bot._handle_pending_last_meal_delete_input(
+            app_user=self.service.users_by_telegram_id[77],
+            raw_text="Отмена",
+            normalized_text="Отмена",
+        )
+        self.assertIsNotNone(response)
+        text, reply_markup = response
+        self.assertEqual(text, "Удаление отменено.")
+        self.assertIn("Отменить последнюю запись", reply_markup)
+        self.assertEqual(len(self.service.meals_by_user_id[2]), 2)
 
     def test_history_reply_markup_is_used_for_history_commands(self) -> None:
         reply_markup = self.bot._reply_markup_for_response(

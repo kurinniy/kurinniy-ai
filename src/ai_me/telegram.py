@@ -70,6 +70,7 @@ class TelegramHealthBot:
         self._photo_rate_limit_until_by_user: Dict[int, datetime] = {}
         self._pending_custom_water_user_ids = set()
         self._pending_draft_edit_states: Dict[int, Dict[str, str]] = {}
+        self._pending_last_meal_delete_by_user: Dict[int, str] = {}
 
     def run_forever(self) -> None:
         self._ensure_polling_mode()
@@ -180,6 +181,15 @@ class TelegramHealthBot:
             )
             if pending_response is not None:
                 pending_text, pending_markup = pending_response
+                self._send_message(chat_id, pending_text, reply_markup=pending_markup)
+                return
+            pending_delete_response = self._handle_pending_last_meal_delete_input(
+                app_user=app_user,
+                raw_text=raw_text,
+                normalized_text=normalized_text,
+            )
+            if pending_delete_response is not None:
+                pending_text, pending_markup = pending_delete_response
                 self._send_message(chat_id, pending_text, reply_markup=pending_markup)
                 return
             response = self._route_command(
@@ -710,12 +720,15 @@ class TelegramHealthBot:
                 self._pending_custom_water_user_ids.discard(app_user.user_id)
                 return self._handle_log_water(app_user, args)
             if command == "/history":
+                self._clear_pending_last_meal_delete(app_user.user_id)
                 return self._history_home_text()
             if command == "/history_fix_last":
+                self._clear_pending_last_meal_delete(app_user.user_id)
                 return self._history_fix_last_text(app_user)
             if command == "/history_delete_last":
-                return self._history_delete_last_text(app_user)
+                return self._handle_history_delete_last(app_user)
             if command == "/history_app":
+                self._clear_pending_last_meal_delete(app_user.user_id)
                 return self._history_app_text()
             if command == "/progress":
                 return self._handle_progress(app_user)
@@ -1210,6 +1223,14 @@ class TelegramHealthBot:
         if meal is not None:
             return "Удалить последнюю запись?"
         return self._history_delete_in_app_text()
+
+    def _handle_history_delete_last(self, app_user: AppUser) -> str:
+        meal = self._get_latest_deletable_meal(app_user)
+        if meal is None:
+            self._clear_pending_last_meal_delete(app_user.user_id)
+            return self._history_delete_in_app_text()
+        self._set_pending_last_meal_delete(app_user.user_id, meal.entry_id)
+        return "Удалить последнюю запись?"
 
     @staticmethod
     def _history_edit_in_app_text() -> str:
@@ -2047,8 +2068,20 @@ class TelegramHealthBot:
     def _history_delete_reply_markup(self, app_user: AppUser) -> Optional[str]:
         meal = self._get_latest_deletable_meal(app_user)
         if meal is not None:
-            return self._history_delete_confirm_reply_markup(meal.entry_id)
+            return self._history_delete_prompt_reply_markup()
         return self._history_app_inline_reply_markup()
+
+    @classmethod
+    def _history_delete_prompt_reply_markup(cls) -> str:
+        return json.dumps(
+            {
+                "resize_keyboard": True,
+                "keyboard": [
+                    [{"text": "Да, удалить"}, {"text": "Отмена"}],
+                ],
+            },
+            ensure_ascii=False,
+        )
 
     def _history_app_inline_reply_markup(self) -> Optional[str]:
         if not self.settings.mini_app_url:
@@ -2230,6 +2263,68 @@ class TelegramHealthBot:
         if draft_id is not None and state.get("draft_id") != draft_id:
             return
         self._pending_draft_edit_states.pop(user_id, None)
+
+    def _set_pending_last_meal_delete(self, user_id: int, entry_id: str) -> None:
+        self._pending_last_meal_delete_by_user[user_id] = entry_id
+
+    def _clear_pending_last_meal_delete(self, user_id: int, entry_id: Optional[str] = None) -> None:
+        current_entry_id = self._pending_last_meal_delete_by_user.get(user_id)
+        if current_entry_id is None:
+            return
+        if entry_id is not None and current_entry_id != entry_id:
+            return
+        self._pending_last_meal_delete_by_user.pop(user_id, None)
+
+    def _handle_pending_last_meal_delete_input(
+        self,
+        app_user: Optional[AppUser],
+        raw_text: str,
+        normalized_text: str,
+    ) -> Optional[tuple[str, str]]:
+        if app_user is None:
+            return None
+        entry_id = self._pending_last_meal_delete_by_user.get(app_user.user_id)
+        if entry_id is None:
+            return None
+        if normalized_text in {
+            "/menu",
+            "/help",
+            "/start",
+            "/add_food",
+            "/add_water",
+            "/history",
+            "/history_fix_last",
+            "/history_delete_last",
+            "/history_app",
+            "/progress",
+            "/profile",
+            "/how_it_works",
+        }:
+            self._clear_pending_last_meal_delete(app_user.user_id)
+            return None
+        if raw_text == "Отмена":
+            self._clear_pending_last_meal_delete(app_user.user_id, entry_id=entry_id)
+            return "Удаление отменено.", self._history_reply_markup()
+        if raw_text != "Да, удалить":
+            return (
+                "Подтвердите удаление кнопкой «Да, удалить» или нажмите «Отмена».",
+                self._history_delete_prompt_reply_markup(),
+            )
+        try:
+            meal = self.service.get_meal_entry(app_user.user_id, entry_id)
+        except ValueError:
+            self._clear_pending_last_meal_delete(app_user.user_id, entry_id=entry_id)
+            return self._history_delete_in_app_text(), self._history_reply_markup()
+        if not self._is_meal_recoverable_for_delete(meal):
+            self._clear_pending_last_meal_delete(app_user.user_id, entry_id=entry_id)
+            return self._history_delete_in_app_text(), self._history_reply_markup()
+        deleted = self.service.delete_meal_entry(app_user.user_id, entry_id)
+        self._clear_pending_last_meal_delete(app_user.user_id, entry_id=entry_id)
+        return (
+            "Последняя запись удалена.\n"
+            "Удалено: %s.\n\n"
+            "Если нужна история и более глубокие правки, откройте приложение."
+        ) % deleted.title, self._history_reply_markup()
 
     @staticmethod
     def _format_meal_draft_card_text(draft: MealPhotoDraft) -> str:
