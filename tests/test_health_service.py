@@ -782,6 +782,51 @@ class HealthServiceTest(unittest.TestCase):
 
         self.assertEqual([meal.entry_id for meal in meals], ["meal-2", "meal-1"])
         self.assertEqual(self.service.get_meal_entry(self.user.user_id, "meal-1", lookback_days=3650).title, "Breakfast")
+        self.assertEqual(self.service.get_latest_meal(self.user.user_id).entry_id, "meal-2")
+
+    def test_update_meal_entry_updates_last_saved_meal(self) -> None:
+        self.service.log_meal(
+            self.user.user_id,
+            MealEntry(
+                entry_id="meal-1",
+                occurred_at=datetime(2026, 5, 6, 13, 0),
+                title="Lunch",
+                calories=700,
+                protein_g=40,
+                fat_g=20,
+                carbs_g=55,
+                notes='{"summary":"Old summary"}',
+            ),
+        )
+
+        updated = self.service.update_meal_entry(
+            self.user.user_id,
+            "meal-1",
+            title="Better lunch",
+            summary="New summary",
+            calories=680,
+        )
+
+        self.assertEqual(updated.title, "Better lunch")
+        self.assertEqual(updated.calories, 680)
+        self.assertIn("New summary", updated.notes)
+
+    def test_delete_meal_entry_removes_saved_meal(self) -> None:
+        self.service.log_meal(
+            self.user.user_id,
+            MealEntry(
+                entry_id="meal-1",
+                occurred_at=datetime(2026, 5, 6, 13, 0),
+                title="Lunch",
+                calories=700,
+                protein_g=40,
+            ),
+        )
+
+        deleted = self.service.delete_meal_entry(self.user.user_id, "meal-1")
+
+        self.assertEqual(deleted.entry_id, "meal-1")
+        self.assertEqual(self.service.list_recent_meals(self.user.user_id), [])
 
     def test_list_recent_food_draft_history_includes_all_statuses(self) -> None:
         first = self.service.create_meal_draft_from_photo(

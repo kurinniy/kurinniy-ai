@@ -70,7 +70,7 @@ class WebAppTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.store.close()
 
-    def test_bootstrap_rejects_regular_user(self) -> None:
+    def test_bootstrap_allows_regular_user(self) -> None:
         init_data = build_init_data(
             {"id": 111, "first_name": "Guest", "username": "guest"},
             auth_date=int(datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc).timestamp()),
@@ -78,8 +78,9 @@ class WebAppTest(unittest.TestCase):
 
         response = self.client.post("/api/webapp/bootstrap", json={"init_data": init_data})
 
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], "mini_app_admin_required")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["user"]["telegram_user_id"], 111)
+        self.assertFalse(response.json()["user"]["is_admin"])
 
     def test_bootstrap_allows_admin(self) -> None:
         init_data = build_init_data(
@@ -94,7 +95,7 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual(payload["user"]["telegram_user_id"], 96445950)
         self.assertTrue(payload["user"]["is_admin"])
 
-    def test_session_is_rejected_when_admin_switches_to_user_mode(self) -> None:
+    def test_session_remains_valid_when_admin_switches_to_user_mode(self) -> None:
         init_data = build_init_data(
             {"id": 96445950, "first_name": "Alex", "username": "kurinniy"},
             auth_date=int(datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc).timestamp()),
@@ -108,8 +109,10 @@ class WebAppTest(unittest.TestCase):
 
         response = self.client.get("/api/me", headers={"Authorization": "Bearer %s" % token})
 
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], "mini_app_admin_required")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["is_admin"])
+        self.assertTrue(response.json()["is_admin_account"])
+        self.assertFalse(response.json()["admin_mode_enabled"])
 
 
 if __name__ == "__main__":

@@ -716,6 +716,10 @@ class HealthService:
         meals.sort(key=lambda meal: meal.occurred_at, reverse=True)
         return meals[offset : offset + limit]
 
+    def get_latest_meal(self, user_id: int) -> Optional[MealEntry]:
+        meals = self.list_recent_meals(user_id, limit=1)
+        return meals[0] if meals else None
+
     def get_meal_entry(
         self,
         user_id: int,
@@ -730,6 +734,43 @@ class HealthService:
             if meal.entry_id == entry_id:
                 return meal
         raise ValueError("Прием пищи не найден: %s" % entry_id)
+
+    def update_meal_entry(
+        self,
+        user_id: int,
+        entry_id: str,
+        *,
+        title: Optional[str] = None,
+        summary: Optional[str] = None,
+        occurred_at: Optional[datetime] = None,
+        calories: Optional[int] = None,
+        protein_g: Optional[float] = None,
+        fat_g: Optional[float] = None,
+        carbs_g: Optional[float] = None,
+    ) -> MealEntry:
+        meal = self.get_meal_entry(user_id, entry_id)
+        updated = replace(
+            meal,
+            title=title if title is not None else meal.title,
+            occurred_at=occurred_at if occurred_at is not None else meal.occurred_at,
+            calories=calories if calories is not None else meal.calories,
+            protein_g=protein_g if protein_g is not None else meal.protein_g,
+            fat_g=fat_g if fat_g is not None else meal.fat_g,
+            carbs_g=carbs_g if carbs_g is not None else meal.carbs_g,
+            notes=self._update_meal_notes(meal.notes, summary=summary),
+        )
+        self.store.update_meal(user_id, updated)
+        return updated
+
+    def delete_meal_entry(self, user_id: int, entry_id: str) -> MealEntry:
+        meal = self.get_meal_entry(user_id, entry_id)
+        self.store.delete_meal(user_id, entry_id)
+        return meal
+
+    def get_latest_pending_meal_draft(self, user_id: int) -> Optional[MealPhotoDraft]:
+        drafts = [draft for draft in self.store.list_meal_drafts(user_id, status=MealDraftStatus.PENDING) if not draft.is_water_only]
+        drafts.sort(key=lambda draft: draft.created_at, reverse=True)
+        return drafts[0] if drafts else None
 
     def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
         return self.store.list_meal_media(user_id, target_date=target_date)
@@ -963,6 +1004,17 @@ class HealthService:
 
     def get_finance_monthly_summary(self, user_id: int, month_start: date) -> FinanceMonthlySummary:
         return self.store.build_finance_monthly_summary(user_id, month_start)
+
+    @staticmethod
+    def _update_meal_notes(raw_notes: str, *, summary: Optional[str] = None) -> str:
+        if summary is None:
+            return raw_notes
+        try:
+            payload = json.loads(raw_notes) if raw_notes else {}
+        except (TypeError, ValueError):
+            payload = {}
+        payload["summary"] = summary
+        return json.dumps(payload, sort_keys=True)
 
     @staticmethod
     def _build_step_progress_comment(

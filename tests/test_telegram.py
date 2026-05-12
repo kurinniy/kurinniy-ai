@@ -461,9 +461,39 @@ class DummyHealthService:
         meals = sorted(self.meals_by_user_id.get(user_id, []), key=lambda meal: meal.occurred_at, reverse=True)
         return meals[offset : offset + limit]
 
+    def get_latest_meal(self, user_id):
+        meals = self.list_recent_meals(user_id, limit=1)
+        return meals[0] if meals else None
+
     def get_meal_entry(self, user_id, entry_id, lookback_days=365):
         for meal in self.meals_by_user_id.get(user_id, []):
             if meal.entry_id == entry_id:
+                return meal
+        raise ValueError("Прием пищи не найден.")
+
+    def update_meal_entry(self, user_id, entry_id, **kwargs):
+        for index, meal in enumerate(self.meals_by_user_id.get(user_id, [])):
+            if meal.entry_id != entry_id:
+                continue
+            notes = kwargs.pop("notes", meal.notes)
+            summary = kwargs.pop("summary", None)
+            if summary is not None:
+                try:
+                    payload = json.loads(notes) if notes else {}
+                except (TypeError, ValueError):
+                    payload = {}
+                payload["summary"] = summary
+                notes = json.dumps(payload)
+            updated = replace(meal, notes=notes, **kwargs)
+            self.meals_by_user_id[user_id][index] = updated
+            return updated
+        raise ValueError("Прием пищи не найден.")
+
+    def delete_meal_entry(self, user_id, entry_id):
+        meals = self.meals_by_user_id.get(user_id, [])
+        for meal in meals:
+            if meal.entry_id == entry_id:
+                self.meals_by_user_id[user_id] = [item for item in meals if item.entry_id != entry_id]
                 return meal
         raise ValueError("Прием пищи не найден.")
 
@@ -491,6 +521,15 @@ class DummyHealthService:
         drafts = [draft for draft in drafts if not draft.is_water_only]
         drafts.sort(key=lambda draft: draft.created_at, reverse=True)
         return drafts[offset : offset + limit]
+
+    def get_latest_pending_meal_draft(self, user_id):
+        drafts = [
+            draft
+            for draft in self.meal_drafts_by_user_id.get(user_id, {}).values()
+            if draft.status == MealDraftStatus.PENDING and not draft.is_water_only
+        ]
+        drafts.sort(key=lambda draft: draft.created_at, reverse=True)
+        return drafts[0] if drafts else None
 
     def create_meal_draft_from_photo(self, user_id, **kwargs):
         draft = self._build_water_draft() if self.water_only_photo_mode else self._build_meal_draft()
@@ -594,6 +633,7 @@ class TelegramHealthBotTest(unittest.TestCase):
                 mini_app_url="https://staging-mini-app.example.com",
             ),
         )
+        self.bot._local_now = lambda: datetime(2026, 5, 6, 12, 42)
 
     def test_whoami_command_exposes_user_context(self) -> None:
         response = self.bot._route_command("/whoami", chat_id=777, user_id=42, app_user=self.service.users_by_telegram_id[42])
@@ -645,7 +685,7 @@ class TelegramHealthBotTest(unittest.TestCase):
 
     def test_help_for_regular_user_hides_admin_only_features(self) -> None:
         response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("Mini App: доступен только администратору.", response)
+        self.assertIn("Mini App: откройте через кнопку меню", response)
         self.assertNotIn("/finance_month", response)
         self.assertNotIn("/connect_drive", response)
         self.assertNotIn("/drive_status", response)
@@ -697,30 +737,34 @@ class TelegramHealthBotTest(unittest.TestCase):
     def test_history_command_returns_history_home(self) -> None:
         response = self.bot._route_command("/history", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("История", response)
-        self.assertIn("Приемы пищи", response)
-        self.assertIn("Распознавания", response)
+        self.assertIn("Исправить последнюю запись", response)
+        self.assertIn("Отменить последнюю запись", response)
+        self.assertIn("История и правки в приложении", response)
         self.assertNotIn("Неизвестная команда", response)
 
-    def test_history_meals_returns_recent_meals(self) -> None:
-        response = self.bot._route_command("/history_meals", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("Последние приемы пищи:", response)
-        self.assertIn("12:40 • Курица с рисом • 420 ккал", response)
-        self.assertIn("09:10 • Омлет • 310 ккал", response)
+    def test_history_fix_last_returns_last_meal_card(self) -> None:
+        response = self.bot._route_command("/history_fix_last", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Последняя запись", response)
+        self.assertIn("Название: Курица с рисом", response)
+        self.assertIn("Эту запись еще можно быстро исправить", response)
 
-    def test_history_recognitions_returns_statuses(self) -> None:
-        response = self.bot._route_command("/history_recognitions", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("Последние распознавания:", response)
-        self.assertIn("Ожидает решения", response)
-        self.assertIn("Сохранено", response)
-        self.assertIn("Отклонено", response)
+    def test_history_delete_last_returns_confirmation_prompt(self) -> None:
+        response = self.bot._route_command("/history_delete_last", app_user=self.service.users_by_telegram_id[77])
+        self.assertEqual(response, "Удалить последнюю запись?")
 
-    def test_history_empty_states_are_human_friendly(self) -> None:
-        self.service.meals_by_user_id[2] = []
-        self.service.meal_drafts_by_user_id[2] = {}
-        meals_response = self.bot._route_command("/history_meals", app_user=self.service.users_by_telegram_id[77])
-        recognitions_response = self.bot._route_command("/history_recognitions", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("Пока нет сохраненных приемов пищи", meals_response)
-        self.assertIn("Пока нет распознаваний", recognitions_response)
+    def test_history_falls_back_to_app_when_entry_is_outside_recovery_window(self) -> None:
+        self.bot._local_now = lambda: datetime(2026, 5, 6, 13, 10)
+        response = self.bot._route_command("/history_fix_last", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Полное редактирование доступно в приложении.", response)
+
+    def test_history_app_cta_text_is_human_friendly(self) -> None:
+        response = self.bot._route_command("/history_app", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Полная история, редактирование и удаление доступны в приложении.", response)
+
+    def test_history_delete_falls_back_to_app_when_no_recent_entry(self) -> None:
+        self.bot._local_now = lambda: datetime(2026, 5, 6, 12, 50)
+        response = self.bot._route_command("/history_delete_last", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Быстрое удаление доступно только", response)
 
     def test_history_reply_markup_is_used_for_history_commands(self) -> None:
         reply_markup = self.bot._reply_markup_for_response(
@@ -728,22 +772,9 @@ class TelegramHealthBotTest(unittest.TestCase):
             original_app_user=self.service.users_by_telegram_id[77],
             reply_user=self.service.users_by_telegram_id[77],
         )
-        self.assertIn("Приемы пищи", reply_markup)
-        self.assertIn("Распознавания", reply_markup)
-
-    def test_history_meals_reply_markup_shows_more_when_needed(self) -> None:
-        self.service.meals_by_user_id[2] = [
-            MealEntry(
-                entry_id=f"meal-{index}",
-                occurred_at=datetime(2026, 5, 6, 12, 0).replace(minute=index % 60),
-                title=f"Meal {index}",
-                calories=300 + index,
-                protein_g=20,
-            )
-            for index in range(12)
-        ]
-        reply_markup = self.bot._meal_history_reply_markup(self.service.users_by_telegram_id[77], offset=0)
-        self.assertIn("Показать еще", reply_markup)
+        self.assertIn("Исправить последнюю запись", reply_markup)
+        self.assertIn("Отменить последнюю запись", reply_markup)
+        self.assertIn("История и правки в приложении", reply_markup)
 
     def test_add_food_command_explains_photo_flow(self) -> None:
         response = self.bot._route_command("/add_food", app_user=self.service.users_by_telegram_id[77])
@@ -1342,7 +1373,8 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         self.assertEqual(calls[0][0], "setChatMenuButton")
         menu_button = json.loads(calls[0][1]["menu_button"])
-        self.assertEqual(menu_button["type"], "commands")
+        self.assertEqual(menu_button["type"], "web_app")
+        self.assertEqual(menu_button["text"], "Открыть приложение")
 
     def test_sync_mini_app_menu_button_registers_web_app_for_admin_chat(self) -> None:
         calls = []
@@ -1374,7 +1406,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[0][0], "setChatMenuButton")
         self.assertEqual(calls[0][1]["chat_id"], 778)
         menu_button = json.loads(calls[0][1]["menu_button"])
-        self.assertEqual(menu_button["type"], "commands")
+        self.assertEqual(menu_button["type"], "web_app")
+        self.assertEqual(menu_button["web_app"]["url"], "https://staging-mini-app.example.com")
 
     def test_document_imports_tbank_csv_in_user_scope(self) -> None:
         calls = []
@@ -1725,7 +1758,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Состав", calls[1][1]["reply_markup"])
         self.assertIn("Калории и БЖУ", calls[1][1]["reply_markup"])
 
-    def test_history_meal_open_callback_opens_meal_detail(self) -> None:
+    def test_history_last_meal_edit_callback_opens_edit_menu(self) -> None:
         calls = []
 
         def fake_telegram_api(method, params):
@@ -1736,7 +1769,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._handle_callback_query(
             {
                 "id": "query-1",
-                "data": "history_meal_open:meal-1:0",
+                "data": "history_last_meal_edit:meal-1",
                 "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                 "message": {
                     "message_id": 555,
@@ -1746,11 +1779,12 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         self.assertEqual(calls[1][0], "editMessageText")
-        self.assertIn("Прием пищи", calls[1][1]["text"])
-        self.assertIn("Название: Курица с рисом", calls[1][1]["text"])
-        self.assertIn("Назад к приемам пищи", calls[1][1]["reply_markup"])
+        self.assertIn("Что изменить в последней записи", calls[1][1]["text"])
+        self.assertIn("Название", calls[1][1]["reply_markup"])
+        self.assertIn("Время", calls[1][1]["reply_markup"])
+        self.assertIn("Калории и БЖУ", calls[1][1]["reply_markup"])
 
-    def test_history_recognition_open_callback_opens_pending_draft(self) -> None:
+    def test_history_last_meal_delete_prompt_callback_opens_confirmation(self) -> None:
         calls = []
 
         def fake_telegram_api(method, params):
@@ -1761,7 +1795,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._handle_callback_query(
             {
                 "id": "query-1",
-                "data": "history_draft_open:draft-1:0",
+                "data": "history_last_meal_delete_prompt:meal-1",
                 "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                 "message": {
                     "message_id": 555,
@@ -1771,10 +1805,11 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         self.assertEqual(calls[1][0], "editMessageText")
-        self.assertIn("Похоже, это Chicken rice bowl.", calls[1][1]["text"])
-        self.assertIn("Назад к распознаваниям", calls[1][1]["reply_markup"])
+        self.assertEqual(calls[1][1]["text"], "Удалить последнюю запись?")
+        self.assertIn("Да, удалить", calls[1][1]["reply_markup"])
+        self.assertIn("Отмена", calls[1][1]["reply_markup"])
 
-    def test_history_recognition_open_callback_opens_rejected_draft_detail(self) -> None:
+    def test_history_last_meal_delete_confirm_callback_deletes_entry(self) -> None:
         calls = []
 
         def fake_telegram_api(method, params):
@@ -1785,7 +1820,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._handle_callback_query(
             {
                 "id": "query-1",
-                "data": "history_draft_open:draft-3:0",
+                "data": "history_last_meal_delete_confirm:meal-1",
                 "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                 "message": {
                     "message_id": 555,
@@ -1795,10 +1830,10 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         self.assertEqual(calls[1][0], "editMessageText")
-        self.assertIn("Статус: Отклонено", calls[1][1]["text"])
-        self.assertIn("Распознать заново", calls[1][1]["reply_markup"])
+        self.assertIn("Последняя запись удалена.", calls[1][1]["text"])
+        self.assertEqual(len(self.service.meals_by_user_id[1]), 1)
 
-    def test_history_recognition_edit_callback_opens_edit_menu(self) -> None:
+    def test_history_last_meal_delete_cancel_callback_keeps_entry(self) -> None:
         calls = []
 
         def fake_telegram_api(method, params):
@@ -1809,7 +1844,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._handle_callback_query(
             {
                 "id": "query-1",
-                "data": "history_draft_edit:draft-1:0",
+                "data": "history_last_meal_delete_cancel:meal-1",
                 "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                 "message": {
                     "message_id": 555,
@@ -1819,9 +1854,10 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         self.assertEqual(calls[1][0], "editMessageText")
-        self.assertIn("Что изменить", calls[1][1]["text"])
+        self.assertIn("Последняя запись", calls[1][1]["text"])
+        self.assertEqual(len(self.service.meals_by_user_id[1]), 2)
 
-    def test_history_recognition_retry_callback_sends_new_photo_cta(self) -> None:
+    def test_meal_entry_edit_title_callback_prompts_for_input(self) -> None:
         calls = []
 
         def fake_telegram_api(method, params):
@@ -1832,7 +1868,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._handle_callback_query(
             {
                 "id": "query-1",
-                "data": "history_draft_retry:draft-3:0",
+                "data": "meal_entry_edit_title:meal-1",
                 "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                 "message": {
                     "message_id": 555,
@@ -1842,7 +1878,20 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         send_message = [item for item in calls if item[0] == "sendMessage"][-1]
-        self.assertIn("отправьте новое фото", send_message[1]["text"].lower())
+        self.assertIn("Введите новое название", send_message[1]["text"])
+
+    def test_pending_meal_entry_edit_input_updates_last_meal(self) -> None:
+        self.bot._set_pending_draft_edit_state(1, "meal-1", "title", target_type="meal")
+
+        response_text, response_markup = self.bot._handle_pending_draft_edit_input(
+            app_user=self.service.users_by_telegram_id[42],
+            raw_text="Исправленная курица",
+            normalized_text="Исправленная курица",
+        )
+
+        self.assertIn("Исправленная курица", response_text)
+        self.assertIn("Исправить", response_markup)
+        self.assertEqual(self.service.get_meal_entry(1, "meal-1").title, "Исправленная курица")
 
     def test_edit_title_flow_updates_draft_card(self) -> None:
         messages = []

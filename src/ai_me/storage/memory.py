@@ -267,6 +267,18 @@ class InMemoryStore:
     def add_meal(self, user_id: int, entry: MealEntry) -> None:
         self._meals.setdefault(user_id, []).append(entry)
 
+    def update_meal(self, user_id: int, entry: MealEntry) -> None:
+        entries = self._meals.setdefault(user_id, [])
+        for index, current in enumerate(entries):
+            if current.entry_id == entry.entry_id:
+                entries[index] = entry
+                return
+        raise ValueError("Прием пищи не найден: %s" % entry.entry_id)
+
+    def delete_meal(self, user_id: int, entry_id: str) -> None:
+        entries = self._meals.get(user_id, [])
+        self._meals[user_id] = [entry for entry in entries if entry.entry_id != entry_id]
+
     def list_meals(self, user_id: int, target_date: date) -> List[MealEntry]:
         meals = [entry for entry in self._meals.get(user_id, []) if entry.occurred_at.date() == target_date]
         return sorted(meals, key=lambda item: item.occurred_at)

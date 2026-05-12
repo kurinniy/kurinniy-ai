@@ -25,12 +25,17 @@ logger = logging.getLogger(__name__)
 
 class TelegramHealthBot:
     HISTORY_PAGE_SIZE = 10
+    HISTORY_EDIT_WINDOW = timedelta(minutes=15)
+    HISTORY_DELETE_WINDOW = timedelta(minutes=3)
     BUTTON_TO_COMMAND = {
         "Добавить еду": "/add_food",
         "Добавить воду": "/add_water",
         "История": "/history",
-        "Приемы пищи": "/history_meals",
-        "Распознавания": "/history_recognitions",
+        "Приемы пищи": "/history_app",
+        "Распознавания": "/history_app",
+        "Исправить последнюю запись": "/history_fix_last",
+        "Отменить последнюю запись": "/history_delete_last",
+        "История и правки в приложении": "/history_app",
         "Прогресс": "/progress",
         "Профиль": "/profile",
         "Как это работает": "/how_it_works",
@@ -439,111 +444,193 @@ class TelegramHealthBot:
             self._send_message(chat_id, "Черновик приема пищи отклонен: %s." % draft.title)
             return
 
-        if data.startswith("history_meals:"):
-            offset = int(data.split(":", 1)[1])
-            self._try_answer_callback_query(query_id, "Открываю историю приемов пищи.")
-            if isinstance(message_id, int):
-                self._try_edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=self._format_meal_history_text(app_user, offset=offset),
-                    reply_markup=self._meal_history_reply_markup(app_user, offset=offset),
-                )
-            return
-
-        if data.startswith("history_recognitions:"):
-            offset = int(data.split(":", 1)[1])
-            self._try_answer_callback_query(query_id, "Открываю историю распознаваний.")
-            if isinstance(message_id, int):
-                self._try_edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=self._format_recognition_history_text(app_user, offset=offset),
-                    reply_markup=self._recognition_history_reply_markup(app_user, offset=offset),
-                )
-            return
-
-        if data.startswith("history_meal_open:"):
-            _, entry_id, offset_text = data.split(":", 2)
-            self._try_answer_callback_query(query_id, "Открываю прием пищи.")
+        if data.startswith("history_last_meal_edit:"):
+            entry_id = data.split(":", 1)[1]
             try:
                 meal = self.service.get_meal_entry(app_user.user_id, entry_id)
             except ValueError as exc:
                 self._send_message(chat_id, str(exc))
                 return
+            if not self._is_meal_recoverable_for_edit(meal):
+                self._try_answer_callback_query(query_id, "Полные правки доступны в приложении.")
+                if isinstance(message_id, int):
+                    self._try_edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=self._history_edit_in_app_text(),
+                        reply_markup=self._history_app_inline_reply_markup(),
+                    )
+                return
+            self._clear_pending_draft_edit_state(app_user.user_id, draft_id=entry_id)
+            self._try_answer_callback_query(query_id, "Можно быстро исправить последнюю запись.")
             if isinstance(message_id, int):
                 self._try_edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
-                    text=self._format_meal_history_detail_text(meal),
-                    reply_markup=self._meal_history_detail_reply_markup(entry_id, offset=int(offset_text)),
+                    text=self._format_last_meal_edit_menu_text(meal),
+                    reply_markup=self._last_meal_edit_menu_reply_markup(meal),
                 )
             return
 
-        if data.startswith("history_meal_edit:"):
-            _, entry_id, _offset_text = data.split(":", 2)
-            self._try_answer_callback_query(query_id, "Редактирование сохраненных записей будет следующим этапом.")
-            self._send_message(chat_id, "Редактирование сохраненных приемов пищи появится на следующем этапе.")
-            return
-
-        if data.startswith("history_draft_open:"):
-            _, draft_id, offset_text = data.split(":", 2)
-            self._try_answer_callback_query(query_id, "Открываю распознавание.")
+        if data.startswith("history_last_meal_delete_confirm:"):
+            entry_id = data.split(":", 1)[1]
             try:
-                draft = self.service.get_meal_draft_any_status(app_user.user_id, draft_id)
+                meal = self.service.get_meal_entry(app_user.user_id, entry_id)
             except ValueError as exc:
                 self._send_message(chat_id, str(exc))
                 return
-            if isinstance(message_id, int):
-                if draft.status == MealDraftStatus.PENDING:
+            if not self._is_meal_recoverable_for_delete(meal):
+                self._try_answer_callback_query(query_id, "Быстрое удаление уже недоступно.")
+                if isinstance(message_id, int):
                     self._try_edit_message_text(
                         chat_id=chat_id,
                         message_id=message_id,
-                        text=self._format_meal_draft_card_text(draft),
-                        reply_markup=self._history_pending_draft_reply_markup(draft, offset=int(offset_text)),
+                        text=self._history_delete_in_app_text(),
+                        reply_markup=self._history_app_inline_reply_markup(),
                     )
-                else:
-                    self._try_edit_message_text(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=self._format_history_draft_detail_text(draft),
-                        reply_markup=self._history_draft_detail_reply_markup(draft, offset=int(offset_text)),
-                    )
-            return
-
-        if data.startswith("history_draft_edit:"):
-            _, draft_id, _offset_text = data.split(":", 2)
-            try:
-                draft = self.service.get_meal_draft_any_status(app_user.user_id, draft_id)
-            except ValueError as exc:
-                self._send_message(chat_id, str(exc))
                 return
-            if draft.status != MealDraftStatus.PENDING:
-                self._try_answer_callback_query(query_id, "Редактировать можно только ожидающие черновики.")
-                return
-            self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
-            self._try_answer_callback_query(query_id, "Можно исправить черновик.")
+            deleted = self.service.delete_meal_entry(app_user.user_id, entry_id)
+            self._try_answer_callback_query(query_id, "Последняя запись удалена.")
             if isinstance(message_id, int):
                 self._try_edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
-                    text=self._format_meal_draft_edit_menu_text(draft),
-                    reply_markup=self._meal_draft_edit_menu_reply_markup(draft),
+                    text=(
+                        "Последняя запись удалена.\n"
+                        "Удалено: %s.\n\n"
+                        "Если нужна история и более глубокие правки, откройте приложение."
+                    )
+                    % deleted.title,
+                    reply_markup=self._history_app_inline_reply_markup(),
                 )
             return
 
-        if data.startswith("history_draft_retry:"):
-            _, draft_id, _offset_text = data.split(":", 2)
+        if data.startswith("history_last_meal_delete_prompt:"):
+            entry_id = data.split(":", 1)[1]
             try:
-                draft = self.service.get_meal_draft_any_status(app_user.user_id, draft_id)
+                meal = self.service.get_meal_entry(app_user.user_id, entry_id)
             except ValueError as exc:
                 self._send_message(chat_id, str(exc))
                 return
-            self._try_answer_callback_query(query_id, "Отправьте фото блюда еще раз.")
+            if not self._is_meal_recoverable_for_delete(meal):
+                self._try_answer_callback_query(query_id, "Быстрое удаление уже недоступно.")
+                if isinstance(message_id, int):
+                    self._try_edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=self._history_delete_in_app_text(),
+                        reply_markup=self._history_app_inline_reply_markup(),
+                    )
+                return
+            self._try_answer_callback_query(query_id, "Подтвердите удаление.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="Удалить последнюю запись?",
+                    reply_markup=self._history_delete_confirm_reply_markup(entry_id),
+                )
+            return
+
+        if data.startswith("history_last_meal_delete_cancel:"):
+            entry_id = data.split(":", 1)[1]
+            try:
+                meal = self.service.get_meal_entry(app_user.user_id, entry_id)
+            except ValueError as exc:
+                self._send_message(chat_id, str(exc))
+                return
+            self._try_answer_callback_query(query_id, "Удаление отменено.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_last_meal_recovery_text(meal),
+                    reply_markup=self._last_meal_recovery_reply_markup(meal),
+                )
+            return
+
+        if data.startswith("meal_entry_edit_back:"):
+            entry_id = data.split(":", 1)[1]
+            try:
+                meal = self.service.get_meal_entry(app_user.user_id, entry_id)
+            except ValueError as exc:
+                self._send_message(chat_id, str(exc))
+                return
+            self._clear_pending_draft_edit_state(app_user.user_id, draft_id=entry_id)
+            self._try_answer_callback_query(query_id, "Возвращаю карточку записи.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_last_meal_recovery_text(meal),
+                    reply_markup=self._last_meal_recovery_reply_markup(meal),
+                )
+            return
+
+        if data.startswith("meal_entry_edit_title:"):
+            entry_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, entry_id, "title", target_type="meal")
+            self._try_answer_callback_query(query_id, "Введите новое название.")
             self._send_message(
                 chat_id,
-                "Распознавание для «%s» можно запустить заново: просто отправьте новое фото блюда одним сообщением."
-                % draft.title,
+                "Введите новое название для последней записи.",
+                reply_markup=self._meal_entry_edit_prompt_reply_markup(entry_id),
+            )
+            return
+
+        if data.startswith("meal_entry_edit_summary:"):
+            entry_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, entry_id, "summary", target_type="meal")
+            self._try_answer_callback_query(query_id, "Введите новый состав.")
+            self._send_message(
+                chat_id,
+                "Коротко опишите состав или комментарий к записи.",
+                reply_markup=self._meal_entry_edit_prompt_reply_markup(entry_id),
+            )
+            return
+
+        if data.startswith("meal_entry_edit_time:"):
+            entry_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, entry_id, "time", target_type="meal")
+            self._try_answer_callback_query(query_id, "Введите новое время.")
+            self._send_message(
+                chat_id,
+                "Введите новое время в формате HH:MM.",
+                reply_markup=self._meal_entry_time_prompt_reply_markup(entry_id),
+            )
+            return
+
+        if data.startswith("meal_entry_edit_time_now:"):
+            entry_id = data.split(":", 1)[1]
+            try:
+                meal = self.service.get_meal_entry(app_user.user_id, entry_id)
+            except ValueError as exc:
+                self._send_message(chat_id, str(exc))
+                return
+            updated = self.service.update_meal_entry(
+                app_user.user_id,
+                entry_id,
+                occurred_at=datetime.combine(meal.occurred_at.date(), self._local_now().time()),
+            )
+            self._clear_pending_draft_edit_state(app_user.user_id, draft_id=entry_id)
+            self._try_answer_callback_query(query_id, "Время обновлено.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_last_meal_recovery_text(updated),
+                    reply_markup=self._last_meal_recovery_reply_markup(updated),
+                )
+            return
+
+        if data.startswith("meal_entry_edit_macros:"):
+            entry_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, entry_id, "macros", target_type="meal")
+            self._try_answer_callback_query(query_id, "Введите новые калории и БЖУ.")
+            self._send_message(
+                chat_id,
+                "Введите 4 значения: калории белки жиры углеводы.\nНапример: 420 31 12 46",
+                reply_markup=self._meal_entry_edit_prompt_reply_markup(entry_id),
             )
             return
 
@@ -607,10 +694,12 @@ class TelegramHealthBot:
                 return self._handle_log_water(app_user, args)
             if command == "/history":
                 return self._history_home_text()
-            if command == "/history_meals":
-                return self._format_meal_history_text(app_user)
-            if command == "/history_recognitions":
-                return self._format_recognition_history_text(app_user)
+            if command == "/history_fix_last":
+                return self._history_fix_last_text(app_user)
+            if command == "/history_delete_last":
+                return self._history_delete_last_text(app_user)
+            if command == "/history_app":
+                return self._history_app_text()
             if command == "/progress":
                 return self._handle_progress(app_user)
             if command == "/profile":
@@ -1083,11 +1172,45 @@ class TelegramHealthBot:
     def _history_home_text() -> str:
         return (
             "История\n"
-            "Здесь можно быстро вернуться к недавним действиям.\n\n"
-            "Доступно:\n"
-            "- Приемы пищи\n"
-            "- Распознавания"
+            "В чате доступны только быстрые исправления последней записи.\n\n"
+            "Что можно сделать:\n"
+            "- Исправить последнюю запись\n"
+            "- Отменить последнюю запись\n"
+            "- История и правки в приложении"
         )
+
+    def _history_fix_last_text(self, app_user: AppUser) -> str:
+        pending_draft = self._get_latest_recoverable_pending_draft(app_user)
+        if pending_draft is not None:
+            return self._format_meal_draft_card_text(pending_draft)
+        meal = self._get_latest_recoverable_meal(app_user)
+        if meal is not None:
+            return self._format_last_meal_recovery_text(meal)
+        return self._history_edit_in_app_text()
+
+    def _history_delete_last_text(self, app_user: AppUser) -> str:
+        meal = self._get_latest_deletable_meal(app_user)
+        if meal is not None:
+            return "Удалить последнюю запись?"
+        return self._history_delete_in_app_text()
+
+    @staticmethod
+    def _history_edit_in_app_text() -> str:
+        return (
+            "Полное редактирование доступно в приложении.\n"
+            "Откройте историю и правки в Mini App."
+        )
+
+    @staticmethod
+    def _history_delete_in_app_text() -> str:
+        return (
+            "Быстрое удаление доступно только для самой последней записи и только сразу после сохранения.\n"
+            "Если нужна история и более глубокие правки, откройте приложение."
+        )
+
+    @staticmethod
+    def _history_app_text() -> str:
+        return "Полная история, редактирование и удаление доступны в приложении."
 
     @staticmethod
     def _coming_soon_text(section_name: str) -> str:
@@ -1131,72 +1254,56 @@ class TelegramHealthBot:
     def _handle_progress(self, app_user: AppUser) -> str:
         return self._handle_summary(app_user, [])
 
-    def _format_meal_history_text(self, app_user: AppUser, offset: int = 0) -> str:
-        meals = self.service.list_recent_meals(
-            app_user.user_id,
-            limit=self.HISTORY_PAGE_SIZE,
-            offset=offset,
-        )
-        if not meals:
-            return "Пока нет сохраненных приемов пищи. Отправьте первое фото еды."
-        lines = ["Последние приемы пищи:"]
-        for index, meal in enumerate(meals, start=offset + 1):
-            lines.append(
-                "%s. %s • %s • %s ккал"
-                % (index, meal.occurred_at.strftime("%H:%M"), meal.title, self._format_integer_with_spaces(meal.calories))
-            )
-        return "\n".join(lines)
-
-    def _format_recognition_history_text(self, app_user: AppUser, offset: int = 0) -> str:
-        drafts = self.service.list_recent_food_draft_history(
-            app_user.user_id,
-            limit=self.HISTORY_PAGE_SIZE,
-            offset=offset,
-        )
-        if not drafts:
-            return "Пока нет распознаваний. Просто отправьте фото еды в чат."
-        lines = ["Последние распознавания:"]
-        for index, draft in enumerate(drafts, start=offset + 1):
-            confidence_text = " • уверенность %s" % self._format_decimal(draft.confidence) if draft.confidence > 0 else ""
-            lines.extend(
-                [
-                    "%s. %s" % (index, draft.title),
-                    "   %s • %s%s"
-                    % (
-                        draft.occurred_at.strftime("%H:%M"),
-                        self._meal_draft_status_text(draft.status),
-                        confidence_text,
-                    ),
-                    "   %s" % draft.summary,
-                ]
-            )
-        return "\n".join(lines)
-
-    def _format_meal_history_detail_text(self, meal: MealEntry) -> str:
+    def _format_last_meal_recovery_text(self, meal: MealEntry) -> str:
         summary = self._extract_meal_summary_from_notes(meal)
         lines = [
-            "Прием пищи",
+            "Последняя запись",
             "Название: %s" % meal.title,
             "Время: %s" % meal.occurred_at.strftime("%d.%m.%Y %H:%M"),
-            "Калории: %s" % self._format_integer_with_spaces(meal.calories),
-            "Белок: %s г" % self._format_decimal(meal.protein_g),
-            "Жиры: %s г" % self._format_decimal(meal.fat_g),
-            "Углеводы: %s г" % self._format_decimal(meal.carbs_g),
+            "Калории: %s ккал" % self._format_integer_with_spaces(meal.calories),
+            "Б %s г • Ж %s г • У %s г"
+            % (
+                self._format_decimal(meal.protein_g),
+                self._format_decimal(meal.fat_g),
+                self._format_decimal(meal.carbs_g),
+            ),
         ]
         if summary:
             lines.append("Состав: %s" % summary)
+        lines.append("")
+        lines.append("Эту запись еще можно быстро исправить в чате.")
         return "\n".join(lines)
 
-    def _format_history_draft_detail_text(self, draft: MealPhotoDraft) -> str:
-        lines = [
-            "Распознавание",
-            "Название: %s" % draft.title,
-            "Время: %s" % draft.occurred_at.strftime("%d.%m.%Y %H:%M"),
-            "Статус: %s" % self._meal_draft_status_text(draft.status),
-            "Уверенность: %s" % self._format_decimal(draft.confidence),
-            "Состав: %s" % draft.summary,
-        ]
-        return "\n".join(lines)
+    @staticmethod
+    def _format_last_meal_edit_menu_text(meal: MealEntry) -> str:
+        return "Что изменить в последней записи «%s»?" % meal.title
+
+    def _get_latest_recoverable_pending_draft(self, app_user: AppUser) -> Optional[MealPhotoDraft]:
+        draft = self.service.get_latest_pending_meal_draft(app_user.user_id)
+        if draft is None:
+            return None
+        return draft if self._is_draft_recoverable_for_edit(draft) else None
+
+    def _get_latest_recoverable_meal(self, app_user: AppUser) -> Optional[MealEntry]:
+        meal = self.service.get_latest_meal(app_user.user_id)
+        if meal is None:
+            return None
+        return meal if self._is_meal_recoverable_for_edit(meal) else None
+
+    def _get_latest_deletable_meal(self, app_user: AppUser) -> Optional[MealEntry]:
+        meal = self.service.get_latest_meal(app_user.user_id)
+        if meal is None:
+            return None
+        return meal if self._is_meal_recoverable_for_delete(meal) else None
+
+    def _is_draft_recoverable_for_edit(self, draft: MealPhotoDraft) -> bool:
+        return self._local_now() - draft.created_at <= self.HISTORY_EDIT_WINDOW
+
+    def _is_meal_recoverable_for_edit(self, meal: MealEntry) -> bool:
+        return self._local_now() - meal.occurred_at <= self.HISTORY_EDIT_WINDOW
+
+    def _is_meal_recoverable_for_delete(self, meal: MealEntry) -> bool:
+        return self._local_now() - meal.occurred_at <= self.HISTORY_DELETE_WINDOW
 
     @staticmethod
     def _parse_water_amount(raw_value: str) -> int:
@@ -1793,16 +1900,11 @@ class TelegramHealthBot:
     def _sync_mini_app_menu_button(self, chat_id: Optional[int] = None, app_user: Optional[AppUser] = None) -> None:
         if not self.settings.mini_app_url:
             return
-        if app_user is not None and app_user.has_admin_access:
-            menu_button = {
-                "type": "web_app",
-                "text": "Открыть приложение",
-                "web_app": {"url": self.settings.mini_app_url},
-            }
-        else:
-            menu_button = {
-                "type": "commands",
-            }
+        menu_button = {
+            "type": "web_app",
+            "text": "Открыть приложение",
+            "web_app": {"url": self.settings.mini_app_url},
+        }
         params = {
             "menu_button": json.dumps(menu_button, ensure_ascii=False),
         }
@@ -1816,9 +1918,7 @@ class TelegramHealthBot:
     def _mini_app_help_line(self, app_user: AppUser) -> str:
         if not self.settings.mini_app_url:
             return "Mini App: пока не настроен в этом окружении."
-        if app_user.has_admin_access:
-            return "Mini App: откройте через кнопку меню «Открыть приложение»."
-        return "Mini App: доступен только администратору."
+        return "Mini App: откройте через кнопку меню «Открыть приложение»."
 
     @classmethod
     def _normalize_command_text(cls, text: str) -> str:
@@ -1838,8 +1938,14 @@ class TelegramHealthBot:
             return self._water_prompt_reply_markup()
         if text.startswith("/water "):
             return self._water_result_reply_markup()
-        if text in {"/history", "/history_meals", "/history_recognitions"}:
+        if text == "/history":
             return self._history_reply_markup()
+        if text == "/history_app":
+            return self._history_app_inline_reply_markup()
+        if text == "/history_fix_last":
+            return self._history_fix_reply_markup(reply_user)
+        if text == "/history_delete_last":
+            return self._history_delete_reply_markup(reply_user)
         if text in {
             "/start",
             "/help",
@@ -1903,21 +2009,38 @@ class TelegramHealthBot:
             {
                 "resize_keyboard": True,
                 "keyboard": [
-                    [{"text": "Приемы пищи"}, {"text": "Распознавания"}],
+                    [{"text": "Исправить последнюю запись"}],
+                    [{"text": "Отменить последнюю запись"}],
+                    [{"text": "История и правки в приложении"}],
                     [{"text": "Назад"}],
                 ],
             },
             ensure_ascii=False,
         )
 
-    @staticmethod
-    def _history_inline_home_reply_markup() -> str:
+    def _history_fix_reply_markup(self, app_user: AppUser) -> Optional[str]:
+        pending_draft = self._get_latest_recoverable_pending_draft(app_user)
+        if pending_draft is not None:
+            return self._meal_draft_card_reply_markup(pending_draft)
+        meal = self._get_latest_recoverable_meal(app_user)
+        if meal is not None:
+            return self._last_meal_recovery_reply_markup(meal)
+        return self._history_app_inline_reply_markup()
+
+    def _history_delete_reply_markup(self, app_user: AppUser) -> Optional[str]:
+        meal = self._get_latest_deletable_meal(app_user)
+        if meal is not None:
+            return self._history_delete_confirm_reply_markup(meal.entry_id)
+        return self._history_app_inline_reply_markup()
+
+    def _history_app_inline_reply_markup(self) -> Optional[str]:
+        if not self.settings.mini_app_url:
+            return None
         return json.dumps(
             {
                 "inline_keyboard": [
                     [
-                        {"text": "Приемы пищи", "callback_data": "history_meals:0"},
-                        {"text": "Распознавания", "callback_data": "history_recognitions:0"},
+                        {"text": "Открыть приложение", "web_app": {"url": self.settings.mini_app_url}},
                     ]
                 ]
             },
@@ -1948,96 +2071,6 @@ class TelegramHealthBot:
             },
             ensure_ascii=False,
         )
-
-    def _meal_history_reply_markup(self, app_user: AppUser, offset: int = 0) -> str:
-        meals = self.service.list_recent_meals(
-            app_user.user_id,
-            limit=self.HISTORY_PAGE_SIZE,
-            offset=offset,
-        )
-        if not meals:
-            return self._history_inline_home_reply_markup()
-        inline_keyboard = []
-        for index, meal in enumerate(meals, start=offset + 1):
-            inline_keyboard.append(
-                [
-                    {
-                        "text": "Открыть #%s" % index,
-                        "callback_data": "history_meal_open:%s:%s" % (meal.entry_id, offset),
-                    },
-                    {
-                        "text": "Изменить #%s" % index,
-                        "callback_data": "history_meal_edit:%s:%s" % (meal.entry_id, offset),
-                    },
-                ]
-            )
-        if len(meals) == self.HISTORY_PAGE_SIZE:
-            inline_keyboard.append(
-                [
-                    {
-                        "text": "Показать еще",
-                        "callback_data": "history_meals:%s" % (offset + self.HISTORY_PAGE_SIZE),
-                    }
-                ]
-            )
-        return json.dumps({"inline_keyboard": inline_keyboard}, ensure_ascii=False)
-
-    def _recognition_history_reply_markup(self, app_user: AppUser, offset: int = 0) -> str:
-        drafts = self.service.list_recent_food_draft_history(
-            app_user.user_id,
-            limit=self.HISTORY_PAGE_SIZE,
-            offset=offset,
-        )
-        if not drafts:
-            return self._history_inline_home_reply_markup()
-        inline_keyboard = []
-        for index, draft in enumerate(drafts, start=offset + 1):
-            row = [
-                {
-                    "text": "Открыть #%s" % index,
-                    "callback_data": "history_draft_open:%s:%s" % (draft.draft_id, offset),
-                }
-            ]
-            if draft.status == MealDraftStatus.PENDING:
-                row.extend(
-                    [
-                        {
-                            "text": "Сохранить #%s" % index,
-                            "callback_data": "meal_confirm:%s" % draft.draft_id,
-                        },
-                        {
-                            "text": "Изменить #%s" % index,
-                            "callback_data": "history_draft_edit:%s:%s" % (draft.draft_id, offset),
-                        },
-                    ]
-                )
-            elif draft.status == MealDraftStatus.REJECTED:
-                row.append(
-                    {
-                        "text": "Распознать заново #%s" % index,
-                        "callback_data": "history_draft_retry:%s:%s" % (draft.draft_id, offset),
-                    }
-                )
-            inline_keyboard.append(row)
-            if draft.status == MealDraftStatus.PENDING:
-                inline_keyboard.append(
-                    [
-                        {
-                            "text": "Отклонить #%s" % index,
-                            "callback_data": "meal_reject:%s" % draft.draft_id,
-                        }
-                    ]
-                )
-        if len(drafts) == self.HISTORY_PAGE_SIZE:
-            inline_keyboard.append(
-                [
-                    {
-                        "text": "Показать еще",
-                        "callback_data": "history_recognitions:%s" % (offset + self.HISTORY_PAGE_SIZE),
-                    }
-                ]
-            )
-        return json.dumps({"inline_keyboard": inline_keyboard}, ensure_ascii=False)
 
     @staticmethod
     def _is_private_chat(chat: Dict[str, object]) -> bool:
@@ -2099,8 +2132,9 @@ class TelegramHealthBot:
             "/add_food",
             "/add_water",
             "/history",
-            "/history_meals",
-            "/history_recognitions",
+            "/history_fix_last",
+            "/history_delete_last",
+            "/history_app",
             "/progress",
             "/profile",
             "/how_it_works",
@@ -2109,8 +2143,30 @@ class TelegramHealthBot:
             return None
         draft_id = state["draft_id"]
         field = state["field"]
+        target_type = state.get("target_type", "draft")
         try:
-            if field == "title":
+            if target_type == "meal" and field == "title":
+                draft = self.service.update_meal_entry(app_user.user_id, draft_id, title=raw_text.strip())
+            elif target_type == "meal" and field == "summary":
+                draft = self.service.update_meal_entry(app_user.user_id, draft_id, summary=raw_text.strip())
+            elif target_type == "meal" and field == "time":
+                current_meal = self.service.get_meal_entry(app_user.user_id, draft_id)
+                draft = self.service.update_meal_entry(
+                    app_user.user_id,
+                    draft_id,
+                    occurred_at=self._parse_meal_time(raw_text, current_meal.occurred_at),
+                )
+            elif target_type == "meal" and field == "macros":
+                calories, protein_g, fat_g, carbs_g = self._parse_draft_macros(raw_text)
+                draft = self.service.update_meal_entry(
+                    app_user.user_id,
+                    draft_id,
+                    calories=calories,
+                    protein_g=protein_g,
+                    fat_g=fat_g,
+                    carbs_g=carbs_g,
+                )
+            elif field == "title":
                 draft = self.service.update_meal_draft(app_user.user_id, draft_id, title=raw_text.strip())
             elif field == "summary":
                 draft = self.service.update_meal_draft(app_user.user_id, draft_id, summary=raw_text.strip())
@@ -2136,12 +2192,19 @@ class TelegramHealthBot:
             else:
                 return None
         except ValueError as exc:
-            return str(exc), self._draft_edit_prompt_reply_markup(draft_id)
+            reply_markup = (
+                self._meal_entry_edit_prompt_reply_markup(draft_id)
+                if target_type == "meal"
+                else self._draft_edit_prompt_reply_markup(draft_id)
+            )
+            return str(exc), reply_markup
         self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+        if target_type == "meal":
+            return self._format_last_meal_recovery_text(draft), self._last_meal_recovery_reply_markup(draft)
         return self._format_meal_draft_card_text(draft), self._meal_draft_card_reply_markup(draft)
 
-    def _set_pending_draft_edit_state(self, user_id: int, draft_id: str, field: str) -> None:
-        self._pending_draft_edit_states[user_id] = {"draft_id": draft_id, "field": field}
+    def _set_pending_draft_edit_state(self, user_id: int, draft_id: str, field: str, target_type: str = "draft") -> None:
+        self._pending_draft_edit_states[user_id] = {"draft_id": draft_id, "field": field, "target_type": target_type}
 
     def _clear_pending_draft_edit_state(self, user_id: int, draft_id: Optional[str] = None) -> None:
         state = self._pending_draft_edit_states.get(user_id)
@@ -2301,15 +2364,13 @@ class TelegramHealthBot:
         )
 
     @staticmethod
-    def _meal_history_detail_reply_markup(entry_id: str, offset: int) -> str:
+    def _last_meal_recovery_reply_markup(meal: MealEntry) -> str:
         return json.dumps(
             {
                 "inline_keyboard": [
                     [
-                        {"text": "Изменить", "callback_data": "history_meal_edit:%s:%s" % (entry_id, offset)},
-                    ],
-                    [
-                        {"text": "Назад к приемам пищи", "callback_data": "history_meals:%s" % offset},
+                        {"text": "Исправить", "callback_data": "history_last_meal_edit:%s" % meal.entry_id},
+                        {"text": "Отменить запись", "callback_data": "history_last_meal_delete_prompt:%s" % meal.entry_id},
                     ],
                 ]
             },
@@ -2317,19 +2378,13 @@ class TelegramHealthBot:
         )
 
     @staticmethod
-    def _history_pending_draft_reply_markup(draft: MealPhotoDraft, offset: int) -> str:
+    def _history_delete_confirm_reply_markup(entry_id: str) -> str:
         return json.dumps(
             {
                 "inline_keyboard": [
                     [
-                        {"text": "Сохранить", "callback_data": "meal_confirm:%s" % draft.draft_id},
-                        {"text": "Изменить", "callback_data": "history_draft_edit:%s:%s" % (draft.draft_id, offset)},
-                    ],
-                    [
-                        {"text": "Отклонить", "callback_data": "meal_reject:%s" % draft.draft_id},
-                    ],
-                    [
-                        {"text": "Назад к распознаваниям", "callback_data": "history_recognitions:%s" % offset},
+                        {"text": "Да, удалить", "callback_data": "history_last_meal_delete_confirm:%s" % entry_id},
+                        {"text": "Отмена", "callback_data": "history_last_meal_delete_cancel:%s" % entry_id},
                     ],
                 ]
             },
@@ -2337,31 +2392,50 @@ class TelegramHealthBot:
         )
 
     @staticmethod
-    def _history_draft_detail_reply_markup(draft: MealPhotoDraft, offset: int) -> str:
-        rows = []
-        if draft.status == MealDraftStatus.REJECTED:
-            rows.append(
-                [
-                    {
-                        "text": "Распознать заново",
-                        "callback_data": "history_draft_retry:%s:%s" % (draft.draft_id, offset),
-                    }
+    def _last_meal_edit_menu_reply_markup(meal: MealEntry) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Название", "callback_data": "meal_entry_edit_title:%s" % meal.entry_id},
+                        {"text": "Время", "callback_data": "meal_entry_edit_time:%s" % meal.entry_id},
+                    ],
+                    [
+                        {"text": "Состав", "callback_data": "meal_entry_edit_summary:%s" % meal.entry_id},
+                        {"text": "Калории и БЖУ", "callback_data": "meal_entry_edit_macros:%s" % meal.entry_id},
+                    ],
+                    [
+                        {"text": "Назад к записи", "callback_data": "meal_entry_edit_back:%s" % meal.entry_id},
+                    ],
                 ]
-            )
-        rows.append(
-            [
-                {"text": "Назад к распознаваниям", "callback_data": "history_recognitions:%s" % offset},
-            ]
+            },
+            ensure_ascii=False,
         )
-        return json.dumps({"inline_keyboard": rows}, ensure_ascii=False)
 
     @staticmethod
-    def _meal_draft_status_text(status: MealDraftStatus) -> str:
-        return {
-            MealDraftStatus.PENDING: "Ожидает решения",
-            MealDraftStatus.CONFIRMED: "Сохранено",
-            MealDraftStatus.REJECTED: "Отклонено",
-        }[status]
+    def _meal_entry_edit_prompt_reply_markup(entry_id: str) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [{"text": "Назад к записи", "callback_data": "meal_entry_edit_back:%s" % entry_id}],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _meal_entry_time_prompt_reply_markup(entry_id: str) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Сейчас", "callback_data": "meal_entry_edit_time_now:%s" % entry_id},
+                        {"text": "Назад к записи", "callback_data": "meal_entry_edit_back:%s" % entry_id},
+                    ]
+                ]
+            },
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _extract_meal_summary_from_notes(meal: MealEntry) -> str:
@@ -2399,6 +2473,14 @@ class TelegramHealthBot:
             raise ValueError("Введите время в формате HH:MM, например: 13:45") from exc
         return datetime.combine(draft.occurred_at.date(), parsed_time)
 
+    @staticmethod
+    def _parse_meal_time(raw_text: str, occurred_at: datetime) -> datetime:
+        try:
+            parsed_time = datetime.strptime(raw_text.strip(), "%H:%M").time()
+        except ValueError as exc:
+            raise ValueError("Введите время в формате HH:MM, например: 13:45") from exc
+        return datetime.combine(occurred_at.date(), parsed_time)
+
     def _handle_pending_custom_water_input(
         self,
         app_user: Optional[AppUser],
@@ -2414,8 +2496,9 @@ class TelegramHealthBot:
             "/add_water",
             "/add_food",
             "/history",
-            "/history_meals",
-            "/history_recognitions",
+            "/history_fix_last",
+            "/history_delete_last",
+            "/history_app",
             "/progress",
             "/profile",
             "/how_it_works",
