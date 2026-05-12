@@ -29,10 +29,15 @@ class DummyHealthService:
         self.health_import_files_by_user_id = {}
         self.water_only_photo_mode = False
         self.logged_water_entries = []
+        self.meals_by_user_id = {
+            1: self._build_recent_meals(),
+            2: self._build_recent_meals(),
+            3: self._build_recent_meals(),
+        }
         self.meal_drafts_by_user_id = {
-            1: {"draft-1": self._build_meal_draft()},
-            2: {"draft-1": self._build_meal_draft()},
-            3: {"draft-1": self._build_meal_draft()},
+            1: self._build_recent_drafts(),
+            2: self._build_recent_drafts(),
+            3: self._build_recent_drafts(),
         }
         self.users_by_telegram_id = {
             42: AppUser(
@@ -82,6 +87,56 @@ class DummyHealthService:
                 )
             ],
         )
+
+    def _build_recent_meals(self):
+        return [
+            MealEntry(
+                entry_id="meal-1",
+                occurred_at=datetime(2026, 5, 6, 12, 40),
+                title="Курица с рисом",
+                calories=420,
+                protein_g=35,
+                fat_g=12,
+                carbs_g=41,
+                notes=json.dumps({"summary": "Курица, рис и овощи"}),
+            ),
+            MealEntry(
+                entry_id="meal-2",
+                occurred_at=datetime(2026, 5, 6, 9, 10),
+                title="Омлет",
+                calories=310,
+                protein_g=24,
+                fat_g=18,
+                carbs_g=4,
+                notes=json.dumps({"summary": "Яйца и сыр"}),
+            ),
+        ]
+
+    def _build_recent_drafts(self):
+        pending = self._build_meal_draft()
+        confirmed = replace(
+            pending,
+            draft_id="draft-2",
+            created_at=datetime(2026, 5, 6, 11, 20),
+            occurred_at=datetime(2026, 5, 6, 11, 20),
+            title="Паста с индейкой",
+            summary="Паста, индейка и соус",
+            status=MealDraftStatus.CONFIRMED,
+        )
+        rejected = replace(
+            pending,
+            draft_id="draft-3",
+            created_at=datetime(2026, 5, 6, 8, 45),
+            occurred_at=datetime(2026, 5, 6, 8, 45),
+            title="Тост с авокадо",
+            summary="Тост, авокадо и яйцо",
+            status=MealDraftStatus.REJECTED,
+        )
+        return {
+            pending.draft_id: pending,
+            confirmed.draft_id: confirmed,
+            rejected.draft_id: rejected,
+        }
 
     def _build_water_draft(self) -> MealPhotoDraft:
         return MealPhotoDraft(
@@ -400,17 +455,17 @@ class DummyHealthService:
         )
 
     def list_meals(self, user_id, target_date):
-        return [
-            MealEntry(
-                entry_id="meal-1",
-                occurred_at=datetime(2026, 5, 6, 12, 0),
-                title="Курица с рисом",
-                calories=620,
-                protein_g=38,
-                fat_g=18,
-                carbs_g=71,
-            )
-        ]
+        return list(self.meals_by_user_id.get(user_id, []))
+
+    def list_recent_meals(self, user_id, limit=10, offset=0, lookback_days=365):
+        meals = sorted(self.meals_by_user_id.get(user_id, []), key=lambda meal: meal.occurred_at, reverse=True)
+        return meals[offset : offset + limit]
+
+    def get_meal_entry(self, user_id, entry_id, lookback_days=365):
+        for meal in self.meals_by_user_id.get(user_id, []):
+            if meal.entry_id == entry_id:
+                return meal
+        raise ValueError("Прием пищи не найден.")
 
     def build_step_progress_insight(self, user_id, reference_date, target_steps=None):
         return StepProgressInsight(
@@ -431,6 +486,12 @@ class DummyHealthService:
         drafts = list(self.meal_drafts_by_user_id.get(user_id, {}).values())
         return [draft for draft in drafts if draft.status == status]
 
+    def list_recent_food_draft_history(self, user_id, limit=10, offset=0):
+        drafts = list(self.meal_drafts_by_user_id.get(user_id, {}).values())
+        drafts = [draft for draft in drafts if not draft.is_water_only]
+        drafts.sort(key=lambda draft: draft.created_at, reverse=True)
+        return drafts[offset : offset + limit]
+
     def create_meal_draft_from_photo(self, user_id, **kwargs):
         draft = self._build_water_draft() if self.water_only_photo_mode else self._build_meal_draft()
         self.meal_drafts_by_user_id.setdefault(user_id, {})[draft.draft_id] = draft
@@ -440,6 +501,9 @@ class DummyHealthService:
         if self.water_only_photo_mode:
             return self._build_water_draft()
         return self.meal_drafts_by_user_id[user_id][draft_id]
+
+    def get_meal_draft_any_status(self, user_id, draft_id):
+        return self.get_meal_draft(user_id, draft_id)
 
     def update_meal_draft(self, user_id, draft_id, **kwargs):
         draft = self.get_meal_draft(user_id, draft_id)
@@ -471,6 +535,7 @@ class DummyHealthService:
                 water_ml=500,
             )
         draft = self.meal_drafts_by_user_id[user_id][draft_id]
+        self.meal_drafts_by_user_id[user_id][draft_id] = replace(draft, status=MealDraftStatus.CONFIRMED)
         return PhotoLogResult(
             entry_id="meal-1",
             kind=PhotoLogKind.MEAL,
@@ -482,7 +547,9 @@ class DummyHealthService:
     def reject_meal_draft(self, user_id, draft_id):
         if self.water_only_photo_mode:
             return type("Draft", (), {"title": "Вода"})()
-        return self.meal_drafts_by_user_id[user_id][draft_id]
+        draft = self.meal_drafts_by_user_id[user_id][draft_id]
+        self.meal_drafts_by_user_id[user_id][draft_id] = replace(draft, status=MealDraftStatus.REJECTED)
+        return draft
 
     def import_tbank_csv(self, user_id, file_bytes: bytes, source_file_name: str):
         self.last_import = (user_id, file_bytes, source_file_name)
@@ -627,10 +694,56 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("1. Отправьте фото еды", response)
         self.assertIn("4. После подтверждения запись попадет", response)
 
-    def test_placeholder_sections_do_not_fall_back_to_unknown_command(self) -> None:
+    def test_history_command_returns_history_home(self) -> None:
         response = self.bot._route_command("/history", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("Этот раздел скоро появится", response)
+        self.assertIn("История", response)
+        self.assertIn("Приемы пищи", response)
+        self.assertIn("Распознавания", response)
         self.assertNotIn("Неизвестная команда", response)
+
+    def test_history_meals_returns_recent_meals(self) -> None:
+        response = self.bot._route_command("/history_meals", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Последние приемы пищи:", response)
+        self.assertIn("12:40 • Курица с рисом • 420 ккал", response)
+        self.assertIn("09:10 • Омлет • 310 ккал", response)
+
+    def test_history_recognitions_returns_statuses(self) -> None:
+        response = self.bot._route_command("/history_recognitions", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Последние распознавания:", response)
+        self.assertIn("Ожидает решения", response)
+        self.assertIn("Сохранено", response)
+        self.assertIn("Отклонено", response)
+
+    def test_history_empty_states_are_human_friendly(self) -> None:
+        self.service.meals_by_user_id[2] = []
+        self.service.meal_drafts_by_user_id[2] = {}
+        meals_response = self.bot._route_command("/history_meals", app_user=self.service.users_by_telegram_id[77])
+        recognitions_response = self.bot._route_command("/history_recognitions", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Пока нет сохраненных приемов пищи", meals_response)
+        self.assertIn("Пока нет распознаваний", recognitions_response)
+
+    def test_history_reply_markup_is_used_for_history_commands(self) -> None:
+        reply_markup = self.bot._reply_markup_for_response(
+            text="/history",
+            original_app_user=self.service.users_by_telegram_id[77],
+            reply_user=self.service.users_by_telegram_id[77],
+        )
+        self.assertIn("Приемы пищи", reply_markup)
+        self.assertIn("Распознавания", reply_markup)
+
+    def test_history_meals_reply_markup_shows_more_when_needed(self) -> None:
+        self.service.meals_by_user_id[2] = [
+            MealEntry(
+                entry_id=f"meal-{index}",
+                occurred_at=datetime(2026, 5, 6, 12, 0).replace(minute=index % 60),
+                title=f"Meal {index}",
+                calories=300 + index,
+                protein_g=20,
+            )
+            for index in range(12)
+        ]
+        reply_markup = self.bot._meal_history_reply_markup(self.service.users_by_telegram_id[77], offset=0)
+        self.assertIn("Показать еще", reply_markup)
 
     def test_add_food_command_explains_photo_flow(self) -> None:
         response = self.bot._route_command("/add_food", app_user=self.service.users_by_telegram_id[77])
@@ -1611,6 +1724,125 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Время", calls[1][1]["reply_markup"])
         self.assertIn("Состав", calls[1][1]["reply_markup"])
         self.assertIn("Калории и БЖУ", calls[1][1]["reply_markup"])
+
+    def test_history_meal_open_callback_opens_meal_detail(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "history_meal_open:meal-1:0",
+                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 777, "type": "private"},
+                },
+            }
+        )
+
+        self.assertEqual(calls[1][0], "editMessageText")
+        self.assertIn("Прием пищи", calls[1][1]["text"])
+        self.assertIn("Название: Курица с рисом", calls[1][1]["text"])
+        self.assertIn("Назад к приемам пищи", calls[1][1]["reply_markup"])
+
+    def test_history_recognition_open_callback_opens_pending_draft(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "history_draft_open:draft-1:0",
+                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 777, "type": "private"},
+                },
+            }
+        )
+
+        self.assertEqual(calls[1][0], "editMessageText")
+        self.assertIn("Похоже, это Chicken rice bowl.", calls[1][1]["text"])
+        self.assertIn("Назад к распознаваниям", calls[1][1]["reply_markup"])
+
+    def test_history_recognition_open_callback_opens_rejected_draft_detail(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "history_draft_open:draft-3:0",
+                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 777, "type": "private"},
+                },
+            }
+        )
+
+        self.assertEqual(calls[1][0], "editMessageText")
+        self.assertIn("Статус: Отклонено", calls[1][1]["text"])
+        self.assertIn("Распознать заново", calls[1][1]["reply_markup"])
+
+    def test_history_recognition_edit_callback_opens_edit_menu(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "history_draft_edit:draft-1:0",
+                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 777, "type": "private"},
+                },
+            }
+        )
+
+        self.assertEqual(calls[1][0], "editMessageText")
+        self.assertIn("Что изменить", calls[1][1]["text"])
+
+    def test_history_recognition_retry_callback_sends_new_photo_cta(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "history_draft_retry:draft-3:0",
+                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 777, "type": "private"},
+                },
+            }
+        )
+
+        send_message = [item for item in calls if item[0] == "sendMessage"][-1]
+        self.assertIn("отправьте новое фото", send_message[1]["text"].lower())
 
     def test_edit_title_flow_updates_draft_card(self) -> None:
         messages = []

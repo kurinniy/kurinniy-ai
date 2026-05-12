@@ -756,6 +756,66 @@ class HealthServiceTest(unittest.TestCase):
         self.assertTrue(digest.commentary_data.patterns.most_variable_macro in {"белок", "жиры", "углеводы"})
         self.assertIn("Самое выделяющееся блюдо недели", digest.commentary)
 
+    def test_list_recent_meals_returns_latest_first(self) -> None:
+        self.service.log_meal(
+            self.user.user_id,
+            MealEntry(
+                entry_id="meal-1",
+                occurred_at=datetime(2026, 5, 5, 9, 0),
+                title="Breakfast",
+                calories=450,
+                protein_g=25,
+            ),
+        )
+        self.service.log_meal(
+            self.user.user_id,
+            MealEntry(
+                entry_id="meal-2",
+                occurred_at=datetime(2026, 5, 6, 13, 0),
+                title="Lunch",
+                calories=700,
+                protein_g=40,
+            ),
+        )
+
+        meals = self.service.list_recent_meals(self.user.user_id, limit=2, offset=0, lookback_days=3650)
+
+        self.assertEqual([meal.entry_id for meal in meals], ["meal-2", "meal-1"])
+        self.assertEqual(self.service.get_meal_entry(self.user.user_id, "meal-1", lookback_days=3650).title, "Breakfast")
+
+    def test_list_recent_food_draft_history_includes_all_statuses(self) -> None:
+        first = self.service.create_meal_draft_from_photo(
+            self.user.user_id,
+            photo_file_id="file-1",
+            photo_unique_id="unique-1",
+            image_bytes=b"meal-photo-1",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 9, 0),
+        )
+        second = self.service.create_meal_draft_from_photo(
+            self.user.user_id,
+            photo_file_id="file-2",
+            photo_unique_id="unique-2",
+            image_bytes=b"meal-photo-2",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 11, 0),
+        )
+        third = self.service.create_meal_draft_from_photo(
+            self.user.user_id,
+            photo_file_id="file-3",
+            photo_unique_id="unique-3",
+            image_bytes=b"meal-photo-3",
+            mime_type="image/jpeg",
+            occurred_at=datetime(2026, 5, 6, 13, 0),
+        )
+        self.service.reject_meal_draft(self.user.user_id, first.draft_id)
+        self.service.confirm_meal_draft(self.user.user_id, second.draft_id)
+
+        drafts = self.service.list_recent_food_draft_history(self.user.user_id, limit=10, offset=0)
+
+        self.assertEqual({draft.status for draft in drafts}, {MealDraftStatus.PENDING, MealDraftStatus.CONFIRMED, MealDraftStatus.REJECTED})
+        self.assertEqual(self.service.get_meal_draft_any_status(self.user.user_id, third.draft_id).status, MealDraftStatus.PENDING)
+
 
 if __name__ == "__main__":
     unittest.main()

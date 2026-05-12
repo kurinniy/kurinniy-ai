@@ -678,6 +678,59 @@ class HealthService:
     ) -> List[MealPhotoDraft]:
         return self.store.list_meal_drafts(user_id, status=status)
 
+    def get_meal_draft_any_status(self, user_id: int, draft_id: str) -> MealPhotoDraft:
+        draft = self.store.get_meal_draft(user_id, draft_id)
+        if draft is None:
+            raise ValueError("Черновик приема пищи не найден: %s" % draft_id)
+        return draft
+
+    def list_recent_food_draft_history(
+        self,
+        user_id: int,
+        *,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> List[MealPhotoDraft]:
+        drafts: List[MealPhotoDraft] = []
+        for status in (
+            MealDraftStatus.PENDING,
+            MealDraftStatus.CONFIRMED,
+            MealDraftStatus.REJECTED,
+        ):
+            drafts.extend(self.store.list_meal_drafts(user_id, status=status))
+        drafts = [draft for draft in drafts if not draft.is_water_only]
+        drafts.sort(key=lambda draft: draft.created_at, reverse=True)
+        return drafts[offset : offset + limit]
+
+    def list_recent_meals(
+        self,
+        user_id: int,
+        *,
+        limit: int = 10,
+        offset: int = 0,
+        lookback_days: int = 365,
+    ) -> List[MealEntry]:
+        end_date = date.today()
+        start_date = end_date - timedelta(days=lookback_days)
+        meals = self.store.list_meals_in_range(user_id, start_date, end_date)
+        meals.sort(key=lambda meal: meal.occurred_at, reverse=True)
+        return meals[offset : offset + limit]
+
+    def get_meal_entry(
+        self,
+        user_id: int,
+        entry_id: str,
+        *,
+        lookback_days: int = 365,
+    ) -> MealEntry:
+        end_date = date.today()
+        start_date = end_date - timedelta(days=lookback_days)
+        meals = self.store.list_meals_in_range(user_id, start_date, end_date)
+        for meal in meals:
+            if meal.entry_id == entry_id:
+                return meal
+        raise ValueError("Прием пищи не найден: %s" % entry_id)
+
     def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
         return self.store.list_meal_media(user_id, target_date=target_date)
 
