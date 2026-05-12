@@ -27,6 +27,7 @@ class DummyHealthService:
         self.drive_settings_by_user_id = {}
         self.health_import_files_by_user_id = {}
         self.water_only_photo_mode = False
+        self.logged_water_entries = []
         self.users_by_telegram_id = {
             42: AppUser(
                 user_id=1,
@@ -355,7 +356,7 @@ class DummyHealthService:
         )
 
     def log_water(self, user_id, entry) -> None:
-        return None
+        self.logged_water_entries.append((user_id, entry))
 
     def log_meal(self, user_id, entry) -> None:
         return None
@@ -376,6 +377,7 @@ class DummyHealthService:
         return []
 
     def get_daily_summary(self, user_id, target_date):
+        water_ml = sum(entry.amount_ml for logged_user_id, entry in self.logged_water_entries if logged_user_id == user_id)
         return DailyHealthSummary(
             target_date=target_date,
             meals_count=1,
@@ -383,7 +385,7 @@ class DummyHealthService:
             protein_g=38,
             fat_g=18,
             carbs_g=71,
-            water_ml=0,
+            water_ml=water_ml,
             sleep_hours=0,
             steps=0,
             activity_minutes=0,
@@ -588,7 +590,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("4. После подтверждения запись попадет", response)
 
     def test_placeholder_sections_do_not_fall_back_to_unknown_command(self) -> None:
-        response = self.bot._route_command("/progress", app_user=self.service.users_by_telegram_id[77])
+        response = self.bot._route_command("/history", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Этот раздел скоро появится", response)
         self.assertNotIn("Неизвестная команда", response)
 
@@ -596,9 +598,80 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/add_food", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Просто отправьте фото еды", response)
 
-    def test_add_water_command_uses_soft_placeholder(self) -> None:
+    def test_add_water_command_opens_quick_water_flow(self) -> None:
         response = self.bot._route_command("/add_water", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("Быстрое добавление воды скоро появится", response)
+        self.assertEqual(response, "Сколько воды добавить?")
+
+    def test_water_presets_save_water_and_return_progress(self) -> None:
+        user = self.service.users_by_telegram_id[77]
+        cases = (
+            ("/water 250", "+250 мл воды добавлено.", "Сегодня: 0.2 / 2.0 л", "Осталось до цели: 1750 мл."),
+            ("/water 500", "+500 мл воды добавлено.", "Сегодня: 0.8 / 2.0 л", "Осталось до цели: 1250 мл."),
+            ("/water 750", "+750 мл воды добавлено.", "Сегодня: 1.5 / 2.0 л", "Осталось до цели: 500 мл."),
+        )
+        for command, added_text, today_text, remaining_text in cases:
+            with self.subTest(command=command):
+                response = self.bot._route_command(command, app_user=user)
+                self.assertIn(added_text, response)
+                self.assertIn(today_text, response)
+                self.assertIn(remaining_text, response)
+
+    def test_water_custom_volume_prompt_and_manual_input(self) -> None:
+        messages = []
+
+        def fake_telegram_api(method, params):
+            messages.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._route_command("/water_custom", app_user=self.service.users_by_telegram_id[77])
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "330",
+                    "chat": {"id": 778, "type": "private"},
+                    "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                },
+            }
+        )
+
+        send_message = next(item for item in messages if item[0] == "sendMessage")
+        self.assertIn("+330 мл воды добавлено.", send_message[1]["text"])
+        self.assertIn("Сегодня: 0.3 / 2.0 л", send_message[1]["text"])
+        self.assertIn("Осталось до цели: 1670 мл.", send_message[1]["text"])
+
+    def test_water_custom_volume_rejects_invalid_input(self) -> None:
+        messages = []
+
+        def fake_telegram_api(method, params):
+            messages.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._route_command("/water_custom", app_user=self.service.users_by_telegram_id[77])
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "abc",
+                    "chat": {"id": 778, "type": "private"},
+                    "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                },
+            }
+        )
+
+        send_message = next(item for item in messages if item[0] == "sendMessage")
+        self.assertIn("Нужен объем воды в мл числом от 50 до 3000", send_message[1]["text"])
+
+    def test_water_custom_volume_back_returns_to_home_screen(self) -> None:
+        self.bot._route_command("/water_custom", app_user=self.service.users_by_telegram_id[77])
+        response = self.bot._route_command("/menu", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Главный экран", response)
+
+    def test_progress_command_returns_summary(self) -> None:
+        response = self.bot._route_command("/progress", app_user=self.service.users_by_telegram_id[77])
+        self.assertIn("Сводка за", response)
 
     def test_digest_status_command_returns_current_settings(self) -> None:
         response = self.bot._route_command("/digest_status", app_user=self.service.users_by_telegram_id[42])
@@ -1517,9 +1590,10 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
         self.assertIn("только администратору", response)
 
-    def test_removed_manual_health_command_is_unknown(self) -> None:
+    def test_water_slash_command_is_supported_as_fallback(self) -> None:
         response = self.bot._route_command("/water 500", app_user=self.service.users_by_telegram_id[42])
-        self.assertIn("Неизвестная команда", response)
+        self.assertIn("+500 мл воды добавлено.", response)
+        self.assertIn("Сегодня: 0.5 / 2.0 л", response)
 
 
 if __name__ == "__main__":

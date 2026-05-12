@@ -6,12 +6,14 @@ import time
 from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional
 from urllib import error as urlerror, parse, request
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from ai_me.config import TelegramSettings
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.digest import DailyFoodDigest, WeeklyFoodDigest
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft, PhotoLogKind
+from ai_me.domain.health import WaterEntry
 from ai_me.domain.user import AppUser, UserStatus
 from ai_me.services.digest_renderer import DigestImageRenderer
 from ai_me.services.health_service import HealthService
@@ -29,6 +31,12 @@ class TelegramHealthBot:
         "Прогресс": "/progress",
         "Профиль": "/profile",
         "Как это работает": "/how_it_works",
+        "Назад": "/menu",
+        "Добавить еще": "/add_water",
+        "+250 мл": "/water 250",
+        "+500 мл": "/water 500",
+        "+750 мл": "/water 750",
+        "Свой объем": "/water_custom",
         "Сводка за сегодня": "/summary",
         "Финансы за месяц": "/finance_month",
         "Google Drive": "/drive_status",
@@ -52,6 +60,7 @@ class TelegramHealthBot:
         self.digest_renderer = digest_renderer or DigestImageRenderer()
         self._photo_processing_user_ids = set()
         self._photo_rate_limit_until_by_user: Dict[int, datetime] = {}
+        self._pending_custom_water_user_ids = set()
 
     def run_forever(self) -> None:
         self._ensure_polling_mode()
@@ -144,7 +153,17 @@ class TelegramHealthBot:
 
         if isinstance(text, str):
             logger.info("Received text command chat_id=%s user_id=%s text=%s", chat_id, user_id, text.strip())
-            normalized_text = self._normalize_command_text(text.strip())
+            raw_text = text.strip()
+            normalized_text = self._normalize_command_text(raw_text)
+            pending_response = self._handle_pending_custom_water_input(
+                app_user=app_user,
+                raw_text=raw_text,
+                normalized_text=normalized_text,
+            )
+            if pending_response is not None:
+                pending_text, pending_markup = pending_response
+                self._send_message(chat_id, pending_text, reply_markup=pending_markup)
+                return
             response = self._route_command(
                 text=normalized_text,
                 chat_id=chat_id,
@@ -306,10 +325,13 @@ class TelegramHealthBot:
                     app_user=app_user,
                 )
             if command == "/help":
+                if app_user is not None:
+                    self._pending_custom_water_user_ids.discard(app_user.user_id)
                 return self._help_text(app_user)
             if command == "/menu":
                 if app_user is None:
                     return self._registration_required_text()
+                self._pending_custom_water_user_ids.discard(app_user.user_id)
                 return self._home_text(app_user)
             if command == "/whoami":
                 return self._handle_whoami(chat_id=chat_id, user_id=user_id, app_user=app_user)
@@ -320,11 +342,18 @@ class TelegramHealthBot:
             if command == "/add_food":
                 return self._add_food_text()
             if command == "/add_water":
+                self._pending_custom_water_user_ids.discard(app_user.user_id)
                 return self._add_water_text()
+            if command == "/water_custom":
+                self._pending_custom_water_user_ids.add(app_user.user_id)
+                return self._custom_water_prompt_text()
+            if command == "/water":
+                self._pending_custom_water_user_ids.discard(app_user.user_id)
+                return self._handle_log_water(app_user, args)
             if command == "/history":
                 return self._coming_soon_text("История")
             if command == "/progress":
-                return self._coming_soon_text("Прогресс")
+                return self._handle_progress(app_user)
             if command == "/profile":
                 return self._coming_soon_text("Профиль")
             if command == "/how_it_works":
@@ -387,6 +416,7 @@ class TelegramHealthBot:
         app_user: Optional[AppUser],
     ) -> str:
         if app_user is not None:
+            self._pending_custom_water_user_ids.discard(app_user.user_id)
             return self._home_text(app_user)
         if chat_id is None or user_id is None:
             return self._registration_required_text()
@@ -784,10 +814,11 @@ class TelegramHealthBot:
 
     @staticmethod
     def _add_water_text() -> str:
-        return (
-            "Добавить воду\n"
-            "Быстрое добавление воды скоро появится. Пока можно отправить фото напитка или открыть /help."
-        )
+        return "Сколько воды добавить?"
+
+    @staticmethod
+    def _custom_water_prompt_text() -> str:
+        return "Введите объем воды в мл, например: 330"
 
     @staticmethod
     def _coming_soon_text(section_name: str) -> str:
@@ -802,6 +833,44 @@ class TelegramHealthBot:
             "3. Вы подтвердите или отклоните черновик.\n"
             "4. После подтверждения запись попадет в сводку и digest."
         )
+
+    def _handle_log_water(self, app_user: AppUser, args: List[str]) -> str:
+        if len(args) != 1:
+            raise ValueError("укажите объем воды в мл, например: /water 500")
+        amount_ml = self._parse_water_amount(args[0])
+        self.service.log_water(
+            app_user.user_id,
+            WaterEntry(
+                entry_id=str(uuid4()),
+                occurred_at=self._local_now(),
+                amount_ml=amount_ml,
+            ),
+        )
+        summary = self.service.get_daily_summary(app_user.user_id, self._local_today())
+        remaining_ml = max(0, summary.goals.water_ml - summary.water_ml)
+        return (
+            "+%s мл воды добавлено.\n"
+            "Сегодня: %s / %s л\n"
+            "Осталось до цели: %s мл."
+        ) % (
+            amount_ml,
+            self._format_liters_fixed(summary.water_ml),
+            self._format_liters_fixed(summary.goals.water_ml),
+            remaining_ml,
+        )
+
+    def _handle_progress(self, app_user: AppUser) -> str:
+        return self._handle_summary(app_user, [])
+
+    @staticmethod
+    def _parse_water_amount(raw_value: str) -> int:
+        try:
+            amount_ml = int(raw_value)
+        except ValueError as exc:
+            raise ValueError("объем воды должен быть целым числом в мл") from exc
+        if amount_ml < 50 or amount_ml > 3000:
+            raise ValueError("объем воды должен быть от 50 до 3000 мл")
+        return amount_ml
 
     def _format_new_decisions(self, decisions: Iterable) -> str:
         decision_list = list(decisions)
@@ -1220,6 +1289,10 @@ class TelegramHealthBot:
         return ("%.1f" % (amount_ml / 1000.0)).rstrip("0").rstrip(".")
 
     @staticmethod
+    def _format_liters_fixed(amount_ml: int) -> str:
+        return "%.1f" % (amount_ml / 1000.0)
+
+    @staticmethod
     def _format_weekly_digest_text(
         digest: WeeklyFoodDigest,
         preview: bool = False,
@@ -1465,6 +1538,10 @@ class TelegramHealthBot:
             return self._welcome_reply_markup()
         if reply_user is None:
             return None
+        if text in {"/add_water", "/water_custom"}:
+            return self._water_prompt_reply_markup()
+        if text.startswith("/water "):
+            return self._water_result_reply_markup()
         if text in {
             "/start",
             "/help",
@@ -1472,7 +1549,6 @@ class TelegramHealthBot:
             "/user_mode",
             "/admin_mode",
             "/add_food",
-            "/add_water",
             "/history",
             "/progress",
             "/profile",
@@ -1490,6 +1566,34 @@ class TelegramHealthBot:
                     [{"text": "Добавить еду"}],
                     [{"text": "Добавить воду"}],
                     [{"text": "Как это работает"}],
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    @classmethod
+    def _water_prompt_reply_markup(cls) -> str:
+        return json.dumps(
+            {
+                "resize_keyboard": True,
+                "keyboard": [
+                    [{"text": "+250 мл"}, {"text": "+500 мл"}, {"text": "+750 мл"}],
+                    [{"text": "Свой объем"}],
+                    [{"text": "Назад"}],
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    @classmethod
+    def _water_result_reply_markup(cls) -> str:
+        return json.dumps(
+            {
+                "resize_keyboard": True,
+                "keyboard": [
+                    [{"text": "Добавить еще"}, {"text": "Прогресс"}],
+                    [{"text": "Добавить еду"}],
+                    [{"text": "Назад"}],
                 ],
             },
             ensure_ascii=False,
@@ -1560,6 +1664,40 @@ class TelegramHealthBot:
         return (
             "Бот работает только в личных сообщениях.\n"
             "Отправьте команду /start, чтобы начать работу."
+        )
+
+    def _handle_pending_custom_water_input(
+        self,
+        app_user: Optional[AppUser],
+        raw_text: str,
+        normalized_text: str,
+    ) -> Optional[tuple[str, str]]:
+        if app_user is None or app_user.user_id not in self._pending_custom_water_user_ids:
+            return None
+        if normalized_text in {"/menu", "/help", "/start", "/add_water", "/add_food", "/progress", "/how_it_works"}:
+            self._pending_custom_water_user_ids.discard(app_user.user_id)
+            return None
+        try:
+            amount_ml = self._parse_water_amount(raw_text)
+        except ValueError:
+            return (
+                "Нужен объем воды в мл числом от 50 до 3000. Например: 330",
+                self._water_custom_input_reply_markup(),
+            )
+        self._pending_custom_water_user_ids.discard(app_user.user_id)
+        response = self._handle_log_water(app_user, [str(amount_ml)])
+        return response, self._water_result_reply_markup()
+
+    @classmethod
+    def _water_custom_input_reply_markup(cls) -> str:
+        return json.dumps(
+            {
+                "resize_keyboard": True,
+                "keyboard": [
+                    [{"text": "Назад"}],
+                ],
+            },
+            ensure_ascii=False,
         )
 
     def _try_begin_photo_processing(self, app_user: AppUser, now: datetime) -> Optional[str]:
