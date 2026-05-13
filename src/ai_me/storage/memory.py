@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional
 
@@ -265,7 +266,8 @@ class InMemoryStore:
         return self._goals.get(user_id, {}).get(target_date, DailyHealthGoals(target_date=target_date))
 
     def add_meal(self, user_id: int, entry: MealEntry) -> None:
-        self._meals.setdefault(user_id, []).append(entry)
+        normalized = entry if entry.created_at is not None else replace(entry, created_at=entry.occurred_at)
+        self._meals.setdefault(user_id, []).append(normalized)
 
     def update_meal(self, user_id: int, entry: MealEntry) -> None:
         entries = self._meals.setdefault(user_id, [])

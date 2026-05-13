@@ -1338,10 +1338,12 @@ class TelegramHealthBot:
         return self._local_now() - draft.created_at <= self.HISTORY_EDIT_WINDOW
 
     def _is_meal_recoverable_for_edit(self, meal: MealEntry) -> bool:
-        return self._local_now() - meal.occurred_at <= self.HISTORY_EDIT_WINDOW
+        reference_time = meal.created_at or meal.occurred_at
+        return self._local_now() - reference_time <= self.HISTORY_EDIT_WINDOW
 
     def _is_meal_recoverable_for_delete(self, meal: MealEntry) -> bool:
-        return self._local_now() - meal.occurred_at <= self.HISTORY_DELETE_WINDOW
+        reference_time = meal.created_at or meal.occurred_at
+        return self._local_now() - reference_time <= self.HISTORY_DELETE_WINDOW
 
     @staticmethod
     def _parse_water_amount(raw_value: str) -> int:

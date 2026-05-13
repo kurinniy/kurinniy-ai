@@ -510,7 +510,8 @@ class HealthService:
         self.store.set_health_goals(user_id, goals)
 
     def log_meal(self, user_id: int, entry: MealEntry) -> None:
-        self.store.add_meal(user_id, entry)
+        normalized = entry if entry.created_at is not None else replace(entry, created_at=entry.occurred_at)
+        self.store.add_meal(user_id, normalized)
 
     def create_meal_draft_from_photo(
         self,
@@ -578,6 +579,7 @@ class HealthService:
 
     def confirm_meal_draft(self, user_id: int, draft_id: str) -> PhotoLogResult:
         draft = self._require_meal_draft(user_id, draft_id, MealDraftStatus.PENDING)
+        now = datetime.now()
         if draft.is_water_only:
             water = WaterEntry(
                 entry_id=str(uuid4()),
@@ -611,6 +613,7 @@ class HealthService:
                 },
                 sort_keys=True,
             ),
+            created_at=now,
         )
         self.store.add_meal(user_id, meal)
         self.store.update_meal_draft_status(user_id, draft_id, MealDraftStatus.CONFIRMED)
@@ -717,7 +720,8 @@ class HealthService:
         return meals[offset : offset + limit]
 
     def get_latest_meal(self, user_id: int) -> Optional[MealEntry]:
-        meals = self.list_recent_meals(user_id, limit=1)
+        meals = self.store.list_meals_in_range(user_id, date.today() - timedelta(days=365), date.today())
+        meals.sort(key=lambda meal: meal.created_at or meal.occurred_at, reverse=True)
         return meals[0] if meals else None
 
     def get_meal_entry(

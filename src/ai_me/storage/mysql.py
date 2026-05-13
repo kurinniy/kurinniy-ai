@@ -528,14 +528,16 @@ class MySQLStore:
         )
 
     def add_meal(self, user_id: int, entry: MealEntry) -> None:
+        created_at = entry.created_at or entry.occurred_at
         self._execute(
             """
-            INSERT INTO meals (entry_id, user_id, occurred_at, title, calories, protein_g, fat_g, carbs_g, water_ml, notes)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO meals (entry_id, user_id, created_at, occurred_at, title, calories, protein_g, fat_g, carbs_g, water_ml, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 entry.entry_id,
                 user_id,
+                created_at,
                 entry.occurred_at,
                 entry.title,
                 entry.calories,
@@ -1347,6 +1349,7 @@ class MySQLStore:
             CREATE TABLE IF NOT EXISTS meals (
                 entry_id VARCHAR(64) PRIMARY KEY,
                 user_id BIGINT NOT NULL,
+                created_at DATETIME(6) NOT NULL,
                 occurred_at DATETIME(6) NOT NULL,
                 title VARCHAR(255) NOT NULL,
                 calories INT NOT NULL,
@@ -1506,6 +1509,7 @@ class MySQLStore:
         self._ensure_column("meals", "fat_g", "ALTER TABLE meals ADD COLUMN fat_g DOUBLE NOT NULL DEFAULT 0 AFTER protein_g")
         self._ensure_column("meals", "carbs_g", "ALTER TABLE meals ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g")
         self._ensure_column("meals", "water_ml", "ALTER TABLE meals ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g")
+        self._ensure_column("meals", "created_at", "ALTER TABLE meals ADD COLUMN created_at DATETIME(6) NULL AFTER user_id")
         self._ensure_column("meal_photo_drafts", "fat_g", "ALTER TABLE meal_photo_drafts ADD COLUMN fat_g DOUBLE NOT NULL DEFAULT 0 AFTER protein_g")
         self._ensure_column("meal_photo_drafts", "carbs_g", "ALTER TABLE meal_photo_drafts ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g")
         self._ensure_column("meal_photo_drafts", "water_ml", "ALTER TABLE meal_photo_drafts ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g")
@@ -1550,6 +1554,7 @@ class MySQLStore:
             "user_id",
             "ALTER TABLE finance_transactions ADD COLUMN user_id BIGINT NULL AFTER transaction_key",
         )
+        self._execute("UPDATE meals SET created_at = occurred_at WHERE created_at IS NULL", ())
 
         if not self._column_exists("health_goals", "goal_id"):
             self._execute(
@@ -1930,4 +1935,5 @@ class MySQLStore:
             carbs_g=float(row["carbs_g"]),
             water_ml=int(row.get("water_ml", 0)),
             notes=row["notes"],
+            created_at=row.get("created_at") or row["occurred_at"],
         )

@@ -2,7 +2,7 @@ import base64
 import json
 import unittest
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from ai_me.config import TelegramSettings
 from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDigestHighlight, WeeklyFoodDigest
@@ -458,7 +458,11 @@ class DummyHealthService:
         return list(self.meals_by_user_id.get(user_id, []))
 
     def list_recent_meals(self, user_id, limit=10, offset=0, lookback_days=365):
-        meals = sorted(self.meals_by_user_id.get(user_id, []), key=lambda meal: meal.occurred_at, reverse=True)
+        meals = sorted(
+            self.meals_by_user_id.get(user_id, []),
+            key=lambda meal: meal.created_at or meal.occurred_at,
+            reverse=True,
+        )
         return meals[offset : offset + limit]
 
     def get_latest_meal(self, user_id):
@@ -777,6 +781,50 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._local_now = lambda: datetime(2026, 5, 6, 12, 50)
         response = self.bot._route_command("/history_delete_last", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Быстрое удаление доступно только", response)
+
+    def test_history_fix_last_uses_save_time_not_meal_time(self) -> None:
+        self.service.meals_by_user_id[2] = [
+            MealEntry(
+                entry_id="meal-old-occurrence",
+                occurred_at=datetime(2026, 5, 5, 8, 0),
+                created_at=datetime(2026, 5, 6, 12, 39),
+                title="Поздно сохраненный завтрак",
+                calories=300,
+                protein_g=20,
+                notes='{"summary":"Старое блюдо, сохраненное только что"}',
+            ),
+            MealEntry(
+                entry_id="meal-fresh-occurrence",
+                occurred_at=datetime(2026, 5, 6, 12, 20),
+                created_at=datetime(2026, 5, 6, 12, 20),
+                title="Более раннее сохранение",
+                calories=450,
+                protein_g=30,
+                notes='{"summary":"Обычный обед"}',
+            ),
+        ]
+        self.bot._local_now = lambda: datetime(2026, 5, 6, 12, 40)
+
+        response = self.bot._route_command("/history_fix_last", app_user=self.service.users_by_telegram_id[77])
+
+        self.assertIn("Поздно сохраненный завтрак", response)
+
+    def test_history_delete_last_uses_save_time_window_not_meal_time(self) -> None:
+        self.service.meals_by_user_id[2] = [
+            MealEntry(
+                entry_id="meal-old-occurrence",
+                occurred_at=datetime(2026, 5, 5, 8, 0),
+                created_at=datetime(2026, 5, 6, 12, 38),
+                title="Поздно сохраненный завтрак",
+                calories=300,
+                protein_g=20,
+            ),
+        ]
+        self.bot._local_now = lambda: datetime(2026, 5, 6, 12, 40)
+
+        response = self.bot._route_command("/history_delete_last", app_user=self.service.users_by_telegram_id[77])
+
+        self.assertEqual(response, "Удалить последнюю запись?")
 
     def test_pending_history_delete_confirm_deletes_last_meal(self) -> None:
         self.bot._set_pending_last_meal_delete(2, "meal-1")

@@ -784,6 +784,32 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(self.service.get_meal_entry(self.user.user_id, "meal-1", lookback_days=3650).title, "Breakfast")
         self.assertEqual(self.service.get_latest_meal(self.user.user_id).entry_id, "meal-2")
 
+    def test_get_latest_meal_prefers_last_saved_entry(self) -> None:
+        self.service.log_meal(
+            self.user.user_id,
+            MealEntry(
+                entry_id="meal-1",
+                occurred_at=datetime(2026, 5, 5, 9, 0),
+                created_at=datetime(2026, 5, 6, 13, 5),
+                title="Breakfast",
+                calories=450,
+                protein_g=25,
+            ),
+        )
+        self.service.log_meal(
+            self.user.user_id,
+            MealEntry(
+                entry_id="meal-2",
+                occurred_at=datetime(2026, 5, 6, 13, 0),
+                created_at=datetime(2026, 5, 6, 12, 0),
+                title="Lunch",
+                calories=700,
+                protein_g=40,
+            ),
+        )
+
+        self.assertEqual(self.service.get_latest_meal(self.user.user_id).entry_id, "meal-1")
+
     def test_update_meal_entry_updates_last_saved_meal(self) -> None:
         self.service.log_meal(
             self.user.user_id,
