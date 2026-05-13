@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import math
 import time
 from dataclasses import replace
@@ -68,6 +69,9 @@ from ai_me.services.media_storage import (
 from ai_me.services.rules import HealthDecisionEngine
 from ai_me.services.tbank_import import TBankCSVImporter
 from ai_me.storage.base import HealthStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class HealthService:
@@ -789,7 +793,7 @@ class HealthService:
         if not media_items:
             return None
         media_items.sort(key=lambda item: item.created_at)
-        return self._hydrate_media_bytes(media_items[0])
+        return self._safe_hydrate_media_bytes(media_items[0], context="meal_entry:%s" % entry_id)
 
     def get_primary_meal_media_for_draft(self, user_id: int, draft_id: str) -> Optional[MealMedia]:
         draft = self.get_meal_draft_any_status(user_id, draft_id)
@@ -801,7 +805,7 @@ class HealthService:
         if not media_items:
             return None
         media_items.sort(key=lambda item: item.created_at)
-        return self._hydrate_media_bytes(media_items[0])
+        return self._safe_hydrate_media_bytes(media_items[0], context="draft:%s" % draft_id)
 
     def log_water(self, user_id: int, entry: WaterEntry) -> None:
         self.store.add_water(user_id, entry)
@@ -946,6 +950,19 @@ class HealthService:
             width=media.width,
             height=media.height,
         )
+
+    def _safe_hydrate_media_bytes(self, media: MealMedia, *, context: str) -> MealMedia:
+        try:
+            return self._hydrate_media_bytes(media)
+        except Exception as exc:
+            logger.warning(
+                "Failed to hydrate meal media bytes context=%s media_id=%s storage_key=%s error=%s",
+                context,
+                media.media_id,
+                media.storage_key,
+                exc,
+            )
+            return media
 
     def _store_media_in_bucket(
         self,

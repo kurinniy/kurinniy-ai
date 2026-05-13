@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.digest import DigestStatus, DigestType
-from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, PhotoLogKind, WATER_PHOTO_SOURCE
+from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft, PhotoLogKind, WATER_PHOTO_SOURCE
 from ai_me.domain.health import (
     ActivityEntry,
     DailyHealthGoals,
@@ -15,7 +15,7 @@ from ai_me.domain.health import (
 from ai_me.domain.user import UserStatus
 from ai_me.services.food_analysis import MealAnalysis
 from ai_me.services.health_service import HealthService
-from ai_me.services.media_storage import StoredMediaObject
+from ai_me.services.media_storage import DisabledMediaStorage, StoredMediaObject
 from ai_me.storage.memory import InMemoryStore
 
 
@@ -557,6 +557,7 @@ class HealthServiceTest(unittest.TestCase):
         service = HealthService(
             self.store,
             food_photo_analyzer=StubFoodPhotoAnalyzer(),
+            media_storage=DisabledMediaStorage(),
             admin_telegram_user_ids=frozenset({96445950}),
         )
 
@@ -570,6 +571,99 @@ class HealthServiceTest(unittest.TestCase):
                 occurred_at=datetime(2026, 5, 6, 19, 0),
                 caption="Dinner",
             )
+
+    def test_get_primary_meal_media_for_entry_returns_metadata_when_bucket_is_unavailable(self) -> None:
+        service = HealthService(
+            self.store,
+            food_photo_analyzer=StubFoodPhotoAnalyzer(),
+            media_storage=DisabledMediaStorage(),
+            admin_telegram_user_ids=frozenset({96445950}),
+        )
+        service.log_meal(
+            self.user.user_id,
+            MealEntry(
+                entry_id="meal-1",
+                occurred_at=datetime(2026, 5, 6, 13, 0),
+                title="Lunch",
+                calories=700,
+                protein_g=40,
+            ),
+        )
+        self.store.create_meal_media(
+            MealMedia(
+                media_id="media-1",
+                user_id=self.user.user_id,
+                draft_id="draft-1",
+                meal_entry_id="meal-1",
+                occurred_at=datetime(2026, 5, 6, 13, 0),
+                created_at=datetime(2026, 5, 6, 13, 1),
+                mime_type="image/jpeg",
+                telegram_file_id="file-1",
+                telegram_unique_id="unique-1",
+                byte_size=120,
+                sha256="abc",
+                image_bytes=b"",
+                storage_kind="railway_bucket",
+                storage_key="bucket/path.jpg",
+                bucket_name="bucket",
+            )
+        )
+
+        media = service.get_primary_meal_media_for_entry(self.user.user_id, "meal-1")
+
+        self.assertIsNotNone(media)
+        self.assertEqual(media.media_id, "media-1")
+        self.assertEqual(media.image_bytes, b"")
+
+    def test_get_primary_meal_media_for_draft_returns_metadata_when_bucket_is_unavailable(self) -> None:
+        service = HealthService(
+            self.store,
+            food_photo_analyzer=StubFoodPhotoAnalyzer(),
+            media_storage=DisabledMediaStorage(),
+            admin_telegram_user_ids=frozenset({96445950}),
+        )
+        self.store.create_meal_draft(
+            self.user.user_id,
+            MealPhotoDraft(
+                draft_id="draft-1",
+                created_at=datetime(2026, 5, 6, 13, 1),
+                occurred_at=datetime(2026, 5, 6, 13, 0),
+                title="Lunch",
+                summary="Rice and chicken",
+                calories=700,
+                protein_g=40,
+                fat_g=20,
+                carbs_g=60,
+                confidence=0.8,
+                photo_file_id="file-1",
+                photo_unique_id="unique-1",
+                status=MealDraftStatus.PENDING,
+            ),
+        )
+        self.store.create_meal_media(
+            MealMedia(
+                media_id="media-1",
+                user_id=self.user.user_id,
+                draft_id="draft-1",
+                occurred_at=datetime(2026, 5, 6, 13, 0),
+                created_at=datetime(2026, 5, 6, 13, 1),
+                mime_type="image/jpeg",
+                telegram_file_id="file-1",
+                telegram_unique_id="unique-1",
+                byte_size=120,
+                sha256="abc",
+                image_bytes=b"",
+                storage_kind="railway_bucket",
+                storage_key="bucket/path.jpg",
+                bucket_name="bucket",
+            )
+        )
+
+        media = service.get_primary_meal_media_for_draft(self.user.user_id, "draft-1")
+
+        self.assertIsNotNone(media)
+        self.assertEqual(media.media_id, "media-1")
+        self.assertEqual(media.image_bytes, b"")
 
     def test_range_store_methods_return_expected_meals_and_strip_image_bytes_when_requested(self) -> None:
         self.service.log_meal(
