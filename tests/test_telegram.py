@@ -724,13 +724,19 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Главный экран", response)
         self.assertIn("Добавить еду", response)
         self.assertIn("Добавить воду", response)
+        self.assertNotIn("digest", response)
         self.assertNotIn("Бот уже подключен", response)
 
     def test_menu_for_existing_user_returns_home_screen(self) -> None:
         response = self.bot._route_command("/menu", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Главный экран", response)
-        self.assertIn("Ежедневный digest: включен", response)
+        self.assertIn("Ежедневная сводка: включен", response)
+        self.assertIn("Недельная сводка: включен", response)
         self.assertIn("Как это работает", response)
+
+    def test_start_for_new_user_does_not_use_technical_digest_term(self) -> None:
+        response = self.bot._route_command("/start", chat_id=999, user_id=999, username="new", first_name="New")
+        self.assertNotIn("digest", response)
 
     def test_how_it_works_command_returns_onboarding_steps(self) -> None:
         response = self.bot._route_command("/how_it_works", app_user=self.service.users_by_telegram_id[77])
