@@ -5,6 +5,8 @@ import unittest
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
+from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
+from ai_me.domain.health import MealEntry
 from ai_me.config import AppSettings, DatabaseSettings, GoogleDriveSettings, MediaBucketSettings, TelegramSettings, WebSettings
 from ai_me.services.health_service import HealthService
 from ai_me.storage.memory import InMemoryStore
@@ -113,6 +115,115 @@ class WebAppTest(unittest.TestCase):
         self.assertFalse(response.json()["is_admin"])
         self.assertTrue(response.json()["is_admin_account"])
         self.assertFalse(response.json()["admin_mode_enabled"])
+
+    def test_dashboard_contains_history_and_recognitions_for_regular_user(self) -> None:
+        self.service.log_meal(
+            1,
+            MealEntry(
+                entry_id="meal-1",
+                occurred_at=datetime(2026, 5, 8, 13, 0),
+                created_at=datetime(2026, 5, 8, 13, 2),
+                title="Обед",
+                calories=620,
+                protein_g=38,
+                fat_g=18,
+                carbs_g=71,
+                notes='{"summary":"Рис и курица"}',
+            ),
+        )
+        self.store.create_meal_draft(
+            1,
+            MealPhotoDraft(
+                draft_id="draft-1",
+                created_at=datetime(2026, 5, 8, 12, 45),
+                occurred_at=datetime(2026, 5, 8, 12, 40),
+                title="Обед",
+                summary="Рис и курица",
+                calories=620,
+                protein_g=38,
+                fat_g=18,
+                carbs_g=71,
+                confidence=0.82,
+                photo_file_id="file-1",
+                photo_unique_id="unique-1",
+                status=MealDraftStatus.CONFIRMED,
+            ),
+        )
+        init_data = build_init_data(
+            {"id": 111, "first_name": "Guest", "username": "guest"},
+            auth_date=int(datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc).timestamp()),
+        )
+        auth_response = self.client.post("/api/webapp/auth", json={"init_data": init_data})
+        token = auth_response.json()["token"]
+
+        response = self.client.get("/api/dashboard", headers={"Authorization": "Bearer %s" % token})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("history", payload)
+        self.assertIn("recognitions", payload)
+
+    def test_meal_entry_detail_endpoint_returns_detail_payload(self) -> None:
+        self.service.log_meal(
+            1,
+            MealEntry(
+                entry_id="meal-1",
+                occurred_at=datetime(2026, 5, 8, 13, 0),
+                created_at=datetime(2026, 5, 8, 13, 2),
+                title="Обед",
+                calories=620,
+                protein_g=38,
+                fat_g=18,
+                carbs_g=71,
+                notes='{"summary":"Рис и курица"}',
+            ),
+        )
+        init_data = build_init_data(
+            {"id": 111, "first_name": "Guest", "username": "guest"},
+            auth_date=int(datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc).timestamp()),
+        )
+        auth_response = self.client.post("/api/webapp/auth", json={"init_data": init_data})
+        token = auth_response.json()["token"]
+
+        response = self.client.get("/api/history/meals/meal-1", headers={"Authorization": "Bearer %s" % token})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["entry_id"], "meal-1")
+        self.assertEqual(payload["summary"], "Рис и курица")
+
+    def test_recognition_detail_endpoint_returns_detail_payload(self) -> None:
+        self.store.create_meal_draft(
+            1,
+            MealPhotoDraft(
+                draft_id="draft-1",
+                created_at=datetime(2026, 5, 8, 12, 45),
+                occurred_at=datetime(2026, 5, 8, 12, 40),
+                title="Обед",
+                summary="Рис и курица",
+                calories=620,
+                protein_g=38,
+                fat_g=18,
+                carbs_g=71,
+                confidence=0.82,
+                photo_file_id="file-1",
+                photo_unique_id="unique-1",
+                status=MealDraftStatus.PENDING,
+            ),
+        )
+        init_data = build_init_data(
+            {"id": 111, "first_name": "Guest", "username": "guest"},
+            auth_date=int(datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc).timestamp()),
+        )
+        auth_response = self.client.post("/api/webapp/auth", json={"init_data": init_data})
+        token = auth_response.json()["token"]
+
+        response = self.client.get("/api/history/recognitions/draft-1", headers={"Authorization": "Bearer %s" % token})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["draft_id"], "draft-1")
+        self.assertEqual(payload["status"], "pending")
 
 
 if __name__ == "__main__":

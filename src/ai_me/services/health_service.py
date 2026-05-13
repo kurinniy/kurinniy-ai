@@ -779,6 +779,30 @@ class HealthService:
     def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
         return self.store.list_meal_media(user_id, target_date=target_date)
 
+    def get_primary_meal_media_for_entry(self, user_id: int, entry_id: str) -> Optional[MealMedia]:
+        meal = self.get_meal_entry(user_id, entry_id)
+        media_items = [
+            media
+            for media in self.store.list_meal_media(user_id, target_date=meal.occurred_at.date())
+            if media.meal_entry_id == entry_id
+        ]
+        if not media_items:
+            return None
+        media_items.sort(key=lambda item: item.created_at)
+        return self._hydrate_media_bytes(media_items[0])
+
+    def get_primary_meal_media_for_draft(self, user_id: int, draft_id: str) -> Optional[MealMedia]:
+        draft = self.get_meal_draft_any_status(user_id, draft_id)
+        media_items = [
+            media
+            for media in self.store.list_meal_media(user_id, target_date=draft.occurred_at.date())
+            if media.draft_id == draft_id
+        ]
+        if not media_items:
+            return None
+        media_items.sort(key=lambda item: item.created_at)
+        return self._hydrate_media_bytes(media_items[0])
+
     def log_water(self, user_id: int, entry: WaterEntry) -> None:
         self.store.add_water(user_id, entry)
 

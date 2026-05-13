@@ -1,8 +1,11 @@
+import base64
+import json
 from datetime import date, timedelta
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from ai_me.domain.decision_log import DecisionStatus
-from ai_me.domain.health import DailyHealthSummary, StepProgressInsight
+from ai_me.domain.food import MealDraftStatus, MealMedia, MealPhotoDraft
+from ai_me.domain.health import DailyHealthSummary, MealEntry, StepProgressInsight
 from ai_me.domain.user import AppUser
 from ai_me.services.health_service import HealthService
 from ai_me.version import APP_RELEASE_DATE, APP_VERSION
@@ -36,6 +39,8 @@ def build_dashboard_payload(
             "release_date": APP_RELEASE_DATE,
         },
         "summary": _serialize_summary(summary, meals, step_progress),
+        "history": _serialize_meal_history(service=service, user_id=app_user.user_id),
+        "recognitions": _serialize_recognition_history(service=service, user_id=app_user.user_id),
         "decisions": [
             {
                 "decision_id": decision.decision_id,
@@ -50,9 +55,31 @@ def build_dashboard_payload(
     }
 
 
+def build_meal_entry_detail_payload(
+    *,
+    service: HealthService,
+    user_id: int,
+    entry_id: str,
+) -> Dict[str, object]:
+    meal = service.get_meal_entry(user_id, entry_id)
+    media = service.get_primary_meal_media_for_entry(user_id, entry_id)
+    return _serialize_meal_detail(meal, media)
+
+
+def build_recognition_detail_payload(
+    *,
+    service: HealthService,
+    user_id: int,
+    draft_id: str,
+) -> Dict[str, object]:
+    draft = service.get_meal_draft_any_status(user_id, draft_id)
+    media = service.get_primary_meal_media_for_draft(user_id, draft_id)
+    return _serialize_recognition_detail(draft, media)
+
+
 def _serialize_summary(
     summary: DailyHealthSummary,
-    meals: List,
+    meals: List[MealEntry],
     step_progress: StepProgressInsight,
 ) -> Dict[str, object]:
     return {
@@ -94,3 +121,118 @@ def _serialize_summary(
             "comment": step_progress.comment,
         },
     }
+
+
+def _serialize_meal_history(*, service: HealthService, user_id: int) -> Dict[str, object]:
+    recent_meals = service.list_recent_meals(user_id, limit=40, lookback_days=365)
+    days_by_date: Dict[str, List[Dict[str, object]]] = {}
+    for meal in recent_meals:
+        day_key = meal.occurred_at.date().isoformat()
+        days_by_date.setdefault(day_key, []).append(
+            {
+                "entry_id": meal.entry_id,
+                "occurred_at": meal.occurred_at.isoformat(),
+                "created_at": (meal.created_at or meal.occurred_at).isoformat(),
+                "title": meal.title,
+                "calories": meal.calories,
+                "status": "saved",
+            }
+        )
+    days = [
+        {
+            "date": day_key,
+            "entries": sorted(entries, key=lambda item: str(item["occurred_at"]), reverse=True),
+        }
+        for day_key, entries in sorted(days_by_date.items(), key=lambda item: item[0], reverse=True)
+    ]
+    return {
+        "days": days,
+        "has_more": len(recent_meals) == 40,
+    }
+
+
+def _serialize_recognition_history(*, service: HealthService, user_id: int) -> Dict[str, object]:
+    drafts = service.list_recent_food_draft_history(user_id, limit=40)
+    return {
+        "items": [_serialize_recognition_list_item(draft) for draft in drafts],
+        "has_more": len(drafts) == 40,
+    }
+
+
+def _serialize_recognition_list_item(draft: MealPhotoDraft) -> Dict[str, object]:
+    return {
+        "draft_id": draft.draft_id,
+        "created_at": draft.created_at.isoformat(),
+        "occurred_at": draft.occurred_at.isoformat(),
+        "title": draft.title,
+        "summary": draft.summary,
+        "calories": draft.calories,
+        "status": draft.status.value,
+        "status_label": _draft_status_label(draft.status),
+        "is_water_only": draft.is_water_only,
+    }
+
+
+def _serialize_meal_detail(meal: MealEntry, media: Optional[MealMedia]) -> Dict[str, object]:
+    return {
+        "entry_id": meal.entry_id,
+        "occurred_at": meal.occurred_at.isoformat(),
+        "created_at": (meal.created_at or meal.occurred_at).isoformat(),
+        "title": meal.title,
+        "summary": _extract_meal_summary(meal),
+        "calories": meal.calories,
+        "protein_g": meal.protein_g,
+        "fat_g": meal.fat_g,
+        "carbs_g": meal.carbs_g,
+        "water_ml": meal.water_ml,
+        "status": "saved",
+        "status_label": "Сохранено",
+        "photo_data_url": _serialize_media_data_url(media),
+    }
+
+
+def _serialize_recognition_detail(draft: MealPhotoDraft, media: Optional[MealMedia]) -> Dict[str, object]:
+    return {
+        "draft_id": draft.draft_id,
+        "created_at": draft.created_at.isoformat(),
+        "occurred_at": draft.occurred_at.isoformat(),
+        "title": draft.title,
+        "summary": draft.summary,
+        "calories": draft.calories,
+        "protein_g": draft.protein_g,
+        "fat_g": draft.fat_g,
+        "carbs_g": draft.carbs_g,
+        "water_ml": draft.water_ml,
+        "confidence": draft.confidence,
+        "status": draft.status.value,
+        "status_label": _draft_status_label(draft.status),
+        "is_water_only": draft.is_water_only,
+        "photo_data_url": _serialize_media_data_url(media),
+    }
+
+
+def _serialize_media_data_url(media: Optional[MealMedia]) -> Optional[str]:
+    if media is None or not media.image_bytes:
+        return None
+    encoded = base64.b64encode(media.image_bytes).decode("ascii")
+    mime_type = media.mime_type or "image/jpeg"
+    return "data:%s;base64,%s" % (mime_type, encoded)
+
+
+def _extract_meal_summary(meal: MealEntry) -> str:
+    if not meal.notes:
+        return ""
+    try:
+        payload = json.loads(meal.notes)
+    except (TypeError, ValueError):
+        return ""
+    summary = payload.get("summary")
+    return str(summary).strip() if summary else ""
+
+
+def _draft_status_label(status: MealDraftStatus) -> str:
+    if status == MealDraftStatus.PENDING:
+        return "Ожидает решения"
+    if status == MealDraftStatus.CONFIRMED:
+        return "Сохранено"
+    return "Отклонено"

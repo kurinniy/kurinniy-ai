@@ -12,7 +12,11 @@ from ai_me.web.auth import (
     validate_telegram_init_data,
     validate_web_session_token,
 )
-from ai_me.web.dashboard import build_dashboard_payload
+from ai_me.web.dashboard import (
+    build_dashboard_payload,
+    build_meal_entry_detail_payload,
+    build_recognition_detail_payload,
+)
 
 try:  # pragma: no cover
     from fastapi import Depends, FastAPI, Header, HTTPException
@@ -164,6 +168,28 @@ def create_web_app(settings: AppSettings, service: HealthService):
             app_user=app_user,
             target_date=effective_date,
         )
+
+    @app.get("/api/history/meals/{entry_id}")
+    def api_meal_entry_detail(entry_id: str, app_user=Depends(_resolve_current_user)):
+        try:
+            return build_meal_entry_detail_payload(
+                service=service,
+                user_id=app_user.user_id,
+                entry_id=entry_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/history/recognitions/{draft_id}")
+    def api_recognition_detail(draft_id: str, app_user=Depends(_resolve_current_user)):
+        try:
+            return build_recognition_detail_payload(
+                service=service,
+                user_id=app_user.user_id,
+                draft_id=draft_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/{full_path:path}")
     def spa_fallback(full_path: str):
