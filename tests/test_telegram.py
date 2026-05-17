@@ -1323,7 +1323,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(business_calls[1][0], "sendMessage")
         self.assertNotIn("Шаги за день:", business_calls[1][1]["text"])
         self.assertNotIn("Комментарий по шагам:", business_calls[1][1]["text"])
-        self.assertNotIn("Отладка:", business_calls[1][1]["text"])
+        self.assertIn("Отладка:", business_calls[1][1]["text"])
+        self.assertIn("Сценарий: text /digest_preview 2026-05-06", business_calls[1][1]["text"])
         self.assertEqual(business_calls[1][1]["parse_mode"], "Markdown")
 
     def test_format_daily_digest_text_groups_meals_by_day_periods(self) -> None:
@@ -1506,12 +1507,48 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         send_message = next(item for item in messages if item[0] == "sendMessage")
+        self.assertIn("Отладка:", send_message[1]["text"])
+        self.assertIn("Сценарий: text /help", send_message[1]["text"])
+        self.assertIn("маршрутизация команды:", send_message[1]["text"])
+        self.assertIn("сборка reply markup:", send_message[1]["text"])
         markup = json.loads(send_message[1]["reply_markup"])
         self.assertEqual(markup["keyboard"][0][0]["text"], "Добавить еду")
         self.assertEqual(markup["keyboard"][0][1]["text"], "Добавить воду")
         self.assertEqual(markup["keyboard"][2][1]["text"], "Как это работает")
         self.assertEqual(markup["keyboard"][4][0]["text"], "Финансы за месяц")
         self.assertEqual(markup["keyboard"][4][1]["text"], "Google Drive")
+
+    def test_stage_photo_response_includes_generation_breakdown(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            if method == "getFile":
+                return {"file_path": "photos/meal.jpg"}
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._download_telegram_file = lambda path: VALID_PNG_BYTES
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 777, "type": "private"},
+                    "from": {"id": 42, "username": "owner", "first_name": "Owner"},
+                    "photo": [{"file_id": "file-1", "file_unique_id": "u-1", "file_size": 100}],
+                },
+            }
+        )
+
+        send_message = [params for method, params in calls if method == "sendMessage"][-1]
+        self.assertIn("Сохранено:", send_message["text"])
+        self.assertIn("Отладка:", send_message["text"])
+        self.assertIn("Сценарий: photo", send_message["text"])
+        self.assertIn("получение file_path:", send_message["text"])
+        self.assertIn("загрузка фото из Telegram:", send_message["text"])
+        self.assertIn("распознавание и сборка черновика:", send_message["text"])
+        self.assertIn("автосохранение записи:", send_message["text"])
+        self.assertIn("сборка карточки сохраненной записи:", send_message["text"])
 
     def test_user_mode_command_updates_reply_keyboard_immediately(self) -> None:
         messages = []

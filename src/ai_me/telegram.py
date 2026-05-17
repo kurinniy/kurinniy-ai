@@ -3,6 +3,7 @@ import logging
 import math
 import shlex
 import time
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
@@ -22,6 +23,16 @@ from ai_me.version import format_release_date_line, format_version_line
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ResponseDebugTrace:
+    label: str
+    started_at: float
+    steps: List[tuple[str, float]] = field(default_factory=list)
+
+    def add_step(self, label: str, seconds: float) -> None:
+        self.steps.append((label, seconds))
 
 
 class TelegramHealthBot:
@@ -79,6 +90,7 @@ class TelegramHealthBot:
         self._pending_draft_clarifications: Dict[int, Dict[str, object]] = {}
         self._pending_last_meal_delete_by_user: Dict[int, str] = {}
         self._pending_profile_edit_states: Dict[int, Dict[str, str]] = {}
+        self._active_response_debug: Optional[ResponseDebugTrace] = None
 
     def run_forever(self) -> None:
         self._ensure_polling_mode()
@@ -140,116 +152,145 @@ class TelegramHealthBot:
         photo = message.get("photo")
         document = message.get("document")
 
-        if isinstance(photo, list) and photo:
-            logger.info("Received photo message chat_id=%s user_id=%s", chat_id, user_id)
-            if app_user is None:
-                self._send_message(chat_id, self._registration_required_text())
-                return
-            current_time = self._local_now()
-            rate_limit_error = self._try_begin_photo_processing(app_user, now=current_time)
-            if rate_limit_error is not None:
-                self._send_message(chat_id, rate_limit_error)
-                return
-            try:
-                self._handle_photo_message(
-                    chat_id=chat_id,
-                    app_user=app_user,
-                    photo=photo,
-                    caption=caption if isinstance(caption, str) else "",
-                )
-            finally:
-                self._finish_photo_processing(app_user, now=self._local_now())
-            return
-
-        if isinstance(document, dict):
-            logger.info("Received document message chat_id=%s user_id=%s", chat_id, user_id)
-            if app_user is None:
-                self._send_message(chat_id, self._registration_required_text())
-                return
-            self._handle_document_message(chat_id=chat_id, app_user=app_user, document=document)
-            return
-
+        debug_label = "message"
         if isinstance(text, str):
-            logger.info("Received text command chat_id=%s user_id=%s text=%s", chat_id, user_id, text.strip())
-            raw_text = text.strip()
-            normalized_text = self._normalize_command_text(raw_text)
-            pending_draft_response = self._handle_pending_draft_edit_input(
-                app_user=app_user,
-                raw_text=raw_text,
-                normalized_text=normalized_text,
-            )
-            if pending_draft_response is not None:
-                pending_text, pending_markup = pending_draft_response
-                self._send_message(chat_id, pending_text, reply_markup=pending_markup)
-                return
-            pending_response = self._handle_pending_custom_water_input(
-                app_user=app_user,
-                raw_text=raw_text,
-                normalized_text=normalized_text,
-            )
-            if pending_response is not None:
-                pending_text, pending_markup = pending_response
-                self._send_message(chat_id, pending_text, reply_markup=pending_markup)
-                return
-            pending_delete_response = self._handle_pending_last_meal_delete_input(
-                app_user=app_user,
-                raw_text=raw_text,
-                normalized_text=normalized_text,
-            )
-            if pending_delete_response is not None:
-                pending_text, pending_markup = pending_delete_response
-                self._send_message(chat_id, pending_text, reply_markup=pending_markup)
-                return
-            pending_profile_response = self._handle_pending_profile_input(
-                app_user=app_user,
-                raw_text=raw_text,
-                normalized_text=normalized_text,
-            )
-            if pending_profile_response is not None:
-                pending_text, pending_markup = pending_profile_response
-                self._send_message(chat_id, pending_text, reply_markup=pending_markup)
-                return
-            response = self._route_command(
-                text=normalized_text,
-                chat_id=chat_id,
-                user_id=user_id,
-                username=username,
-                first_name=first_name,
-                app_user=app_user,
-            )
-            reply_user = self.service.get_user_by_telegram_user_id(user_id) or app_user
-            if normalized_text == "/start" and reply_user is not None:
-                self._send_onboarding_step(chat_id, step=1)
-                return
-            if response:
-                reply_markup = self._reply_markup_for_response(
-                    text=normalized_text,
-                    original_app_user=app_user,
-                    reply_user=reply_user,
-                )
-                parse_mode = "Markdown" if normalized_text.startswith("/digest_preview") else None
+            debug_label = "text %s" % self._normalize_command_text(text.strip())
+        elif isinstance(photo, list) and photo:
+            debug_label = "photo"
+        elif isinstance(document, dict):
+            debug_label = "document"
+        previous_debug = self._begin_response_debug(debug_label)
+        try:
+            if isinstance(photo, list) and photo:
+                logger.info("Received photo message chat_id=%s user_id=%s", chat_id, user_id)
+                if app_user is None:
+                    self._send_message(chat_id, self._registration_required_text())
+                    return
+                current_time = self._local_now()
+                rate_limit_error = self._try_begin_photo_processing(app_user, now=current_time)
+                if rate_limit_error is not None:
+                    self._send_message(chat_id, rate_limit_error)
+                    return
+                photo_started_at = time.perf_counter()
                 try:
-                    self._send_message(
-                        chat_id,
-                        response,
-                        reply_markup=reply_markup,
-                        parse_mode=parse_mode,
+                    self._handle_photo_message(
+                        chat_id=chat_id,
+                        app_user=app_user,
+                        photo=photo,
+                        caption=caption if isinstance(caption, str) else "",
                     )
-                except Exception as exc:
-                    if reply_markup is None:
-                        raise
-                    logger.warning(
-                        "sendMessage with reply_markup failed chat_id=%s text=%s error=%s; retrying without markup",
-                        chat_id,
-                        normalized_text,
-                        exc,
-                    )
-                    self._send_message(
-                        chat_id,
-                        response,
-                        parse_mode=parse_mode,
-                    )
+                finally:
+                    self._finish_photo_processing(app_user, now=self._local_now())
+                    self._record_response_debug_step("обработка фото", photo_started_at)
+                return
 
+            if isinstance(document, dict):
+                logger.info("Received document message chat_id=%s user_id=%s", chat_id, user_id)
+                if app_user is None:
+                    self._send_message(chat_id, self._registration_required_text())
+                    return
+                document_started_at = time.perf_counter()
+                self._handle_document_message(chat_id=chat_id, app_user=app_user, document=document)
+                self._record_response_debug_step("обработка документа", document_started_at)
+                return
+
+            if isinstance(text, str):
+                logger.info("Received text command chat_id=%s user_id=%s text=%s", chat_id, user_id, text.strip())
+                raw_text = text.strip()
+                normalized_text = self._normalize_command_text(raw_text)
+                pending_started_at = time.perf_counter()
+                pending_draft_response = self._handle_pending_draft_edit_input(
+                    app_user=app_user,
+                    raw_text=raw_text,
+                    normalized_text=normalized_text,
+                )
+                self._record_response_debug_step("проверка pending draft", pending_started_at)
+                if pending_draft_response is not None:
+                    pending_text, pending_markup = pending_draft_response
+                    self._send_message(chat_id, pending_text, reply_markup=pending_markup)
+                    return
+                pending_started_at = time.perf_counter()
+                pending_response = self._handle_pending_custom_water_input(
+                    app_user=app_user,
+                    raw_text=raw_text,
+                    normalized_text=normalized_text,
+                )
+                self._record_response_debug_step("проверка pending water", pending_started_at)
+                if pending_response is not None:
+                    pending_text, pending_markup = pending_response
+                    self._send_message(chat_id, pending_text, reply_markup=pending_markup)
+                    return
+                pending_started_at = time.perf_counter()
+                pending_delete_response = self._handle_pending_last_meal_delete_input(
+                    app_user=app_user,
+                    raw_text=raw_text,
+                    normalized_text=normalized_text,
+                )
+                self._record_response_debug_step("проверка pending delete", pending_started_at)
+                if pending_delete_response is not None:
+                    pending_text, pending_markup = pending_delete_response
+                    self._send_message(chat_id, pending_text, reply_markup=pending_markup)
+                    return
+                pending_started_at = time.perf_counter()
+                pending_profile_response = self._handle_pending_profile_input(
+                    app_user=app_user,
+                    raw_text=raw_text,
+                    normalized_text=normalized_text,
+                )
+                self._record_response_debug_step("проверка pending profile", pending_started_at)
+                if pending_profile_response is not None:
+                    pending_text, pending_markup = pending_profile_response
+                    self._send_message(chat_id, pending_text, reply_markup=pending_markup)
+                    return
+                route_started_at = time.perf_counter()
+                response = self._route_command(
+                    text=normalized_text,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    username=username,
+                    first_name=first_name,
+                    app_user=app_user,
+                )
+                self._record_response_debug_step("маршрутизация команды", route_started_at)
+                reply_user_started_at = time.perf_counter()
+                reply_user = self.service.get_user_by_telegram_user_id(user_id) or app_user
+                self._record_response_debug_step("загрузка reply user", reply_user_started_at)
+                if normalized_text == "/start" and reply_user is not None:
+                    self._send_onboarding_step(chat_id, step=1)
+                    return
+                if response:
+                    markup_started_at = time.perf_counter()
+                    reply_markup = self._reply_markup_for_response(
+                        text=normalized_text,
+                        original_app_user=app_user,
+                        reply_user=reply_user,
+                    )
+                    self._record_response_debug_step("сборка reply markup", markup_started_at)
+                    parse_mode = "Markdown" if normalized_text.startswith("/digest_preview") else None
+                    try:
+                        self._send_message(
+                            chat_id,
+                            response,
+                            reply_markup=reply_markup,
+                            parse_mode=parse_mode,
+                        )
+                    except Exception as exc:
+                        if reply_markup is None:
+                            raise
+                        logger.warning(
+                            "sendMessage with reply_markup failed chat_id=%s text=%s error=%s; retrying without markup",
+                            chat_id,
+                            normalized_text,
+                            exc,
+                        )
+                        self._send_message(
+                            chat_id,
+                            response,
+                            parse_mode=parse_mode,
+                        )
+        finally:
+            self._finish_response_debug(previous_debug)
+    
     def _handle_callback_query(self, callback_query: Dict[str, object]) -> None:
         user = callback_query.get("from", {})
         user_id = user.get("id")
@@ -1949,6 +1990,34 @@ class TelegramHealthBot:
             lines.append("- [%s] %s" % (decision.kind.value, decision.title))
         return "\n".join(lines)
 
+    def _response_debug_enabled(self) -> bool:
+        return self.settings.environment_name.strip().lower() == "staging"
+
+    def _begin_response_debug(self, label: str) -> Optional[ResponseDebugTrace]:
+        previous = self._active_response_debug
+        if self._response_debug_enabled():
+            self._active_response_debug = ResponseDebugTrace(label=label, started_at=time.perf_counter())
+        return previous
+
+    def _finish_response_debug(self, previous: Optional[ResponseDebugTrace]) -> None:
+        self._active_response_debug = previous
+
+    def _record_response_debug_step(self, label: str, started_at: float) -> None:
+        trace = self._active_response_debug
+        if trace is None:
+            return
+        trace.add_step(label, time.perf_counter() - started_at)
+
+    def _append_response_debug_text(self, text: str) -> str:
+        trace = self._active_response_debug
+        if trace is None or "Отладка:" in text:
+            return text
+        lines = ["", "Отладка:", "Сценарий: %s" % trace.label]
+        for label, seconds in trace.steps:
+            lines.append("- %s: %.2f сек" % (label, seconds))
+        lines.append("Генерация ответа: %.2f сек" % (time.perf_counter() - trace.started_at))
+        return text.rstrip() + "\n\n" + "\n".join(lines)
+
     def _get_updates(self, offset: Optional[int]) -> List[Dict[str, object]]:
         params = {
             "timeout": self.settings.polling_timeout_seconds,
@@ -1964,6 +2033,7 @@ class TelegramHealthBot:
         reply_markup: Optional[str] = None,
         parse_mode: Optional[str] = None,
     ):
+        text = self._append_response_debug_text(text)
         params = {
             "chat_id": chat_id,
             "text": text,
@@ -1989,7 +2059,7 @@ class TelegramHealthBot:
     ):
         params: Dict[str, object] = {"chat_id": chat_id}
         if caption:
-            params["caption"] = caption
+            params["caption"] = self._append_response_debug_text(caption)
         if reply_markup is not None:
             params["reply_markup"] = reply_markup
         return self._telegram_api_multipart(
@@ -2043,7 +2113,7 @@ class TelegramHealthBot:
         payload = {
             "chat_id": chat_id,
             "message_id": message_id,
-            "text": text,
+            "text": self._append_response_debug_text(text),
         }
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
@@ -2072,7 +2142,8 @@ class TelegramHealthBot:
                 "sendMessage",
                 {
                     "chat_id": chat_id,
-                    "text": (
+                    "text": self._append_response_debug_text(
+                        (
                         "Черновик воды\n"
                         "Напиток: %s\n"
                         "Объем: %s л\n"
@@ -2085,6 +2156,7 @@ class TelegramHealthBot:
                             draft.summary,
                             draft.confidence,
                             draft.draft_id,
+                        )
                         )
                     ),
                     "reply_markup": json.dumps(
@@ -2108,26 +2180,34 @@ class TelegramHealthBot:
             )
             return
         if app_user is not None and self._should_auto_save_draft(draft):
+            auto_save_started_at = time.perf_counter()
             meal = self.service.confirm_meal_draft(app_user.user_id, draft.draft_id)
             self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
             self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft.draft_id)
             saved_meal = self.service.get_meal_entry(app_user.user_id, meal.entry_id)
+            self._record_response_debug_step("автосохранение записи", auto_save_started_at)
+            card_started_at = time.perf_counter()
+            saved_text = self._format_saved_meal_text(app_user, saved_meal)
+            self._record_response_debug_step("сборка карточки сохраненной записи", card_started_at)
             self._telegram_api(
                 "sendMessage",
                 {
                     "chat_id": chat_id,
-                    "text": self._format_saved_meal_text(app_user, saved_meal),
+                    "text": self._append_response_debug_text(saved_text),
                     "reply_markup": self._saved_meal_reply_markup(saved_meal.entry_id),
                 },
             )
             return
         if app_user is not None:
             self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft.draft_id)
+        draft_card_started_at = time.perf_counter()
+        draft_text = self._format_low_confidence_draft_text(draft)
+        self._record_response_debug_step("сборка карточки черновика", draft_card_started_at)
         self._telegram_api(
             "sendMessage",
             {
                 "chat_id": chat_id,
-                "text": self._format_low_confidence_draft_text(draft),
+                "text": self._append_response_debug_text(draft_text),
                 "reply_markup": self._meal_draft_card_reply_markup(draft),
             },
         )
@@ -2513,11 +2593,16 @@ class TelegramHealthBot:
             return
 
         try:
+            file_lookup_started_at = time.perf_counter()
             file_info = self._telegram_api("getFile", {"file_id": file_id})
+            self._record_response_debug_step("получение file_path", file_lookup_started_at)
             file_path = file_info.get("file_path")
             if not isinstance(file_path, str):
                 raise ValueError("Telegram не вернул путь к файлу")
+            download_started_at = time.perf_counter()
             image_bytes = self._download_telegram_file(file_path)
+            self._record_response_debug_step("загрузка фото из Telegram", download_started_at)
+            draft_started_at = time.perf_counter()
             draft = self.service.create_meal_draft_from_photo(
                 app_user.user_id,
                 photo_file_id=file_id,
@@ -2527,13 +2612,16 @@ class TelegramHealthBot:
                 occurred_at=self._local_now(),
                 caption=caption,
             )
+            self._record_response_debug_step("распознавание и сборка черновика", draft_started_at)
         except Exception as exc:
             logger.exception("Food photo analysis failed chat_id=%s file_id=%s error=%s", chat_id, file_id, exc)
             self._send_message(chat_id, "Не удалось распознать фото еды: %s" % exc)
             return
 
         logger.info("Food photo analyzed successfully chat_id=%s draft_id=%s", chat_id, draft.draft_id)
+        reply_started_at = time.perf_counter()
         self._send_meal_draft(chat_id, draft, app_user=app_user)
+        self._record_response_debug_step("подготовка ответа по фото", reply_started_at)
 
     def _handle_document_message(self, chat_id: int, app_user: AppUser, document: Dict[str, object]) -> None:
         if not app_user.has_admin_access:
@@ -2553,16 +2641,22 @@ class TelegramHealthBot:
             return
 
         try:
+            file_lookup_started_at = time.perf_counter()
             file_info = self._telegram_api("getFile", {"file_id": file_id})
+            self._record_response_debug_step("получение файла документа", file_lookup_started_at)
             file_path = file_info.get("file_path")
             if not isinstance(file_path, str):
                 raise ValueError("Telegram не вернул путь к файлу")
+            download_started_at = time.perf_counter()
             file_bytes = self._download_telegram_file(file_path)
+            self._record_response_debug_step("загрузка документа", download_started_at)
+            import_started_at = time.perf_counter()
             result = self.service.import_tbank_csv(
                 app_user.user_id,
                 file_bytes=file_bytes,
                 source_file_name=file_name if isinstance(file_name, str) else "tbank.csv",
             )
+            self._record_response_debug_step("импорт CSV", import_started_at)
         except Exception as exc:
             logger.exception("T-Bank import failed chat_id=%s file_id=%s error=%s", chat_id, file_id, exc)
             self._send_message(chat_id, "Не удалось импортировать файл Т-Банка: %s" % exc)
