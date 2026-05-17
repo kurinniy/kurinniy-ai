@@ -14,7 +14,7 @@ from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.digest import DailyFoodDigest, WeeklyFoodDigest
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft, PhotoLogKind
 from ai_me.domain.health import MealEntry, WaterEntry
-from ai_me.domain.user import AppUser, UserStatus
+from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
 from ai_me.services.digest_renderer import DigestImageRenderer
 from ai_me.services.health_service import HealthService
 from ai_me.version import format_release_date_line, format_version_line
@@ -38,6 +38,9 @@ class TelegramHealthBot:
         "История и правки в приложении": "/history_app",
         "Прогресс": "/progress",
         "Профиль": "/profile",
+        "Цели": "/profile_goals",
+        "Напоминания": "/profile_reminders",
+        "Обо мне": "/profile_about",
         "Как это работает": "/how_it_works",
         "Назад": "/menu",
         "Добавить еще": "/add_water",
@@ -71,6 +74,7 @@ class TelegramHealthBot:
         self._pending_custom_water_user_ids = set()
         self._pending_draft_edit_states: Dict[int, Dict[str, str]] = {}
         self._pending_last_meal_delete_by_user: Dict[int, str] = {}
+        self._pending_profile_edit_states: Dict[int, Dict[str, str]] = {}
 
     def run_forever(self) -> None:
         self._ensure_polling_mode()
@@ -190,6 +194,15 @@ class TelegramHealthBot:
             )
             if pending_delete_response is not None:
                 pending_text, pending_markup = pending_delete_response
+                self._send_message(chat_id, pending_text, reply_markup=pending_markup)
+                return
+            pending_profile_response = self._handle_pending_profile_input(
+                app_user=app_user,
+                raw_text=raw_text,
+                normalized_text=normalized_text,
+            )
+            if pending_profile_response is not None:
+                pending_text, pending_markup = pending_profile_response
                 self._send_message(chat_id, pending_text, reply_markup=pending_markup)
                 return
             response = self._route_command(
@@ -661,6 +674,139 @@ class TelegramHealthBot:
             )
             return
 
+        if data == "profile_home":
+            self._clear_pending_profile_edit_state(app_user.user_id)
+            self._try_answer_callback_query(query_id, "Открываю профиль.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._profile_home_text(app_user),
+                    reply_markup=self._profile_home_reply_markup(),
+                )
+            return
+
+        if data == "profile_back_to_menu":
+            self._clear_pending_profile_edit_state(app_user.user_id)
+            self._try_answer_callback_query(query_id, "Возвращаю в главное меню.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._home_text(app_user),
+                    reply_markup=self._menu_reply_markup(app_user),
+                )
+            return
+
+        if data == "profile_about":
+            self._clear_pending_profile_edit_state(app_user.user_id)
+            self._try_answer_callback_query(query_id, "Открываю раздел «Обо мне».")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._profile_about_text(app_user),
+                    reply_markup=self._profile_about_reply_markup(app_user),
+                )
+            return
+
+        if data == "profile_goals":
+            self._clear_pending_profile_edit_state(app_user.user_id)
+            self._try_answer_callback_query(query_id, "Открываю цели.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._profile_goals_text(app_user),
+                    reply_markup=self._profile_goals_reply_markup(),
+                )
+            return
+
+        if data == "profile_reminders":
+            self._clear_pending_profile_edit_state(app_user.user_id)
+            self._try_answer_callback_query(query_id, "Открываю напоминания.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._profile_reminders_text(app_user),
+                    reply_markup=self._profile_reminders_reply_markup(app_user),
+                )
+            return
+
+        if data.startswith("profile_about_edit:"):
+            field = data.split(":", 1)[1]
+            self._set_pending_profile_edit_state(app_user.user_id, field)
+            self._try_answer_callback_query(query_id, "Введите новое значение.")
+            self._send_message(
+                chat_id,
+                self._profile_about_prompt_text(field),
+                reply_markup=self._profile_prompt_reply_markup("profile_about"),
+            )
+            return
+
+        if data.startswith("profile_goal_edit:"):
+            field = data.split(":", 1)[1]
+            self._set_pending_profile_edit_state(app_user.user_id, field)
+            self._try_answer_callback_query(query_id, "Введите новое значение цели.")
+            self._send_message(
+                chat_id,
+                self._profile_goal_prompt_text(field),
+                reply_markup=self._profile_prompt_reply_markup("profile_goals"),
+            )
+            return
+
+        if data.startswith("profile_about_sex:"):
+            sex_key = data.split(":", 1)[1]
+            updated = self.service.update_user_about(app_user.user_id, sex=UserSex(sex_key))
+            self._try_answer_callback_query(query_id, "Сохранил пол.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._profile_about_text(updated),
+                    reply_markup=self._profile_about_reply_markup(updated),
+                )
+            return
+
+        if data.startswith("profile_about_goal:"):
+            goal_key = data.split(":", 1)[1]
+            updated = self.service.update_user_about(app_user.user_id, goal=UserGoal(goal_key))
+            self._try_answer_callback_query(query_id, "Цель сохранена.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._profile_about_text(updated),
+                    reply_markup=self._profile_about_reply_markup(updated),
+                )
+            return
+
+        if data == "profile_goals_reset":
+            updated = self.service.reset_user_goal_settings(app_user.user_id)
+            self._try_answer_callback_query(query_id, "Цели сброшены.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._profile_goals_text(updated),
+                    reply_markup=self._profile_goals_reply_markup(),
+                )
+            return
+
+        if data.startswith("profile_reminders_toggle:"):
+            toggle_key = data.split(":", 1)[1]
+            updated = self._toggle_profile_reminder(app_user, toggle_key)
+            self._try_answer_callback_query(query_id, "Настройки напоминаний обновлены.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._profile_reminders_text(updated),
+                    reply_markup=self._profile_reminders_reply_markup(updated),
+                )
+            return
+
         logger.warning("Unknown callback action query_id=%s data=%s", query_id, data)
         self._answer_callback_query(query_id, "Неизвестное действие.")
 
@@ -733,7 +879,17 @@ class TelegramHealthBot:
             if command == "/progress":
                 return self._handle_progress(app_user)
             if command == "/profile":
-                return self._coming_soon_text("Профиль")
+                self._clear_pending_profile_edit_state(app_user.user_id)
+                return self._profile_home_text(app_user)
+            if command == "/profile_about":
+                self._clear_pending_profile_edit_state(app_user.user_id)
+                return self._profile_about_text(app_user)
+            if command == "/profile_goals":
+                self._clear_pending_profile_edit_state(app_user.user_id)
+                return self._profile_goals_text(app_user)
+            if command == "/profile_reminders":
+                self._clear_pending_profile_edit_state(app_user.user_id)
+                return self._profile_reminders_text(app_user)
             if command == "/how_it_works":
                 return self._how_it_works_text()
 
@@ -1251,6 +1407,94 @@ class TelegramHealthBot:
         return "Полная история, редактирование и удаление доступны в приложении."
 
     @staticmethod
+    def _profile_home_text(app_user: AppUser) -> str:
+        return (
+            "Профиль\n"
+            "Здесь можно настроить личные параметры, цели и напоминания.\n\n"
+            "Сейчас:\n"
+            "- Цель по воде: %s л\n"
+            "- Цель по белку: %s г\n"
+            "- Напоминания: %s"
+        ) % (
+            TelegramHealthBot._format_liters_fixed(app_user.target_water_ml),
+            app_user.target_protein_g,
+            "включены" if app_user.reminders_enabled else "выключены",
+        )
+
+    @staticmethod
+    def _profile_about_text(app_user: AppUser) -> str:
+        return (
+            "Обо мне\n"
+            "Пол: %s\n"
+            "Возраст: %s\n"
+            "Рост: %s\n"
+            "Вес: %s\n"
+            "Цель: %s"
+        ) % (
+            TelegramHealthBot._profile_sex_label(app_user.sex),
+            ("%s лет" % app_user.age_years) if app_user.age_years is not None else "не указан",
+            ("%s см" % app_user.height_cm) if app_user.height_cm is not None else "не указан",
+            ("%s кг" % TelegramHealthBot._format_decimal(app_user.profile_weight_kg))
+            if app_user.profile_weight_kg is not None
+            else "не указан",
+            TelegramHealthBot._profile_goal_label(app_user.goal),
+        )
+
+    @staticmethod
+    def _profile_goals_text(app_user: AppUser) -> str:
+        calories_text = "не задан"
+        if app_user.target_calories_min is not None and app_user.target_calories_max is not None:
+            if app_user.target_calories_min == app_user.target_calories_max:
+                calories_text = "%s ккал" % app_user.target_calories_min
+            else:
+                calories_text = "%s–%s ккал" % (app_user.target_calories_min, app_user.target_calories_max)
+        return (
+            "Цели\n"
+            "Вода: %s л\n"
+            "Белок: %s г\n"
+            "Калории: %s\n\n"
+            "Можно изменить отдельную цель или сбросить все к рекомендованным."
+        ) % (
+            TelegramHealthBot._format_liters_fixed(app_user.target_water_ml),
+            app_user.target_protein_g,
+            calories_text,
+        )
+
+    @staticmethod
+    def _profile_reminders_text(app_user: AppUser) -> str:
+        return (
+            "Напоминания\n"
+            "Главный переключатель: %s\n"
+            "Записать еду: %s\n"
+            "Вода: %s\n"
+            "Вечерний итог дня: %s\n\n"
+            "Все напоминания можно выключить одним переключателем."
+        ) % (
+            "включен" if app_user.reminders_enabled else "выключен",
+            "включено" if app_user.reminder_meal_logging else "выключено",
+            "включено" if app_user.reminder_water else "выключено",
+            "включено" if app_user.reminder_evening_summary else "выключено",
+        )
+
+    @staticmethod
+    def _profile_about_prompt_text(field: str) -> str:
+        prompts = {
+            "age": "Введите возраст полным числом. Например: 32",
+            "height": "Введите рост в сантиметрах. Например: 176",
+            "weight": "Введите вес в килограммах. Например: 81.5",
+        }
+        return prompts[field]
+
+    @staticmethod
+    def _profile_goal_prompt_text(field: str) -> str:
+        prompts = {
+            "water_goal": "Введите цель по воде в мл. Например: 2200",
+            "protein_goal": "Введите цель по белку в граммах. Например: 110",
+            "calorie_goal": "Введите цель по калориям: 1800 или диапазон 1800-2200",
+        }
+        return prompts[field]
+
+    @staticmethod
     def _coming_soon_text(section_name: str) -> str:
         return "%s\nЭтот раздел скоро появится. Пока можно отправить фото еды или открыть /help." % section_name
 
@@ -1354,6 +1598,93 @@ class TelegramHealthBot:
         if amount_ml < 50 or amount_ml > 3000:
             raise ValueError("объем воды должен быть от 50 до 3000 мл")
         return amount_ml
+
+    @staticmethod
+    def _parse_age_years(raw_value: str) -> int:
+        try:
+            age_years = int(raw_value)
+        except ValueError as exc:
+            raise ValueError("Возраст нужно ввести целым числом. Например: 32") from exc
+        if age_years < 10 or age_years > 120:
+            raise ValueError("Возраст должен быть в диапазоне от 10 до 120 лет.")
+        return age_years
+
+    @staticmethod
+    def _parse_height_cm(raw_value: str) -> int:
+        try:
+            height_cm = int(raw_value)
+        except ValueError as exc:
+            raise ValueError("Рост нужно ввести целым числом в сантиметрах. Например: 176") from exc
+        if height_cm < 100 or height_cm > 250:
+            raise ValueError("Рост должен быть в диапазоне от 100 до 250 см.")
+        return height_cm
+
+    @staticmethod
+    def _parse_weight_kg(raw_value: str) -> float:
+        try:
+            weight_kg = float(raw_value.replace(",", "."))
+        except ValueError as exc:
+            raise ValueError("Вес нужно ввести в килограммах. Например: 81.5") from exc
+        if weight_kg < 30 or weight_kg > 300:
+            raise ValueError("Вес должен быть в диапазоне от 30 до 300 кг.")
+        return round(weight_kg, 1)
+
+    @staticmethod
+    def _parse_water_goal_ml(raw_value: str) -> int:
+        try:
+            amount_ml = int(raw_value)
+        except ValueError as exc:
+            raise ValueError("Цель по воде нужно ввести числом в мл. Например: 2200") from exc
+        if amount_ml < 500 or amount_ml > 6000:
+            raise ValueError("Цель по воде должна быть в диапазоне от 500 до 6000 мл.")
+        return amount_ml
+
+    @staticmethod
+    def _parse_protein_goal_g(raw_value: str) -> int:
+        try:
+            protein_g = int(raw_value)
+        except ValueError as exc:
+            raise ValueError("Цель по белку нужно ввести целым числом. Например: 110") from exc
+        if protein_g < 30 or protein_g > 300:
+            raise ValueError("Цель по белку должна быть в диапазоне от 30 до 300 г.")
+        return protein_g
+
+    @staticmethod
+    def _parse_calorie_goal(raw_value: str) -> tuple[int, int]:
+        normalized = raw_value.replace(" ", "")
+        if "-" in normalized:
+            left, right = normalized.split("-", 1)
+            try:
+                calories_min = int(left)
+                calories_max = int(right)
+            except ValueError as exc:
+                raise ValueError("Введите калории как 1800 или диапазон 1800-2200.") from exc
+        else:
+            try:
+                calories_min = calories_max = int(normalized)
+            except ValueError as exc:
+                raise ValueError("Введите калории как 1800 или диапазон 1800-2200.") from exc
+        if calories_min < 800 or calories_max > 6000 or calories_min > calories_max:
+            raise ValueError("Калории должны быть в разумном диапазоне, например 1800-2200.")
+        return calories_min, calories_max
+
+    @staticmethod
+    def _profile_sex_label(sex: Optional[UserSex]) -> str:
+        if sex == UserSex.MALE:
+            return "мужчина"
+        if sex == UserSex.FEMALE:
+            return "женщина"
+        return "не указан"
+
+    @staticmethod
+    def _profile_goal_label(goal: Optional[UserGoal]) -> str:
+        if goal == UserGoal.MAINTENANCE:
+            return "поддержание"
+        if goal == UserGoal.WEIGHT_LOSS:
+            return "похудение"
+        if goal == UserGoal.MASS_GAIN:
+            return "набор массы"
+        return "не указана"
 
     def _format_new_decisions(self, decisions: Iterable) -> str:
         decision_list = list(decisions)
@@ -1986,6 +2317,14 @@ class TelegramHealthBot:
             return self._history_fix_reply_markup(reply_user)
         if text == "/history_delete_last":
             return self._history_delete_reply_markup(reply_user)
+        if text == "/profile":
+            return self._profile_home_reply_markup()
+        if text == "/profile_about":
+            return self._profile_about_reply_markup(reply_user)
+        if text == "/profile_goals":
+            return self._profile_goals_reply_markup()
+        if text == "/profile_reminders":
+            return self._profile_reminders_reply_markup(reply_user)
         if text in {
             "/start",
             "/help",
@@ -1995,7 +2334,6 @@ class TelegramHealthBot:
             "/add_food",
             "/history",
             "/progress",
-            "/profile",
             "/how_it_works",
         }:
             return self._menu_reply_markup(reply_user)
@@ -2094,6 +2432,107 @@ class TelegramHealthBot:
                     [
                         {"text": "Открыть приложение", "web_app": {"url": self.settings.mini_app_url}},
                     ]
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _profile_home_reply_markup() -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [{"text": "Цели", "callback_data": "profile_goals"}],
+                    [{"text": "Напоминания", "callback_data": "profile_reminders"}],
+                    [{"text": "Обо мне", "callback_data": "profile_about"}],
+                    [{"text": "Назад", "callback_data": "profile_back_to_menu"}],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _profile_about_reply_markup(app_user: AppUser) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Мужчина" + (" ✓" if app_user.sex == UserSex.MALE else ""), "callback_data": "profile_about_sex:male"},
+                        {"text": "Женщина" + (" ✓" if app_user.sex == UserSex.FEMALE else ""), "callback_data": "profile_about_sex:female"},
+                    ],
+                    [
+                        {"text": "Возраст", "callback_data": "profile_about_edit:age"},
+                        {"text": "Рост", "callback_data": "profile_about_edit:height"},
+                    ],
+                    [
+                        {"text": "Вес", "callback_data": "profile_about_edit:weight"},
+                    ],
+                    [
+                        {"text": "Поддержание" + (" ✓" if app_user.goal == UserGoal.MAINTENANCE else ""), "callback_data": "profile_about_goal:maintenance"},
+                    ],
+                    [
+                        {"text": "Похудение" + (" ✓" if app_user.goal == UserGoal.WEIGHT_LOSS else ""), "callback_data": "profile_about_goal:weight_loss"},
+                        {"text": "Набор массы" + (" ✓" if app_user.goal == UserGoal.MASS_GAIN else ""), "callback_data": "profile_about_goal:mass_gain"},
+                    ],
+                    [{"text": "Назад", "callback_data": "profile_home"}],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _profile_goals_reply_markup() -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Вода", "callback_data": "profile_goal_edit:water_goal"},
+                        {"text": "Белок", "callback_data": "profile_goal_edit:protein_goal"},
+                    ],
+                    [
+                        {"text": "Калории", "callback_data": "profile_goal_edit:calorie_goal"},
+                    ],
+                    [
+                        {"text": "Сбросить к рекомендованным", "callback_data": "profile_goals_reset"},
+                    ],
+                    [{"text": "Назад", "callback_data": "profile_home"}],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _profile_reminders_reply_markup(app_user: AppUser) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": ("Выключить все" if app_user.reminders_enabled else "Включить напоминания"),
+                            "callback_data": "profile_reminders_toggle:enabled",
+                        }
+                    ],
+                    [
+                        {"text": "Записать еду" + (" ✓" if app_user.reminder_meal_logging else ""), "callback_data": "profile_reminders_toggle:meal"},
+                    ],
+                    [
+                        {"text": "Напомнить про воду" + (" ✓" if app_user.reminder_water else ""), "callback_data": "profile_reminders_toggle:water"},
+                    ],
+                    [
+                        {"text": "Вечерний итог дня" + (" ✓" if app_user.reminder_evening_summary else ""), "callback_data": "profile_reminders_toggle:evening"},
+                    ],
+                    [{"text": "Назад", "callback_data": "profile_home"}],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _profile_prompt_reply_markup(back_callback: str) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [{"text": "Назад", "callback_data": back_callback}],
                 ]
             },
             ensure_ascii=False,
@@ -2327,6 +2766,113 @@ class TelegramHealthBot:
             "Удалено: %s.\n\n"
             "Если нужна история и более глубокие правки, откройте приложение."
         ) % deleted.title, self._history_reply_markup()
+
+    def _handle_pending_profile_input(
+        self,
+        app_user: Optional[AppUser],
+        raw_text: str,
+        normalized_text: str,
+    ) -> Optional[tuple[str, str]]:
+        if app_user is None:
+            return None
+        state = self._pending_profile_edit_states.get(app_user.user_id)
+        if state is None:
+            return None
+        if normalized_text in {
+            "/menu",
+            "/help",
+            "/start",
+            "/add_food",
+            "/add_water",
+            "/history",
+            "/history_fix_last",
+            "/history_delete_last",
+            "/history_app",
+            "/progress",
+            "/profile",
+            "/profile_about",
+            "/profile_goals",
+            "/profile_reminders",
+            "/how_it_works",
+        }:
+            self._clear_pending_profile_edit_state(app_user.user_id)
+            return None
+        field = state["field"]
+        try:
+            if field == "age":
+                updated = self.service.update_user_about(app_user.user_id, age_years=self._parse_age_years(raw_text))
+                self._clear_pending_profile_edit_state(app_user.user_id)
+                return self._profile_about_text(updated), self._profile_about_reply_markup(updated)
+            if field == "height":
+                updated = self.service.update_user_about(app_user.user_id, height_cm=self._parse_height_cm(raw_text))
+                self._clear_pending_profile_edit_state(app_user.user_id)
+                return self._profile_about_text(updated), self._profile_about_reply_markup(updated)
+            if field == "weight":
+                updated = self.service.update_user_about(
+                    app_user.user_id,
+                    profile_weight_kg=self._parse_weight_kg(raw_text),
+                )
+                self._clear_pending_profile_edit_state(app_user.user_id)
+                return self._profile_about_text(updated), self._profile_about_reply_markup(updated)
+            if field == "water_goal":
+                updated = self.service.update_user_goal_settings(
+                    app_user.user_id,
+                    target_water_ml=self._parse_water_goal_ml(raw_text),
+                )
+                self._clear_pending_profile_edit_state(app_user.user_id)
+                return self._profile_goals_text(updated), self._profile_goals_reply_markup()
+            if field == "protein_goal":
+                updated = self.service.update_user_goal_settings(
+                    app_user.user_id,
+                    target_protein_g=self._parse_protein_goal_g(raw_text),
+                )
+                self._clear_pending_profile_edit_state(app_user.user_id)
+                return self._profile_goals_text(updated), self._profile_goals_reply_markup()
+            if field == "calorie_goal":
+                calories_min, calories_max = self._parse_calorie_goal(raw_text)
+                updated = self.service.update_user_goal_settings(
+                    app_user.user_id,
+                    target_calories_min=calories_min,
+                    target_calories_max=calories_max,
+                )
+                self._clear_pending_profile_edit_state(app_user.user_id)
+                return self._profile_goals_text(updated), self._profile_goals_reply_markup()
+        except ValueError as exc:
+            back_callback = "profile_about" if field in {"age", "height", "weight"} else "profile_goals"
+            return str(exc), self._profile_prompt_reply_markup(back_callback)
+        return None
+
+    def _set_pending_profile_edit_state(self, user_id: int, field: str) -> None:
+        self._pending_profile_edit_states[user_id] = {"field": field}
+
+    def _clear_pending_profile_edit_state(self, user_id: int) -> None:
+        self._pending_profile_edit_states.pop(user_id, None)
+
+    def _toggle_profile_reminder(self, app_user: AppUser, toggle_key: str) -> AppUser:
+        if toggle_key == "enabled":
+            return self.service.update_user_reminders(
+                app_user.user_id,
+                reminders_enabled=not app_user.reminders_enabled,
+            )
+        if toggle_key == "meal":
+            return self.service.update_user_reminders(
+                app_user.user_id,
+                reminders_enabled=True,
+                reminder_meal_logging=not app_user.reminder_meal_logging,
+            )
+        if toggle_key == "water":
+            return self.service.update_user_reminders(
+                app_user.user_id,
+                reminders_enabled=True,
+                reminder_water=not app_user.reminder_water,
+            )
+        if toggle_key == "evening":
+            return self.service.update_user_reminders(
+                app_user.user_id,
+                reminders_enabled=True,
+                reminder_evening_summary=not app_user.reminder_evening_summary,
+            )
+        raise ValueError("Неизвестный переключатель напоминаний.")
 
     @staticmethod
     def _format_meal_draft_card_text(draft: MealPhotoDraft) -> str:

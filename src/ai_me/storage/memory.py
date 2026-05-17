@@ -74,6 +74,19 @@ class InMemoryStore:
                 status=status,
                 is_admin=is_admin,
                 admin_mode_enabled=existing.admin_mode_enabled if is_admin else False,
+                sex=existing.sex,
+                age_years=existing.age_years,
+                height_cm=existing.height_cm,
+                profile_weight_kg=existing.profile_weight_kg,
+                goal=existing.goal,
+                target_water_ml=existing.target_water_ml,
+                target_protein_g=existing.target_protein_g,
+                target_calories_min=existing.target_calories_min,
+                target_calories_max=existing.target_calories_max,
+                reminders_enabled=existing.reminders_enabled,
+                reminder_meal_logging=existing.reminder_meal_logging,
+                reminder_water=existing.reminder_water,
+                reminder_evening_summary=existing.reminder_evening_summary,
                 created_at=existing.created_at,
             )
             self._users_by_id[existing.user_id] = updated
@@ -104,10 +117,28 @@ class InMemoryStore:
             status=user.status,
             is_admin=user.is_admin,
             admin_mode_enabled=user.admin_mode_enabled,
+            sex=user.sex,
+            age_years=user.age_years,
+            height_cm=user.height_cm,
+            profile_weight_kg=user.profile_weight_kg,
+            goal=user.goal,
+            target_water_ml=user.target_water_ml,
+            target_protein_g=user.target_protein_g,
+            target_calories_min=user.target_calories_min,
+            target_calories_max=user.target_calories_max,
+            reminders_enabled=user.reminders_enabled,
+            reminder_meal_logging=user.reminder_meal_logging,
+            reminder_water=user.reminder_water,
+            reminder_evening_summary=user.reminder_evening_summary,
             created_at=user.created_at,
         )
         self._users_by_id[user.user_id] = updated
         return updated
+
+    def update_user_settings(self, user: AppUser) -> AppUser:
+        self._users_by_id[user.user_id] = user
+        self._user_ids_by_telegram_id[user.telegram_user_id] = user.user_id
+        return user
 
     def update_user_admin_mode(self, user_id: int, enabled: bool) -> AppUser:
         user = self._users_by_id[user_id]
@@ -120,6 +151,19 @@ class InMemoryStore:
             status=user.status,
             is_admin=user.is_admin,
             admin_mode_enabled=enabled if user.is_admin else False,
+            sex=user.sex,
+            age_years=user.age_years,
+            height_cm=user.height_cm,
+            profile_weight_kg=user.profile_weight_kg,
+            goal=user.goal,
+            target_water_ml=user.target_water_ml,
+            target_protein_g=user.target_protein_g,
+            target_calories_min=user.target_calories_min,
+            target_calories_max=user.target_calories_max,
+            reminders_enabled=user.reminders_enabled,
+            reminder_meal_logging=user.reminder_meal_logging,
+            reminder_water=user.reminder_water,
+            reminder_evening_summary=user.reminder_evening_summary,
             created_at=user.created_at,
         )
         self._users_by_id[user_id] = updated
@@ -263,7 +307,17 @@ class InMemoryStore:
         self._goals.setdefault(user_id, {})[goals.target_date] = goals
 
     def get_health_goals(self, user_id: int, target_date: date) -> DailyHealthGoals:
-        return self._goals.get(user_id, {}).get(target_date, DailyHealthGoals(target_date=target_date))
+        current = self._goals.get(user_id, {}).get(target_date)
+        if current is not None:
+            return current
+        user = self._users_by_id.get(user_id)
+        if user is None:
+            return DailyHealthGoals(target_date=target_date)
+        return DailyHealthGoals(
+            target_date=target_date,
+            water_ml=user.target_water_ml,
+            protein_g=user.target_protein_g,
+        )
 
     def add_meal(self, user_id: int, entry: MealEntry) -> None:
         normalized = entry if entry.created_at is not None else replace(entry, created_at=entry.occurred_at)

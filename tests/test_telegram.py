@@ -10,7 +10,7 @@ from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, Fina
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft, PhotoLogKind, PhotoLogResult, WATER_PHOTO_SOURCE
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, StepProgressInsight
 from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
-from ai_me.domain.user import AppUser, UserStatus
+from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
 from ai_me.telegram import TelegramHealthBot
 from ai_me.version import format_release_date_line, format_version_line
@@ -177,16 +177,11 @@ class DummyHealthService:
         user = self.users_by_telegram_id.get(telegram_user_id)
         if user is None:
             return None
-        return AppUser(
-            user_id=user.user_id,
-            telegram_user_id=user.telegram_user_id,
+        return replace(
+            user,
             chat_id=chat_id,
             username=username or user.username,
             first_name=first_name or user.first_name,
-            status=user.status,
-            is_admin=user.is_admin,
-            admin_mode_enabled=user.admin_mode_enabled,
-            created_at=user.created_at,
         )
 
     def register_user(
@@ -201,16 +196,11 @@ class DummyHealthService:
         if existing is not None:
             if existing.status == UserStatus.BLOCKED:
                 raise ValueError("Ваш доступ к боту заблокирован.")
-            user = AppUser(
-                user_id=existing.user_id,
-                telegram_user_id=telegram_user_id,
+            user = replace(
+                existing,
                 chat_id=chat_id,
                 username=username,
                 first_name=first_name,
-                status=existing.status,
-                is_admin=existing.is_admin,
-                admin_mode_enabled=existing.admin_mode_enabled,
-                created_at=existing.created_at,
             )
             self.users_by_telegram_id[telegram_user_id] = user
             return user
@@ -231,20 +221,70 @@ class DummyHealthService:
         for telegram_user_id, user in list(self.users_by_telegram_id.items()):
             if user.user_id != user_id:
                 continue
-            updated = AppUser(
-                user_id=user.user_id,
-                telegram_user_id=user.telegram_user_id,
-                chat_id=user.chat_id,
-                username=user.username,
-                first_name=user.first_name,
-                status=user.status,
-                is_admin=user.is_admin,
+            updated = replace(
+                user,
                 admin_mode_enabled=enabled if user.is_admin else False,
-                created_at=user.created_at,
             )
             self.users_by_telegram_id[telegram_user_id] = updated
             return updated
         raise ValueError("Пользователь не найден.")
+
+    def update_user_about(self, user_id, **kwargs):
+        user = self.get_user_by_id(user_id)
+        if user is None:
+            raise ValueError("Пользователь не найден.")
+        updated = replace(user, **kwargs)
+        self.users_by_telegram_id[updated.telegram_user_id] = updated
+        return updated
+
+    def update_user_goal_settings(self, user_id, **kwargs):
+        user = self.get_user_by_id(user_id)
+        if user is None:
+            raise ValueError("Пользователь не найден.")
+        updated = replace(
+            user,
+            target_water_ml=kwargs.get("target_water_ml", user.target_water_ml),
+            target_protein_g=kwargs.get("target_protein_g", user.target_protein_g),
+            target_calories_min=kwargs.get("target_calories_min", user.target_calories_min),
+            target_calories_max=kwargs.get("target_calories_max", user.target_calories_max),
+        )
+        self.users_by_telegram_id[updated.telegram_user_id] = updated
+        return updated
+
+    def reset_user_goal_settings(self, user_id):
+        user = self.get_user_by_id(user_id)
+        if user is None:
+            raise ValueError("Пользователь не найден.")
+        updated = replace(
+            user,
+            target_water_ml=2000,
+            target_protein_g=120,
+            target_calories_min=None,
+            target_calories_max=None,
+        )
+        self.users_by_telegram_id[updated.telegram_user_id] = updated
+        return updated
+
+    def update_user_reminders(self, user_id, **kwargs):
+        user = self.get_user_by_id(user_id)
+        if user is None:
+            raise ValueError("Пользователь не найден.")
+        updated = replace(
+            user,
+            reminders_enabled=kwargs.get("reminders_enabled", user.reminders_enabled),
+            reminder_meal_logging=kwargs.get("reminder_meal_logging", user.reminder_meal_logging),
+            reminder_water=kwargs.get("reminder_water", user.reminder_water),
+            reminder_evening_summary=kwargs.get("reminder_evening_summary", user.reminder_evening_summary),
+        )
+        if not updated.reminders_enabled:
+            updated = replace(
+                updated,
+                reminder_meal_logging=False,
+                reminder_water=False,
+                reminder_evening_summary=False,
+            )
+        self.users_by_telegram_id[updated.telegram_user_id] = updated
+        return updated
 
     def get_digest_settings(self, user_id):
         return type(
@@ -439,6 +479,7 @@ class DummyHealthService:
 
     def get_daily_summary(self, user_id, target_date):
         water_ml = sum(entry.amount_ml for logged_user_id, entry in self.logged_water_entries if logged_user_id == user_id)
+        user = self.get_user_by_id(user_id)
         return DailyHealthSummary(
             target_date=target_date,
             meals_count=1,
@@ -451,7 +492,11 @@ class DummyHealthService:
             steps=0,
             activity_minutes=0,
             latest_weight_kg=None,
-            goals=DailyHealthGoals(target_date=target_date),
+            goals=DailyHealthGoals(
+                target_date=target_date,
+                water_ml=user.target_water_ml if user is not None else 2000,
+                protein_g=user.target_protein_g if user is not None else 120,
+            ),
         )
 
     def list_meals(self, user_id, target_date):
@@ -733,6 +778,146 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Ежедневная сводка: включен", response)
         self.assertIn("Недельная сводка: включен", response)
         self.assertIn("Как это работает", response)
+
+    def test_profile_command_opens_profile_home_with_sections(self) -> None:
+        response = self.bot._route_command("/profile", app_user=self.service.users_by_telegram_id[77])
+
+        self.assertIn("Профиль", response)
+        self.assertIn("Цель по воде: 2.0 л", response)
+        self.assertIn("Цель по белку: 120 г", response)
+        self.assertIn("Напоминания: выключены", response)
+
+        reply_markup = self.bot._reply_markup_for_response(
+            text="/profile",
+            original_app_user=self.service.users_by_telegram_id[77],
+            reply_user=self.service.users_by_telegram_id[77],
+        )
+        self.assertIn("profile_goals", reply_markup)
+        self.assertIn("profile_reminders", reply_markup)
+        self.assertIn("profile_about", reply_markup)
+
+    def test_profile_about_callback_updates_sex_without_losing_existing_fields(self) -> None:
+        user = self.service.update_user_about(
+            2,
+            age_years=31,
+            height_cm=176,
+            profile_weight_kg=79.5,
+            goal=UserGoal.WEIGHT_LOSS,
+        )
+        self.service.users_by_telegram_id[user.telegram_user_id] = user
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "profile_about_sex:female",
+                "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 778, "type": "private"},
+                },
+            }
+        )
+
+        updated = self.service.users_by_telegram_id[77]
+        self.assertEqual(updated.sex, UserSex.FEMALE)
+        self.assertEqual(updated.age_years, 31)
+        self.assertEqual(updated.height_cm, 176)
+        self.assertEqual(updated.profile_weight_kg, 79.5)
+        self.assertEqual(updated.goal, UserGoal.WEIGHT_LOSS)
+        self.assertEqual(calls[1][0], "editMessageText")
+        self.assertIn("Пол: женщина", calls[1][1]["text"])
+
+    def test_pending_profile_age_input_updates_about_section(self) -> None:
+        self.bot._set_pending_profile_edit_state(2, "age")
+
+        response = self.bot._handle_pending_profile_input(
+            app_user=self.service.users_by_telegram_id[77],
+            raw_text="32",
+            normalized_text="32",
+        )
+
+        self.assertIsNotNone(response)
+        text, reply_markup = response
+        self.assertIn("Возраст: 32 лет", text)
+        self.assertIn("profile_about_edit:age", reply_markup)
+        self.assertEqual(self.service.users_by_telegram_id[77].age_years, 32)
+        self.assertNotIn(2, self.bot._pending_profile_edit_states)
+
+    def test_pending_profile_input_keeps_retry_state_after_validation_error(self) -> None:
+        self.bot._set_pending_profile_edit_state(2, "height")
+
+        response = self.bot._handle_pending_profile_input(
+            app_user=self.service.users_by_telegram_id[77],
+            raw_text="20",
+            normalized_text="20",
+        )
+
+        self.assertIsNotNone(response)
+        text, reply_markup = response
+        self.assertIn("Рост должен быть в диапазоне", text)
+        self.assertIn("profile_about", reply_markup)
+        self.assertIn(2, self.bot._pending_profile_edit_states)
+
+        retry_response = self.bot._handle_pending_profile_input(
+            app_user=self.service.users_by_telegram_id[77],
+            raw_text="176",
+            normalized_text="176",
+        )
+        self.assertIsNotNone(retry_response)
+        retry_text, _ = retry_response
+        self.assertIn("Рост: 176 см", retry_text)
+        self.assertEqual(self.service.users_by_telegram_id[77].height_cm, 176)
+        self.assertNotIn(2, self.bot._pending_profile_edit_states)
+
+    def test_pending_profile_goal_input_updates_calorie_range(self) -> None:
+        self.bot._set_pending_profile_edit_state(2, "calorie_goal")
+
+        response = self.bot._handle_pending_profile_input(
+            app_user=self.service.users_by_telegram_id[77],
+            raw_text="1800-2200",
+            normalized_text="1800-2200",
+        )
+
+        self.assertIsNotNone(response)
+        text, reply_markup = response
+        self.assertIn("Калории: 1800–2200 ккал", text)
+        self.assertIn("profile_goals_reset", reply_markup)
+        updated = self.service.users_by_telegram_id[77]
+        self.assertEqual(updated.target_calories_min, 1800)
+        self.assertEqual(updated.target_calories_max, 2200)
+
+    def test_profile_reminders_toggle_updates_flags(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "profile_reminders_toggle:water",
+                "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 778, "type": "private"},
+                },
+            }
+        )
+
+        updated = self.service.users_by_telegram_id[77]
+        self.assertTrue(updated.reminders_enabled)
+        self.assertTrue(updated.reminder_water)
+        self.assertEqual(calls[1][0], "editMessageText")
+        self.assertIn("Главный переключатель: включен", calls[1][1]["text"])
+        self.assertIn("Вода: включено", calls[1][1]["text"])
 
     def test_start_for_new_user_does_not_use_technical_digest_term(self) -> None:
         response = self.bot._route_command("/start", chat_id=999, user_id=999, username="new", first_name="New")

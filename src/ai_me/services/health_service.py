@@ -58,7 +58,7 @@ from ai_me.domain.health import (
     WeightEntry,
 )
 from ai_me.domain.health_import import HealthImportProvider, HealthImportResult, UserGoogleDriveSettings
-from ai_me.domain.user import AppUser, UserStatus
+from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
 from ai_me.services.food_analysis import DisabledFoodPhotoAnalyzer, FoodPhotoAnalyzer
 from ai_me.services.google_drive_import import GoogleDriveHealthImportService
 from ai_me.services.media_storage import (
@@ -128,6 +128,88 @@ class HealthService:
     def get_user_by_id(self, user_id: int) -> Optional[AppUser]:
         return next((item for item in self.store.list_users() if item.user_id == user_id), None)
 
+    def update_user_about(
+        self,
+        user_id: int,
+        *,
+        sex: Optional[UserSex] = None,
+        age_years: Optional[int] = None,
+        height_cm: Optional[int] = None,
+        profile_weight_kg: Optional[float] = None,
+        goal: Optional[UserGoal] = None,
+    ) -> AppUser:
+        user = self._require_user(user_id)
+        updated = replace(
+            user,
+            sex=sex if sex is not None else user.sex,
+            age_years=age_years if age_years is not None else user.age_years,
+            height_cm=height_cm if height_cm is not None else user.height_cm,
+            profile_weight_kg=profile_weight_kg if profile_weight_kg is not None else user.profile_weight_kg,
+            goal=goal if goal is not None else user.goal,
+        )
+        return self.store.update_user_settings(updated)
+
+    def update_user_goal_settings(
+        self,
+        user_id: int,
+        *,
+        target_water_ml: Optional[int] = None,
+        target_protein_g: Optional[int] = None,
+        target_calories_min: Optional[int] = None,
+        target_calories_max: Optional[int] = None,
+    ) -> AppUser:
+        user = self._require_user(user_id)
+        updated = replace(
+            user,
+            target_water_ml=target_water_ml if target_water_ml is not None else user.target_water_ml,
+            target_protein_g=target_protein_g if target_protein_g is not None else user.target_protein_g,
+            target_calories_min=target_calories_min if target_calories_min is not None else user.target_calories_min,
+            target_calories_max=target_calories_max if target_calories_max is not None else user.target_calories_max,
+        )
+        return self.store.update_user_settings(updated)
+
+    def reset_user_goal_settings(self, user_id: int) -> AppUser:
+        user = self._require_user(user_id)
+        updated = replace(
+            user,
+            target_water_ml=2000,
+            target_protein_g=120,
+            target_calories_min=None,
+            target_calories_max=None,
+        )
+        return self.store.update_user_settings(updated)
+
+    def update_user_reminders(
+        self,
+        user_id: int,
+        *,
+        reminders_enabled: Optional[bool] = None,
+        reminder_meal_logging: Optional[bool] = None,
+        reminder_water: Optional[bool] = None,
+        reminder_evening_summary: Optional[bool] = None,
+    ) -> AppUser:
+        user = self._require_user(user_id)
+        enabled = user.reminders_enabled if reminders_enabled is None else reminders_enabled
+        meal_logging = user.reminder_meal_logging if reminder_meal_logging is None else reminder_meal_logging
+        water = user.reminder_water if reminder_water is None else reminder_water
+        evening_summary = (
+            user.reminder_evening_summary if reminder_evening_summary is None else reminder_evening_summary
+        )
+        if not enabled:
+            meal_logging = False
+            water = False
+            evening_summary = False
+        elif reminder_meal_logging or reminder_water or reminder_evening_summary:
+            enabled = True
+        updated = replace(
+            user,
+            reminders_enabled=enabled,
+            reminder_meal_logging=meal_logging,
+            reminder_water=water,
+            reminder_evening_summary=evening_summary,
+        )
+        return self.store.update_user_settings(updated)
+
     def set_admin_mode(self, user_id: int, enabled: bool) -> AppUser:
         user = self.get_user_by_id(user_id)
         if user is None:
@@ -168,6 +250,12 @@ class HealthService:
             status=UserStatus.ACTIVE,
             is_admin=telegram_user_id in self.admin_telegram_user_ids,
         )
+
+    def _require_user(self, user_id: int) -> AppUser:
+        user = self.get_user_by_id(user_id)
+        if user is None:
+            raise ValueError("Пользователь не найден.")
+        return user
 
     def google_drive_is_configured(self) -> bool:
         return self.google_drive_import_service.is_configured()

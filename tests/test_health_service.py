@@ -12,7 +12,7 @@ from ai_me.domain.health import (
     WaterEntry,
     WeightEntry,
 )
-from ai_me.domain.user import UserStatus
+from ai_me.domain.user import UserGoal, UserSex, UserStatus
 from ai_me.services.food_analysis import MealAnalysis
 from ai_me.services.health_service import HealthService
 from ai_me.services.media_storage import DisabledMediaStorage, StoredMediaObject
@@ -216,6 +216,72 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(summary.activity_minutes, 45)
         self.assertEqual(summary.latest_weight_kg, 81.4)
         self.assertEqual(summary.goals.water_ml, 2400)
+
+    def test_update_user_about_preserves_other_fields(self) -> None:
+        updated = self.service.update_user_about(
+            self.user.user_id,
+            sex=UserSex.MALE,
+            age_years=32,
+            height_cm=181,
+            profile_weight_kg=82.5,
+            goal=UserGoal.MASS_GAIN,
+        )
+        updated = self.service.update_user_about(
+            self.user.user_id,
+            sex=UserSex.FEMALE,
+        )
+
+        self.assertEqual(updated.sex, UserSex.FEMALE)
+        self.assertEqual(updated.age_years, 32)
+        self.assertEqual(updated.height_cm, 181)
+        self.assertEqual(updated.profile_weight_kg, 82.5)
+        self.assertEqual(updated.goal, UserGoal.MASS_GAIN)
+
+    def test_update_user_goal_settings_preserves_existing_calorie_range(self) -> None:
+        updated = self.service.update_user_goal_settings(
+            self.user.user_id,
+            target_calories_min=1800,
+            target_calories_max=2200,
+        )
+        updated = self.service.update_user_goal_settings(
+            self.user.user_id,
+            target_water_ml=2300,
+        )
+
+        self.assertEqual(updated.target_water_ml, 2300)
+        self.assertEqual(updated.target_protein_g, 120)
+        self.assertEqual(updated.target_calories_min, 1800)
+        self.assertEqual(updated.target_calories_max, 2200)
+
+    def test_update_user_reminders_turns_off_child_flags_with_master_switch(self) -> None:
+        updated = self.service.update_user_reminders(
+            self.user.user_id,
+            reminders_enabled=True,
+            reminder_meal_logging=True,
+            reminder_water=True,
+            reminder_evening_summary=True,
+        )
+        updated = self.service.update_user_reminders(
+            self.user.user_id,
+            reminders_enabled=False,
+        )
+
+        self.assertFalse(updated.reminders_enabled)
+        self.assertFalse(updated.reminder_meal_logging)
+        self.assertFalse(updated.reminder_water)
+        self.assertFalse(updated.reminder_evening_summary)
+
+    def test_daily_summary_uses_user_goal_defaults_when_daily_goals_are_not_set(self) -> None:
+        self.service.update_user_goal_settings(
+            self.user.user_id,
+            target_water_ml=2600,
+            target_protein_g=150,
+        )
+
+        summary = self.service.get_daily_summary(self.user.user_id, date(2026, 5, 8))
+
+        self.assertEqual(summary.goals.water_ml, 2600)
+        self.assertEqual(summary.goals.protein_g, 150)
 
     def test_build_step_progress_insight_compares_with_30_day_average_and_target(self) -> None:
         for offset, steps in enumerate([5000, 7000, 6500, 8000]):

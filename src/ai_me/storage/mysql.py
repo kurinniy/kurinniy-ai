@@ -17,7 +17,7 @@ from ai_me.domain.health import (
     WeightEntry,
 )
 from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
-from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserStatus
+from ai_me.domain.user import AppUser, InviteCode, InviteStatus, UserGoal, UserSex, UserStatus
 
 try:
     import mysql.connector
@@ -134,6 +134,47 @@ class MySQLStore:
         if updated is None:
             raise RuntimeError("Не удалось обновить профиль пользователя %s" % user.telegram_user_id)
         return updated
+
+    def update_user_settings(self, user: AppUser) -> AppUser:
+        self._execute(
+            """
+            UPDATE users
+            SET sex = %s,
+                age_years = %s,
+                height_cm = %s,
+                profile_weight_kg = %s,
+                goal = %s,
+                target_water_ml = %s,
+                target_protein_g = %s,
+                target_calories_min = %s,
+                target_calories_max = %s,
+                reminders_enabled = %s,
+                reminder_meal_logging = %s,
+                reminder_water = %s,
+                reminder_evening_summary = %s
+            WHERE user_id = %s
+            """,
+            (
+                user.sex.value if user.sex is not None else None,
+                user.age_years,
+                user.height_cm,
+                user.profile_weight_kg,
+                user.goal.value if user.goal is not None else None,
+                user.target_water_ml,
+                user.target_protein_g,
+                user.target_calories_min,
+                user.target_calories_max,
+                1 if user.reminders_enabled else 0,
+                1 if user.reminder_meal_logging else 0,
+                1 if user.reminder_water else 0,
+                1 if user.reminder_evening_summary else 0,
+                user.user_id,
+            ),
+        )
+        row = self._fetchone("SELECT * FROM users WHERE user_id = %s", (user.user_id,))
+        if row is None:
+            raise RuntimeError("Не удалось обновить настройки пользователя %s" % user.user_id)
+        return self._to_user(row)
 
     def update_user_admin_mode(self, user_id: int, enabled: bool) -> AppUser:
         self._execute(
@@ -518,7 +559,15 @@ class MySQLStore:
             (user_id, target_date),
         )
         if not row:
-            return DailyHealthGoals(target_date=target_date)
+            user_row = self._fetchone("SELECT * FROM users WHERE user_id = %s", (user_id,))
+            if user_row is None:
+                return DailyHealthGoals(target_date=target_date)
+            user = self._to_user(user_row)
+            return DailyHealthGoals(
+                target_date=target_date,
+                water_ml=user.target_water_ml,
+                protein_g=user.target_protein_g,
+            )
         return DailyHealthGoals(
             target_date=row["target_date"],
             water_ml=row["water_ml"],
@@ -1253,6 +1302,19 @@ class MySQLStore:
                 status VARCHAR(32) NOT NULL,
                 is_admin TINYINT(1) NOT NULL DEFAULT 0,
                 admin_mode_enabled TINYINT(1) NOT NULL DEFAULT 1,
+                sex VARCHAR(16) NULL,
+                age_years INT NULL,
+                height_cm INT NULL,
+                profile_weight_kg DOUBLE NULL,
+                goal VARCHAR(32) NULL,
+                target_water_ml INT NOT NULL DEFAULT 2000,
+                target_protein_g INT NOT NULL DEFAULT 120,
+                target_calories_min INT NULL,
+                target_calories_max INT NULL,
+                reminders_enabled TINYINT(1) NOT NULL DEFAULT 0,
+                reminder_meal_logging TINYINT(1) NOT NULL DEFAULT 0,
+                reminder_water TINYINT(1) NOT NULL DEFAULT 0,
+                reminder_evening_summary TINYINT(1) NOT NULL DEFAULT 0,
                 created_at DATETIME(6) NOT NULL,
                 INDEX idx_users_status (status)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
@@ -1505,6 +1567,55 @@ class MySQLStore:
             "users",
             "admin_mode_enabled",
             "ALTER TABLE users ADD COLUMN admin_mode_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER is_admin",
+        )
+        self._ensure_column("users", "sex", "ALTER TABLE users ADD COLUMN sex VARCHAR(16) NULL AFTER admin_mode_enabled")
+        self._ensure_column("users", "age_years", "ALTER TABLE users ADD COLUMN age_years INT NULL AFTER sex")
+        self._ensure_column("users", "height_cm", "ALTER TABLE users ADD COLUMN height_cm INT NULL AFTER age_years")
+        self._ensure_column(
+            "users",
+            "profile_weight_kg",
+            "ALTER TABLE users ADD COLUMN profile_weight_kg DOUBLE NULL AFTER height_cm",
+        )
+        self._ensure_column("users", "goal", "ALTER TABLE users ADD COLUMN goal VARCHAR(32) NULL AFTER profile_weight_kg")
+        self._ensure_column(
+            "users",
+            "target_water_ml",
+            "ALTER TABLE users ADD COLUMN target_water_ml INT NOT NULL DEFAULT 2000 AFTER goal",
+        )
+        self._ensure_column(
+            "users",
+            "target_protein_g",
+            "ALTER TABLE users ADD COLUMN target_protein_g INT NOT NULL DEFAULT 120 AFTER target_water_ml",
+        )
+        self._ensure_column(
+            "users",
+            "target_calories_min",
+            "ALTER TABLE users ADD COLUMN target_calories_min INT NULL AFTER target_protein_g",
+        )
+        self._ensure_column(
+            "users",
+            "target_calories_max",
+            "ALTER TABLE users ADD COLUMN target_calories_max INT NULL AFTER target_calories_min",
+        )
+        self._ensure_column(
+            "users",
+            "reminders_enabled",
+            "ALTER TABLE users ADD COLUMN reminders_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER target_calories_max",
+        )
+        self._ensure_column(
+            "users",
+            "reminder_meal_logging",
+            "ALTER TABLE users ADD COLUMN reminder_meal_logging TINYINT(1) NOT NULL DEFAULT 0 AFTER reminders_enabled",
+        )
+        self._ensure_column(
+            "users",
+            "reminder_water",
+            "ALTER TABLE users ADD COLUMN reminder_water TINYINT(1) NOT NULL DEFAULT 0 AFTER reminder_meal_logging",
+        )
+        self._ensure_column(
+            "users",
+            "reminder_evening_summary",
+            "ALTER TABLE users ADD COLUMN reminder_evening_summary TINYINT(1) NOT NULL DEFAULT 0 AFTER reminder_water",
         )
         self._ensure_column("meals", "fat_g", "ALTER TABLE meals ADD COLUMN fat_g DOUBLE NOT NULL DEFAULT 0 AFTER protein_g")
         self._ensure_column("meals", "carbs_g", "ALTER TABLE meals ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g")
@@ -1767,6 +1878,19 @@ class MySQLStore:
             status=UserStatus(row["status"]),
             is_admin=bool(row["is_admin"]),
             admin_mode_enabled=bool(row.get("admin_mode_enabled", 1)),
+            sex=UserSex(row["sex"]) if row.get("sex") else None,
+            age_years=int(row["age_years"]) if row.get("age_years") is not None else None,
+            height_cm=int(row["height_cm"]) if row.get("height_cm") is not None else None,
+            profile_weight_kg=float(row["profile_weight_kg"]) if row.get("profile_weight_kg") is not None else None,
+            goal=UserGoal(row["goal"]) if row.get("goal") else None,
+            target_water_ml=int(row.get("target_water_ml", 2000) or 2000),
+            target_protein_g=int(row.get("target_protein_g", 120) or 120),
+            target_calories_min=int(row["target_calories_min"]) if row.get("target_calories_min") is not None else None,
+            target_calories_max=int(row["target_calories_max"]) if row.get("target_calories_max") is not None else None,
+            reminders_enabled=bool(row.get("reminders_enabled", 0)),
+            reminder_meal_logging=bool(row.get("reminder_meal_logging", 0)),
+            reminder_water=bool(row.get("reminder_water", 0)),
+            reminder_evening_summary=bool(row.get("reminder_evening_summary", 0)),
             created_at=row["created_at"],
         )
 

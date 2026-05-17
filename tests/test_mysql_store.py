@@ -88,9 +88,54 @@ class MySQLStoreMigrationTest(unittest.TestCase):
             "ALTER TABLE users ADD COLUMN admin_mode_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER is_admin",
             executed_sql,
         )
+        self.assertIn("ALTER TABLE users ADD COLUMN sex VARCHAR(16) NULL AFTER admin_mode_enabled", executed_sql)
+        self.assertIn("ALTER TABLE users ADD COLUMN age_years INT NULL AFTER sex", executed_sql)
+        self.assertIn("ALTER TABLE users ADD COLUMN height_cm INT NULL AFTER age_years", executed_sql)
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN profile_weight_kg DOUBLE NULL AFTER height_cm",
+            executed_sql,
+        )
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN goal VARCHAR(32) NULL AFTER profile_weight_kg",
+            executed_sql,
+        )
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN target_water_ml INT NOT NULL DEFAULT 2000 AFTER goal",
+            executed_sql,
+        )
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN target_protein_g INT NOT NULL DEFAULT 120 AFTER target_water_ml",
+            executed_sql,
+        )
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN target_calories_min INT NULL AFTER target_protein_g",
+            executed_sql,
+        )
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN target_calories_max INT NULL AFTER target_calories_min",
+            executed_sql,
+        )
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN reminders_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER target_calories_max",
+            executed_sql,
+        )
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN reminder_meal_logging TINYINT(1) NOT NULL DEFAULT 0 AFTER reminders_enabled",
+            executed_sql,
+        )
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN reminder_water TINYINT(1) NOT NULL DEFAULT 0 AFTER reminder_meal_logging",
+            executed_sql,
+        )
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN reminder_evening_summary TINYINT(1) NOT NULL DEFAULT 0 AFTER reminder_water",
+            executed_sql,
+        )
         self.assertIn("ALTER TABLE meals ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g", executed_sql)
         self.assertIn("ALTER TABLE meals ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g", executed_sql)
         self.assertIn("ALTER TABLE meals ADD COLUMN user_id BIGINT NULL AFTER entry_id", executed_sql)
+        self.assertIn("ALTER TABLE meals ADD COLUMN created_at DATETIME(6) NULL AFTER user_id", executed_sql)
+        self.assertIn("UPDATE meals SET created_at = occurred_at WHERE created_at IS NULL", executed_sql)
         self.assertIn("ALTER TABLE meal_photo_drafts ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g", executed_sql)
         self.assertIn(
             "ALTER TABLE meal_media ADD COLUMN storage_key VARCHAR(255) NOT NULL DEFAULT '' AFTER storage_kind",
