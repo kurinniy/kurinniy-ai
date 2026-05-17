@@ -211,6 +211,9 @@ class HealthStore(Protocol):
     def build_health_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
         ...
 
+    def build_decision_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
+        ...
+
     def build_post_save_coaching_snapshot(self, user_id: int, target_date: date) -> PostSaveCoachingSnapshot:
         ...
 

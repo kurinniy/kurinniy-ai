@@ -560,6 +560,26 @@ class InMemoryStore:
             goals=self.get_health_goals(user_id, target_date),
         )
 
+    def build_decision_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
+        meals = [entry for entry in self._meals.get(user_id, []) if entry.occurred_at.date() == target_date]
+        water_entries = [
+            entry for entry in self._water_entries.get(user_id, []) if entry.occurred_at.date() == target_date
+        ]
+        return DailyHealthSummary(
+            target_date=target_date,
+            meals_count=len(meals),
+            calories=sum(entry.calories for entry in meals),
+            protein_g=round(sum(entry.protein_g for entry in meals), 2),
+            fat_g=round(sum(entry.fat_g for entry in meals), 2),
+            carbs_g=round(sum(entry.carbs_g for entry in meals), 2),
+            water_ml=sum(entry.amount_ml for entry in water_entries) + sum(entry.water_ml for entry in meals),
+            sleep_hours=0.0,
+            steps=0,
+            activity_minutes=0,
+            latest_weight_kg=None,
+            goals=self.get_health_goals(user_id, target_date),
+        )
+
     def build_post_save_coaching_snapshot(self, user_id: int, target_date: date) -> PostSaveCoachingSnapshot:
         meals = [entry for entry in self._meals.get(user_id, []) if entry.occurred_at.date() == target_date]
         water_entries = [

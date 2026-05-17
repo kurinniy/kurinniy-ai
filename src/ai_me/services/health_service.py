@@ -1132,10 +1132,15 @@ class HealthService:
         target_date: date,
         now: Optional[datetime] = None,
         debug_timings: Optional[Dict[str, float]] = None,
+        use_lightweight_summary: bool = False,
     ) -> List[DecisionLogEntry]:
         current_time = now or datetime.now()
         summary_started_at = time.perf_counter()
-        summary = self.get_daily_summary(user_id, target_date)
+        summary = (
+            self.store.build_decision_summary(user_id, target_date)
+            if use_lightweight_summary
+            else self.get_daily_summary(user_id, target_date)
+        )
         decision_engine_started_at = time.perf_counter()
         decisions = self.decision_engine.evaluate(summary=summary, now=current_time)
         upsert_started_at = time.perf_counter()

@@ -1220,6 +1220,56 @@ class MySQLStore:
             goals=goals,
         )
 
+    def build_decision_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
+        day_start = datetime.combine(target_date, time.min)
+        day_end = datetime.combine(target_date, time.max)
+        connection = self._connect()
+        try:
+            cursor = connection.cursor(dictionary=True)
+            meals = self._fetchone_with_cursor(
+                cursor,
+                """
+                SELECT COUNT(*) AS meals_count,
+                       COALESCE(SUM(calories), 0) AS calories,
+                       COALESCE(SUM(protein_g), 0) AS protein_g,
+                       COALESCE(SUM(fat_g), 0) AS fat_g,
+                       COALESCE(SUM(carbs_g), 0) AS carbs_g,
+                       COALESCE(SUM(water_ml), 0) AS meal_water_ml
+                FROM meals
+                WHERE user_id = %s
+                  AND occurred_at BETWEEN %s AND %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            water = self._fetchone_with_cursor(
+                cursor,
+                """
+                SELECT COALESCE(SUM(amount_ml), 0) AS water_ml
+                FROM water_entries
+                WHERE user_id = %s
+                  AND occurred_at BETWEEN %s AND %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            goals = self._get_health_goals_with_cursor(cursor, user_id, target_date)
+        finally:
+            cursor.close()
+            connection.close()
+        return DailyHealthSummary(
+            target_date=target_date,
+            meals_count=int(meals["meals_count"]),
+            calories=int(meals["calories"]),
+            protein_g=round(float(meals["protein_g"]), 2),
+            fat_g=round(float(meals["fat_g"]), 2),
+            carbs_g=round(float(meals["carbs_g"]), 2),
+            water_ml=int(water["water_ml"]) + int(meals["meal_water_ml"]),
+            sleep_hours=0.0,
+            steps=0,
+            activity_minutes=0,
+            latest_weight_kg=None,
+            goals=goals,
+        )
+
     def build_post_save_coaching_snapshot(self, user_id: int, target_date: date) -> PostSaveCoachingSnapshot:
         day_start = datetime.combine(target_date, time.min)
         day_end = datetime.combine(target_date, time.max)

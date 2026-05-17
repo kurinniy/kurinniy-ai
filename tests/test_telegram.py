@@ -483,7 +483,7 @@ class DummyHealthService:
     def set_goals(self, user_id, goals) -> None:
         return None
 
-    def evaluate_day(self, user_id, target_date, now=None, debug_timings=None):
+    def evaluate_day(self, user_id, target_date, now=None, debug_timings=None, use_lightweight_summary=False):
         if debug_timings is not None:
             debug_timings.update(
                 {

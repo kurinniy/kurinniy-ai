@@ -369,7 +369,12 @@ class TelegramHealthBot:
                     message_id=message_id,
                     text=edit_text,
                 )
-            decisions = self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
+            decisions = self.service.evaluate_day(
+                app_user.user_id,
+                meal.occurred_at.date(),
+                now=self._local_now(),
+                use_lightweight_summary=True,
+            )
             logger.info("Meal confirmed draft_id=%s title=%s", draft_id, meal.title)
             if meal.kind == PhotoLogKind.WATER:
                 self._send_message(
@@ -1420,7 +1425,12 @@ class TelegramHealthBot:
             return "Использование: /confirm_meal <draft_id>"
         self._clear_pending_draft_clarification(app_user.user_id, draft_id=args[0])
         meal = self.service.confirm_meal_draft(app_user.user_id, args[0])
-        decisions = self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
+        decisions = self.service.evaluate_day(
+            app_user.user_id,
+            meal.occurred_at.date(),
+            now=self._local_now(),
+            use_lightweight_summary=True,
+        )
         if meal.kind == PhotoLogKind.WATER:
             return "Вода сохранена: %s л.\n%s" % (self._format_liters(meal.water_ml), self._format_new_decisions(decisions))
         return "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions))
@@ -2196,6 +2206,7 @@ class TelegramHealthBot:
                 meal.occurred_at.date(),
                 now=self._local_now(),
                 debug_timings=evaluate_timings,
+                use_lightweight_summary=True,
             )
             pending_clear_started_at = time.perf_counter()
             self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft.draft_id)
