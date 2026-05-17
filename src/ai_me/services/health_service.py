@@ -45,6 +45,7 @@ from ai_me.domain.food import (
     MealMedia,
     MealPhotoDraft,
     PhotoLogKind,
+    PhotoProcessingResult,
     PhotoLogResult,
 )
 from ai_me.domain.health import (
@@ -622,59 +623,100 @@ class HealthService:
         occurred_at: Optional[datetime] = None,
         caption: str = "",
     ) -> MealPhotoDraft:
-        analyzed = self.food_photo_analyzer.analyze_photo(
-            image_bytes=image_bytes,
-            mime_type=mime_type,
-            caption=caption,
-        )
-        is_water_only = self._is_water_only_analysis(analyzed)
-        draft = MealPhotoDraft(
-            draft_id=str(uuid4()),
-            created_at=datetime.now(),
-            occurred_at=occurred_at or datetime.now(),
-            title=analyzed.title,
-            summary=analyzed.summary,
-            calories=analyzed.calories,
-            protein_g=analyzed.protein_g,
-            fat_g=analyzed.fat_g,
-            carbs_g=analyzed.carbs_g,
-            confidence=analyzed.confidence,
+        draft = self._build_photo_draft(
             photo_file_id=photo_file_id,
             photo_unique_id=photo_unique_id,
-            source=WATER_PHOTO_SOURCE if is_water_only else MEAL_PHOTO_SOURCE,
-            items=analyzed.items,
-            water_ml=analyzed.water_ml,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            occurred_at=occurred_at,
+            caption=caption,
         )
         self.store.create_meal_draft(user_id, draft)
-        media_id = str(uuid4())
-        stored_media_payload = self._store_media_in_bucket(
-            user_id=user_id,
-            media_id=media_id,
-            occurred_at=draft.occurred_at,
-            mime_type=mime_type,
-            image_bytes=image_bytes,
-        )
         self.store.create_meal_media(
-            MealMedia(
-                media_id=media_id,
+            self._build_photo_media(
                 user_id=user_id,
                 draft_id=draft.draft_id,
+                meal_entry_id="",
                 occurred_at=draft.occurred_at,
                 created_at=draft.created_at,
+                photo_file_id=photo_file_id,
+                photo_unique_id=photo_unique_id,
+                image_bytes=image_bytes,
                 mime_type=mime_type,
-                telegram_file_id=photo_file_id,
-                telegram_unique_id=photo_unique_id,
-                byte_size=len(image_bytes),
-                sha256=hashlib.sha256(image_bytes).hexdigest(),
-                image_bytes=stored_media_payload["image_bytes"],
-                storage_kind=stored_media_payload["storage_kind"],
-                storage_key=stored_media_payload["storage_key"],
-                bucket_name=stored_media_payload["bucket_name"],
-                width=stored_media_payload["width"],
-                height=stored_media_payload["height"],
             )
         )
         return draft
+
+    def create_photo_log_from_photo(
+        self,
+        user_id: int,
+        photo_file_id: str,
+        photo_unique_id: str,
+        image_bytes: bytes,
+        mime_type: str,
+        occurred_at: Optional[datetime] = None,
+        caption: str = "",
+        debug_timings: Optional[Dict[str, float]] = None,
+    ) -> PhotoProcessingResult:
+        analyze_started_at = time.perf_counter()
+        draft = self._build_photo_draft(
+            photo_file_id=photo_file_id,
+            photo_unique_id=photo_unique_id,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            occurred_at=occurred_at,
+            caption=caption,
+        )
+        analyze_finished_at = time.perf_counter()
+        if debug_timings is not None:
+            debug_timings["photo analysis"] = round(analyze_finished_at - analyze_started_at, 2)
+
+        if not draft.is_water_only and draft.confidence > 0.6 and self._is_draft_determined(draft):
+            meal = self._build_meal_entry_from_draft(draft, draft_id_override="")
+            media = self._build_photo_media(
+                user_id=user_id,
+                draft_id="",
+                meal_entry_id=meal.entry_id,
+                occurred_at=draft.occurred_at,
+                created_at=draft.created_at,
+                photo_file_id=photo_file_id,
+                photo_unique_id=photo_unique_id,
+                image_bytes=image_bytes,
+                mime_type=mime_type,
+            )
+            save_started_at = time.perf_counter()
+            self.store.create_meal_with_media(user_id, meal, media)
+            if debug_timings is not None:
+                debug_timings["direct save transaction"] = round(time.perf_counter() - save_started_at, 2)
+            return PhotoProcessingResult(
+                photo_log=PhotoLogResult(
+                    entry_id=meal.entry_id,
+                    kind=PhotoLogKind.MEAL,
+                    title=meal.title,
+                    occurred_at=meal.occurred_at,
+                    water_ml=meal.water_ml,
+                    meal_entry=meal,
+                )
+            )
+
+        store_started_at = time.perf_counter()
+        self.store.create_meal_draft(user_id, draft)
+        self.store.create_meal_media(
+            self._build_photo_media(
+                user_id=user_id,
+                draft_id=draft.draft_id,
+                meal_entry_id="",
+                occurred_at=draft.occurred_at,
+                created_at=draft.created_at,
+                photo_file_id=photo_file_id,
+                photo_unique_id=photo_unique_id,
+                image_bytes=image_bytes,
+                mime_type=mime_type,
+            )
+        )
+        if debug_timings is not None:
+            debug_timings["store draft and media"] = round(time.perf_counter() - store_started_at, 2)
+        return PhotoProcessingResult(draft=draft)
 
     def confirm_meal_draft(self, user_id: int, draft_id: str) -> PhotoLogResult:
         draft = self._require_meal_draft(user_id, draft_id, MealDraftStatus.PENDING)
@@ -693,26 +735,7 @@ class HealthService:
                 occurred_at=draft.occurred_at,
                 water_ml=draft.water_ml,
             )
-        meal = MealEntry(
-            entry_id=str(uuid4()),
-            occurred_at=draft.occurred_at,
-            title=draft.title,
-            calories=draft.calories,
-            protein_g=draft.protein_g,
-            fat_g=draft.fat_g,
-            carbs_g=draft.carbs_g,
-            water_ml=draft.water_ml,
-            notes=json.dumps(
-                {
-                    "source": draft.source,
-                    "draft_id": draft.draft_id,
-                    "summary": draft.summary,
-                    "confidence": draft.confidence,
-                },
-                sort_keys=True,
-            ),
-            created_at=now,
-        )
+        meal = self._build_meal_entry_from_draft(draft, created_at=now)
         self.store.confirm_meal_draft_as_meal(user_id, draft_id, meal)
         return PhotoLogResult(
             entry_id=meal.entry_id,
@@ -1228,6 +1251,121 @@ class HealthService:
         if draft.status != expected_status:
             raise ValueError("Черновик приема пищи %s имеет статус %s" % (draft_id, draft.status.value))
         return draft
+
+    def _build_photo_draft(
+        self,
+        *,
+        photo_file_id: str,
+        photo_unique_id: str,
+        image_bytes: bytes,
+        mime_type: str,
+        occurred_at: Optional[datetime],
+        caption: str,
+    ) -> MealPhotoDraft:
+        analyzed = self.food_photo_analyzer.analyze_photo(
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            caption=caption,
+        )
+        is_water_only = self._is_water_only_analysis(analyzed)
+        created_at = datetime.now()
+        return MealPhotoDraft(
+            draft_id=str(uuid4()),
+            created_at=created_at,
+            occurred_at=occurred_at or created_at,
+            title=analyzed.title,
+            summary=analyzed.summary,
+            calories=analyzed.calories,
+            protein_g=analyzed.protein_g,
+            fat_g=analyzed.fat_g,
+            carbs_g=analyzed.carbs_g,
+            confidence=analyzed.confidence,
+            photo_file_id=photo_file_id,
+            photo_unique_id=photo_unique_id,
+            source=WATER_PHOTO_SOURCE if is_water_only else MEAL_PHOTO_SOURCE,
+            items=analyzed.items,
+            water_ml=analyzed.water_ml,
+        )
+
+    def _build_photo_media(
+        self,
+        *,
+        user_id: int,
+        draft_id: str,
+        meal_entry_id: str,
+        occurred_at: datetime,
+        created_at: datetime,
+        photo_file_id: str,
+        photo_unique_id: str,
+        image_bytes: bytes,
+        mime_type: str,
+    ) -> MealMedia:
+        media_id = str(uuid4())
+        stored_media_payload = self._store_media_in_bucket(
+            user_id=user_id,
+            media_id=media_id,
+            occurred_at=occurred_at,
+            mime_type=mime_type,
+            image_bytes=image_bytes,
+        )
+        return MealMedia(
+            media_id=media_id,
+            user_id=user_id,
+            draft_id=draft_id,
+            meal_entry_id=meal_entry_id,
+            occurred_at=occurred_at,
+            created_at=created_at,
+            mime_type=mime_type,
+            telegram_file_id=photo_file_id,
+            telegram_unique_id=photo_unique_id,
+            byte_size=len(image_bytes),
+            sha256=hashlib.sha256(image_bytes).hexdigest(),
+            image_bytes=stored_media_payload["image_bytes"],
+            storage_kind=stored_media_payload["storage_kind"],
+            storage_key=stored_media_payload["storage_key"],
+            bucket_name=stored_media_payload["bucket_name"],
+            width=stored_media_payload["width"],
+            height=stored_media_payload["height"],
+        )
+
+    @staticmethod
+    def _is_draft_determined(draft: MealPhotoDraft) -> bool:
+        if not draft.title.strip():
+            return False
+        if draft.summary.strip():
+            return True
+        if draft.items:
+            return True
+        return draft.calories > 0 or draft.protein_g > 0 or draft.fat_g > 0 or draft.carbs_g > 0
+
+    @staticmethod
+    def _build_meal_entry_from_draft(
+        draft: MealPhotoDraft,
+        *,
+        created_at: Optional[datetime] = None,
+        draft_id_override: Optional[str] = None,
+    ) -> MealEntry:
+        entry_created_at = created_at or datetime.now()
+        return MealEntry(
+            entry_id=str(uuid4()),
+            occurred_at=draft.occurred_at,
+            title=draft.title,
+            calories=draft.calories,
+            protein_g=draft.protein_g,
+            fat_g=draft.fat_g,
+            carbs_g=draft.carbs_g,
+            water_ml=draft.water_ml,
+            notes=json.dumps(
+                {
+                    "source": draft.source,
+                    "draft_id": draft.draft_id if draft_id_override is None else draft_id_override,
+                    "summary": draft.summary,
+                    "confidence": draft.confidence,
+                },
+                sort_keys=True,
+            ),
+            created_at=entry_created_at,
+        )
 
     def _list_photo_meals_for_date(self, user_id: int, target_date: date) -> List[DigestMealSnapshot]:
         meals = self.store.list_meals(user_id, target_date)

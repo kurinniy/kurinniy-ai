@@ -369,17 +369,11 @@ class TelegramHealthBot:
                     message_id=message_id,
                     text=edit_text,
                 )
-            decisions = self.service.evaluate_day(
-                app_user.user_id,
-                meal.occurred_at.date(),
-                now=self._local_now(),
-                use_lightweight_summary=True,
-            )
             logger.info("Meal confirmed draft_id=%s title=%s", draft_id, meal.title)
             if meal.kind == PhotoLogKind.WATER:
                 self._send_message(
                     chat_id,
-                    "Вода сохранена: %s л.\n%s" % (self._format_liters(meal.water_ml), self._format_new_decisions(decisions)),
+                    "Вода сохранена: %s л." % self._format_liters(meal.water_ml),
                 )
             else:
                 self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
@@ -1425,15 +1419,9 @@ class TelegramHealthBot:
             return "Использование: /confirm_meal <draft_id>"
         self._clear_pending_draft_clarification(app_user.user_id, draft_id=args[0])
         meal = self.service.confirm_meal_draft(app_user.user_id, args[0])
-        decisions = self.service.evaluate_day(
-            app_user.user_id,
-            meal.occurred_at.date(),
-            now=self._local_now(),
-            use_lightweight_summary=True,
-        )
         if meal.kind == PhotoLogKind.WATER:
-            return "Вода сохранена: %s л.\n%s" % (self._format_liters(meal.water_ml), self._format_new_decisions(decisions))
-        return "Прием пищи сохранен: %s.\n%s" % (meal.title, self._format_new_decisions(decisions))
+            return "Вода сохранена: %s л." % self._format_liters(meal.water_ml)
+        return "Прием пищи сохранен: %s." % meal.title
 
     def _handle_reject_meal(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) != 1:
@@ -2195,44 +2183,6 @@ class TelegramHealthBot:
                 },
             )
             return
-        if app_user is not None and self._should_auto_save_draft(draft):
-            auto_save_started_at = time.perf_counter()
-            confirm_started_at = time.perf_counter()
-            meal = self.service.confirm_meal_draft(app_user.user_id, draft.draft_id)
-            confirm_finished_at = time.perf_counter()
-            evaluate_timings: Dict[str, float] = {}
-            self.service.evaluate_day(
-                app_user.user_id,
-                meal.occurred_at.date(),
-                now=self._local_now(),
-                debug_timings=evaluate_timings,
-                use_lightweight_summary=True,
-            )
-            pending_clear_started_at = time.perf_counter()
-            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft.draft_id)
-            pending_clear_finished_at = time.perf_counter()
-            saved_meal = meal.meal_entry or self.service.get_meal_entry(app_user.user_id, meal.entry_id)
-            self._record_response_debug_step("автосохранение записи", auto_save_started_at)
-            self._add_response_debug_step("confirm meal transaction", confirm_finished_at - confirm_started_at)
-            for label in ("build daily summary", "decision engine", "upsert decisions"):
-                if label in evaluate_timings:
-                    self._add_response_debug_step(label, evaluate_timings[label])
-            self._add_response_debug_step(
-                "clear pending clarification",
-                pending_clear_finished_at - pending_clear_started_at,
-            )
-            card_started_at = time.perf_counter()
-            saved_text = self._format_saved_meal_text(app_user, saved_meal)
-            self._record_response_debug_step("сборка карточки сохраненной записи", card_started_at)
-            self._telegram_api(
-                "sendMessage",
-                {
-                    "chat_id": chat_id,
-                    "text": self._append_response_debug_text(saved_text),
-                    "reply_markup": self._saved_meal_reply_markup(saved_meal.entry_id),
-                },
-            )
-            return
         if app_user is not None:
             self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft.draft_id)
         draft_card_started_at = time.perf_counter()
@@ -2637,8 +2587,8 @@ class TelegramHealthBot:
             download_started_at = time.perf_counter()
             image_bytes = self._download_telegram_file(file_path)
             self._record_response_debug_step("загрузка фото из Telegram", download_started_at)
-            draft_started_at = time.perf_counter()
-            draft = self.service.create_meal_draft_from_photo(
+            processing_timings: Dict[str, float] = {}
+            process_result = self.service.create_photo_log_from_photo(
                 app_user.user_id,
                 photo_file_id=file_id,
                 photo_unique_id=file_unique_id,
@@ -2646,13 +2596,41 @@ class TelegramHealthBot:
                 mime_type=self._guess_mime_type(file_path),
                 occurred_at=self._local_now(),
                 caption=caption,
+                debug_timings=processing_timings,
             )
-            self._record_response_debug_step("распознавание и сборка черновика", draft_started_at)
+            if "photo analysis" in processing_timings:
+                self._add_response_debug_step("распознавание фото", processing_timings["photo analysis"])
+            if "store draft and media" in processing_timings:
+                self._add_response_debug_step("подготовка черновика", processing_timings["store draft and media"])
+            if "direct save transaction" in processing_timings:
+                self._add_response_debug_step("автосохранение записи", processing_timings["direct save transaction"])
         except Exception as exc:
             logger.exception("Food photo analysis failed chat_id=%s file_id=%s error=%s", chat_id, file_id, exc)
             self._send_message(chat_id, "Не удалось распознать фото еды: %s" % exc)
             return
 
+        if process_result.photo_log is not None and process_result.photo_log.kind == PhotoLogKind.MEAL:
+            saved_meal = process_result.photo_log.meal_entry or self.service.get_meal_entry(
+                app_user.user_id,
+                process_result.photo_log.entry_id,
+            )
+            logger.info("Food photo auto-saved successfully chat_id=%s entry_id=%s", chat_id, saved_meal.entry_id)
+            card_started_at = time.perf_counter()
+            saved_text = self._format_saved_meal_text(app_user, saved_meal)
+            self._record_response_debug_step("сборка карточки сохраненной записи", card_started_at)
+            self._telegram_api(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": self._append_response_debug_text(saved_text),
+                    "reply_markup": self._saved_meal_reply_markup(saved_meal.entry_id),
+                },
+            )
+            return
+
+        draft = process_result.draft
+        if draft is None:
+            raise RuntimeError("Photo processing returned no draft or saved entry")
         logger.info("Food photo analyzed successfully chat_id=%s draft_id=%s", chat_id, draft.draft_id)
         reply_started_at = time.perf_counter()
         self._send_meal_draft(chat_id, draft, app_user=app_user)

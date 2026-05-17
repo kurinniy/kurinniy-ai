@@ -148,6 +148,9 @@ class HealthStore(Protocol):
     def create_meal_media(self, media: MealMedia) -> None:
         ...
 
+    def create_meal_with_media(self, user_id: int, entry: MealEntry, media: MealMedia) -> None:
+        ...
+
     def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
         ...
 

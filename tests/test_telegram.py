@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from ai_me.config import TelegramSettings
 from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDigestHighlight, WeeklyFoodDigest
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
-from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft, PhotoLogKind, PhotoLogResult, WATER_PHOTO_SOURCE
+from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft, PhotoLogKind, PhotoLogResult, PhotoProcessingResult, WATER_PHOTO_SOURCE
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, PostSaveCoachingSnapshot, StepProgressInsight
 from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
@@ -24,6 +24,7 @@ VALID_PNG_BYTES = base64.b64decode(
 class DummyHealthService:
     def __init__(self) -> None:
         self.confirmed_draft_ids = []
+        self.direct_photo_saves = []
         self.last_import = None
         self.drive_settings_by_user_id = {}
         self.health_import_files_by_user_id = {}
@@ -625,6 +626,43 @@ class DummyHealthService:
             draft = self._build_water_draft() if self.water_only_photo_mode else self._build_meal_draft()
         self.meal_drafts_by_user_id.setdefault(user_id, {})[draft.draft_id] = draft
         return draft
+
+    def create_photo_log_from_photo(self, user_id, **kwargs):
+        draft = self.create_meal_draft_from_photo(user_id, **kwargs)
+        debug_timings = kwargs.get("debug_timings")
+        if debug_timings is not None:
+            debug_timings["photo analysis"] = 0.01
+        if draft.is_water_only or draft.confidence <= 0.6 or not draft.title.strip():
+            if debug_timings is not None:
+                debug_timings["store draft and media"] = 0.01
+            return PhotoProcessingResult(draft=draft)
+        self.meal_drafts_by_user_id.setdefault(user_id, {}).pop(draft.draft_id, None)
+        saved_meal = MealEntry(
+            entry_id="meal-auto-1",
+            occurred_at=draft.occurred_at,
+            title=draft.title,
+            calories=draft.calories,
+            protein_g=draft.protein_g,
+            fat_g=draft.fat_g,
+            carbs_g=draft.carbs_g,
+            water_ml=draft.water_ml,
+            notes=json.dumps({"summary": draft.summary}),
+            created_at=draft.created_at,
+        )
+        self.meals_by_user_id.setdefault(user_id, []).append(saved_meal)
+        self.direct_photo_saves.append((user_id, saved_meal.entry_id))
+        if debug_timings is not None:
+            debug_timings["direct save transaction"] = 0.01
+        return PhotoProcessingResult(
+            photo_log=PhotoLogResult(
+                entry_id=saved_meal.entry_id,
+                kind=PhotoLogKind.MEAL,
+                title=saved_meal.title,
+                occurred_at=saved_meal.occurred_at,
+                water_ml=saved_meal.water_ml,
+                meal_entry=saved_meal,
+            )
+        )
 
     def get_meal_draft(self, user_id, draft_id):
         if self.water_only_photo_mode:
@@ -1562,13 +1600,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Сценарий: photo", send_message["text"])
         self.assertIn("получение file_path:", send_message["text"])
         self.assertIn("загрузка фото из Telegram:", send_message["text"])
-        self.assertIn("распознавание и сборка черновика:", send_message["text"])
+        self.assertIn("распознавание фото:", send_message["text"])
         self.assertIn("автосохранение записи:", send_message["text"])
-        self.assertIn("confirm meal transaction:", send_message["text"])
-        self.assertIn("build daily summary:", send_message["text"])
-        self.assertIn("decision engine:", send_message["text"])
-        self.assertIn("upsert decisions:", send_message["text"])
-        self.assertIn("clear pending clarification:", send_message["text"])
         self.assertIn("сборка карточки сохраненной записи:", send_message["text"])
 
     def test_user_mode_command_updates_reply_keyboard_immediately(self) -> None:
@@ -1999,7 +2032,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(business_calls[0][0], "getFile")
         self.assertEqual(business_calls[1][0], "sendMessage")
         self.assertEqual(business_calls[2][0], "sendMessage")
-        self.assertIn("Подождите 14 сек. перед следующим фото.", business_calls[2][1]["text"])
+        self.assertIn("Подождите 15 сек. перед следующим фото.", business_calls[2][1]["text"])
 
     def test_regular_user_cannot_send_second_photo_while_first_is_processing(self) -> None:
         calls = []
@@ -2210,21 +2243,31 @@ class TelegramHealthBotTest(unittest.TestCase):
 
     def test_high_confidence_draft_auto_saves_for_registered_user(self) -> None:
         draft = replace(self.service.list_meal_drafts(1)[0], confidence=0.91)
+        self.service.next_photo_draft = draft
         messages = []
 
         def fake_telegram_api(method, params):
             messages.append((method, params))
+            if method == "getFile":
+                return {"file_path": "photos/meal.jpg"}
             return True
 
         self.bot._telegram_api = fake_telegram_api
-        self.bot._send_meal_draft(777, draft, app_user=self.service.users_by_telegram_id[42])
+        self.bot._download_telegram_file = lambda path: VALID_PNG_BYTES
+        self.bot._handle_photo_message(
+            777,
+            self.service.users_by_telegram_id[42],
+            [{"file_id": "file-1", "file_unique_id": "u-1", "file_size": 100}],
+            "",
+        )
 
-        self.assertEqual(messages[0][0], "sendMessage")
-        self.assertIn("Сохранено:", messages[0][1]["text"])
-        self.assertIn("Изменить", messages[0][1]["reply_markup"])
-        self.assertIn("Отмена", messages[0][1]["reply_markup"])
-        self.assertNotIn("Сохранить", messages[0][1]["reply_markup"])
-        self.assertEqual(self.service.confirmed_draft_ids, [(1, "draft-1")])
+        send_message = [params for method, params in messages if method == "sendMessage"][-1]
+        self.assertIn("Сохранено:", send_message["text"])
+        self.assertIn("Изменить", send_message["reply_markup"])
+        self.assertIn("Отмена", send_message["reply_markup"])
+        self.assertNotIn("Сохранить", send_message["reply_markup"])
+        self.assertEqual(self.service.confirmed_draft_ids, [])
+        self.assertEqual(self.service.direct_photo_saves, [(1, "meal-auto-1")])
 
     def test_low_confidence_draft_requires_manual_save(self) -> None:
         draft = replace(
@@ -2676,17 +2719,27 @@ class TelegramHealthBotTest(unittest.TestCase):
     def test_saved_meal_reply_markup_uses_edit_and_cancel(self) -> None:
         calls = []
         draft = replace(self.service.list_meal_drafts(1)[0], confidence=0.91)
+        self.service.next_photo_draft = draft
 
         def fake_telegram_api(method, params):
             calls.append((method, params))
+            if method == "getFile":
+                return {"file_path": "photos/meal.jpg"}
             return True
 
         self.bot._telegram_api = fake_telegram_api
-        self.bot._send_meal_draft(777, draft, app_user=self.service.users_by_telegram_id[42])
+        self.bot._download_telegram_file = lambda path: VALID_PNG_BYTES
+        self.bot._handle_photo_message(
+            777,
+            self.service.users_by_telegram_id[42],
+            [{"file_id": "file-1", "file_unique_id": "u-1", "file_size": 100}],
+            "",
+        )
 
-        self.assertIn("history_last_meal_edit", calls[0][1]["reply_markup"])
-        self.assertIn("meal_saved_cancel", calls[0][1]["reply_markup"])
-        self.assertIn("Отмена", calls[0][1]["reply_markup"])
+        send_message = [params for method, params in calls if method == "sendMessage"][-1]
+        self.assertIn("history_last_meal_edit", send_message["reply_markup"])
+        self.assertIn("meal_saved_cancel", send_message["reply_markup"])
+        self.assertIn("Отмена", send_message["reply_markup"])
 
     def test_edit_time_flow_rejects_invalid_time(self) -> None:
         messages = []

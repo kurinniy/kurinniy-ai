@@ -73,6 +73,12 @@ class PhotoLogResult:
 
 
 @dataclass(frozen=True)
+class PhotoProcessingResult:
+    draft: Optional[MealPhotoDraft] = None
+    photo_log: Optional[PhotoLogResult] = None
+
+
+@dataclass(frozen=True)
 class MealMedia:
     media_id: str
     user_id: int

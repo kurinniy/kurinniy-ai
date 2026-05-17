@@ -772,6 +772,76 @@ class MySQLStore:
             ),
         )
 
+    def create_meal_with_media(self, user_id: int, entry: MealEntry, media: MealMedia) -> None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            created_at = entry.created_at or entry.occurred_at
+            cursor.execute(
+                """
+                INSERT INTO meals (entry_id, user_id, created_at, occurred_at, title, calories, protein_g, fat_g, carbs_g, water_ml, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    entry.entry_id,
+                    user_id,
+                    created_at,
+                    entry.occurred_at,
+                    entry.title,
+                    entry.calories,
+                    entry.protein_g,
+                    entry.fat_g,
+                    entry.carbs_g,
+                    entry.water_ml,
+                    entry.notes,
+                ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO meal_media (
+                    media_id,
+                    user_id,
+                    draft_id,
+                    meal_entry_id,
+                    occurred_at,
+                    created_at,
+                    mime_type,
+                    telegram_file_id,
+                    telegram_unique_id,
+                    byte_size,
+                    sha256,
+                    storage_kind,
+                    storage_key,
+                    bucket_name,
+                    width,
+                    height
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    media.media_id,
+                    media.user_id,
+                    media.draft_id,
+                    media.meal_entry_id or None,
+                    media.occurred_at,
+                    media.created_at,
+                    media.mime_type,
+                    media.telegram_file_id,
+                    media.telegram_unique_id,
+                    media.byte_size,
+                    media.sha256,
+                    media.storage_kind,
+                    media.storage_key,
+                    media.bucket_name,
+                    media.width,
+                    media.height,
+                ),
+            )
+            connection.commit()
+        finally:
+            cursor.close()
+            connection.close()
+
     def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
         query = """
             SELECT
@@ -1308,31 +1378,32 @@ class MySQLStore:
         )
 
     def upsert_decisions(self, user_id: int, decisions: Iterable[DecisionLogEntry]) -> List[DecisionLogEntry]:
+        decisions_list = list(decisions)
+        if not decisions_list:
+            return []
         inserted = []
         connection = self._connect()
         try:
-            cursor = connection.cursor()
-            for decision in decisions:
-                cursor.execute(
-                    """
-                    INSERT INTO decision_log (
-                        decision_id,
-                        user_id,
-                        decision_key,
-                        created_at,
-                        agent,
-                        kind,
-                        title,
-                        rationale,
-                        context_date,
-                        status,
-                        payload
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE
-                        decision_id = decision_id
-                    """,
-                    (
+            cursor = connection.cursor(dictionary=True)
+            placeholders = ", ".join(["%s"] * len(decisions_list))
+            existing_rows = self._fetchall_with_cursor(
+                cursor,
+                """
+                SELECT decision_key
+                FROM decision_log
+                WHERE user_id = %s
+                  AND decision_key IN ({placeholders})
+                """.format(placeholders=placeholders),
+                tuple([user_id] + [decision.decision_key for decision in decisions_list]),
+            )
+            existing_keys = {str(row["decision_key"]) for row in existing_rows}
+            inserted = [decision for decision in decisions_list if decision.decision_key not in existing_keys]
+
+            values_sql = ", ".join(["(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"] * len(decisions_list))
+            params = []
+            for decision in decisions_list:
+                params.extend(
+                    [
                         decision.decision_id,
                         user_id,
                         decision.decision_key,
@@ -1344,10 +1415,29 @@ class MySQLStore:
                         decision.context_date,
                         decision.status.value,
                         json.dumps(decision.payload, sort_keys=True),
-                    ),
+                    ]
                 )
-                if cursor.rowcount == 1:
-                    inserted.append(decision)
+            cursor.execute(
+                """
+                INSERT INTO decision_log (
+                    decision_id,
+                    user_id,
+                    decision_key,
+                    created_at,
+                    agent,
+                    kind,
+                    title,
+                    rationale,
+                    context_date,
+                    status,
+                    payload
+                )
+                VALUES {values_sql}
+                ON DUPLICATE KEY UPDATE
+                    decision_id = decision_id
+                """.format(values_sql=values_sql),
+                tuple(params),
+            )
             connection.commit()
         finally:
             cursor.close()

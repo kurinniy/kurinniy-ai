@@ -364,6 +364,10 @@ class InMemoryStore:
     def create_meal_media(self, media: MealMedia) -> None:
         self._meal_media_by_user.setdefault(media.user_id, {})[media.media_id] = media
 
+    def create_meal_with_media(self, user_id: int, entry: MealEntry, media: MealMedia) -> None:
+        self.add_meal(user_id, entry)
+        self.create_meal_media(media)
+
     def list_meal_media(self, user_id: int, target_date: Optional[date] = None) -> List[MealMedia]:
         media = list(self._meal_media_by_user.get(user_id, {}).values())
         if target_date is not None:
