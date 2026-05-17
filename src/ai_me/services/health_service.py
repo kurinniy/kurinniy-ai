@@ -843,6 +843,7 @@ class HealthService:
         protein_g: Optional[float] = None,
         fat_g: Optional[float] = None,
         carbs_g: Optional[float] = None,
+        water_ml: Optional[int] = None,
     ) -> MealEntry:
         meal = self.get_meal_entry(user_id, entry_id)
         updated = replace(
@@ -853,10 +854,23 @@ class HealthService:
             protein_g=protein_g if protein_g is not None else meal.protein_g,
             fat_g=fat_g if fat_g is not None else meal.fat_g,
             carbs_g=carbs_g if carbs_g is not None else meal.carbs_g,
+            water_ml=water_ml if water_ml is not None else meal.water_ml,
             notes=self._update_meal_notes(meal.notes, summary=summary),
         )
         self.store.update_meal(user_id, updated)
         return updated
+
+    def scale_meal_entry_portion(self, user_id: int, entry_id: str, factor: float) -> MealEntry:
+        meal = self.get_meal_entry(user_id, entry_id)
+        return self.update_meal_entry(
+            user_id,
+            entry_id,
+            calories=max(0, int(round(meal.calories * factor))),
+            protein_g=round(meal.protein_g * factor, 1),
+            fat_g=round(meal.fat_g * factor, 1),
+            carbs_g=round(meal.carbs_g * factor, 1),
+            water_ml=max(0, int(round(meal.water_ml * factor))),
+        )
 
     def delete_meal_entry(self, user_id: int, entry_id: str) -> MealEntry:
         meal = self.get_meal_entry(user_id, entry_id)

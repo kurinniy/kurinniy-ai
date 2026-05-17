@@ -453,6 +453,17 @@ class TelegramHealthBot:
                 )
             return
 
+        if data.startswith("meal_edit_portion_custom:"):
+            draft_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, draft_id, "portion")
+            self._try_answer_callback_query(query_id, "Введите свою порцию.")
+            self._send_message(
+                chat_id,
+                self._portion_prompt_text(),
+                reply_markup=self._draft_edit_prompt_reply_markup(draft_id),
+            )
+            return
+
         if data.startswith("meal_clarify_portion:"):
             _, draft_id, action = data.split(":", 2)
             state = self._pending_draft_clarifications.get(app_user.user_id)
@@ -755,6 +766,53 @@ class TelegramHealthBot:
             self._send_message(
                 chat_id,
                 "Введите новое название для последней записи.",
+                reply_markup=self._meal_entry_edit_prompt_reply_markup(entry_id),
+            )
+            return
+
+        if data.startswith("meal_entry_edit_portion_menu:"):
+            entry_id = data.split(":", 1)[1]
+            try:
+                meal = self.service.get_meal_entry(app_user.user_id, entry_id)
+            except ValueError as exc:
+                self._send_message(chat_id, str(exc))
+                return
+            self._clear_pending_draft_edit_state(app_user.user_id, draft_id=entry_id)
+            self._try_answer_callback_query(query_id, "Выберите порцию.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_meal_entry_portion_text(meal),
+                    reply_markup=self._meal_entry_portion_reply_markup(meal),
+                )
+            return
+
+        if data.startswith("meal_entry_edit_portion:"):
+            _, entry_id, portion_kind = data.split(":", 2)
+            factor = {
+                "smaller": 0.8,
+                "standard": 1.0,
+                "bigger": 1.2,
+            }[portion_kind]
+            updated = self.service.scale_meal_entry_portion(app_user.user_id, entry_id, factor)
+            self._try_answer_callback_query(query_id, "Порция обновлена.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_last_meal_recovery_text(updated),
+                    reply_markup=self._last_meal_recovery_reply_markup(updated),
+                )
+            return
+
+        if data.startswith("meal_entry_edit_portion_custom:"):
+            entry_id = data.split(":", 1)[1]
+            self._set_pending_draft_edit_state(app_user.user_id, entry_id, "portion", target_type="meal")
+            self._try_answer_callback_query(query_id, "Введите свою порцию.")
+            self._send_message(
+                chat_id,
+                self._portion_prompt_text(),
                 reply_markup=self._meal_entry_edit_prompt_reply_markup(entry_id),
             )
             return
@@ -2797,6 +2855,9 @@ class TelegramHealthBot:
         try:
             if target_type == "meal" and field == "title":
                 draft = self.service.update_meal_entry(app_user.user_id, draft_id, title=raw_text.strip())
+            elif target_type == "meal" and field == "portion":
+                factor = self._parse_portion_factor(raw_text)
+                draft = self.service.scale_meal_entry_portion(app_user.user_id, draft_id, factor)
             elif target_type == "meal" and field == "summary":
                 draft = self.service.update_meal_entry(app_user.user_id, draft_id, summary=raw_text.strip())
             elif target_type == "meal" and field == "time":
@@ -2818,6 +2879,9 @@ class TelegramHealthBot:
                 )
             elif field == "title":
                 draft = self.service.update_meal_draft(app_user.user_id, draft_id, title=raw_text.strip())
+            elif field == "portion":
+                factor = self._parse_portion_factor(raw_text)
+                draft = self.service.scale_meal_draft_portion(app_user.user_id, draft_id, factor)
             elif field == "summary":
                 draft = self.service.update_meal_draft(app_user.user_id, draft_id, summary=raw_text.strip())
             elif field == "rewrite":
@@ -3180,6 +3244,25 @@ class TelegramHealthBot:
         )
 
     @staticmethod
+    def _format_meal_entry_portion_text(meal: MealEntry) -> str:
+        return (
+            "Какую порцию поставить для сохранённой записи?\n"
+            "Сейчас: %s ккал, Б %s г • Ж %s г • У %s г"
+        ) % (
+            TelegramHealthBot._format_integer_with_spaces(meal.calories),
+            TelegramHealthBot._format_decimal(meal.protein_g),
+            TelegramHealthBot._format_decimal(meal.fat_g),
+            TelegramHealthBot._format_decimal(meal.carbs_g),
+        )
+
+    @staticmethod
+    def _portion_prompt_text() -> str:
+        return (
+            "Введите коэффициент порции.\n"
+            "Например: 0.5, 1, 1.25 или 125%."
+        )
+
+    @staticmethod
     def _meal_draft_card_reply_markup(draft: MealPhotoDraft) -> str:
         return json.dumps(
             {
@@ -3229,6 +3312,9 @@ class TelegramHealthBot:
                         {"text": "Меньше", "callback_data": "meal_edit_portion:%s:smaller" % draft.draft_id},
                         {"text": "Стандарт", "callback_data": "meal_edit_portion:%s:standard" % draft.draft_id},
                         {"text": "Больше", "callback_data": "meal_edit_portion:%s:bigger" % draft.draft_id},
+                    ],
+                    [
+                        {"text": "Своя порция", "callback_data": "meal_edit_portion_custom:%s" % draft.draft_id},
                     ],
                     [
                         {"text": "Назад к черновику", "callback_data": "meal_edit_back:%s" % draft.draft_id},
@@ -3353,7 +3439,7 @@ class TelegramHealthBot:
                 "inline_keyboard": [
                     [
                         {"text": "Изменить", "callback_data": "history_last_meal_edit:%s" % entry_id},
-                        {"text": "Отменить", "callback_data": "meal_saved_cancel:%s" % entry_id},
+                        {"text": "Отмена", "callback_data": "meal_saved_cancel:%s" % entry_id},
                     ],
                 ]
             },
@@ -3395,11 +3481,35 @@ class TelegramHealthBot:
                 "inline_keyboard": [
                     [
                         {"text": "Название", "callback_data": "meal_entry_edit_title:%s" % meal.entry_id},
-                        {"text": "Время", "callback_data": "meal_entry_edit_time:%s" % meal.entry_id},
+                        {"text": "Порция", "callback_data": "meal_entry_edit_portion_menu:%s" % meal.entry_id},
                     ],
                     [
+                        {"text": "Время", "callback_data": "meal_entry_edit_time:%s" % meal.entry_id},
                         {"text": "Состав", "callback_data": "meal_entry_edit_summary:%s" % meal.entry_id},
+                    ],
+                    [
                         {"text": "Калории и БЖУ", "callback_data": "meal_entry_edit_macros:%s" % meal.entry_id},
+                    ],
+                    [
+                        {"text": "Назад к записи", "callback_data": "meal_entry_edit_back:%s" % meal.entry_id},
+                    ],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _meal_entry_portion_reply_markup(meal: MealEntry) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Меньше", "callback_data": "meal_entry_edit_portion:%s:smaller" % meal.entry_id},
+                        {"text": "Стандарт", "callback_data": "meal_entry_edit_portion:%s:standard" % meal.entry_id},
+                        {"text": "Больше", "callback_data": "meal_entry_edit_portion:%s:bigger" % meal.entry_id},
+                    ],
+                    [
+                        {"text": "Своя порция", "callback_data": "meal_entry_edit_portion_custom:%s" % meal.entry_id},
                     ],
                     [
                         {"text": "Назад к записи", "callback_data": "meal_entry_edit_back:%s" % meal.entry_id},
@@ -3461,6 +3571,24 @@ class TelegramHealthBot:
         if calories < 0 or protein_g < 0 or fat_g < 0 or carbs_g < 0:
             raise ValueError("Калории и БЖУ не могут быть отрицательными.")
         return calories, protein_g, fat_g, carbs_g
+
+    @staticmethod
+    def _parse_portion_factor(raw_text: str) -> float:
+        normalized = raw_text.strip().replace(",", ".")
+        if not normalized:
+            raise ValueError("Введите коэффициент порции. Например: 0.5, 1, 1.25 или 125%.")
+        try:
+            if normalized.endswith("%"):
+                factor = float(normalized[:-1].strip()) / 100.0
+            else:
+                factor = float(normalized)
+        except ValueError as exc:
+            raise ValueError("Введите коэффициент порции. Например: 0.5, 1, 1.25 или 125%.") from exc
+        if factor <= 0:
+            raise ValueError("Порция должна быть больше нуля.")
+        if factor < 0.1 or factor > 5:
+            raise ValueError("Коэффициент порции должен быть в диапазоне от 0.1 до 5.")
+        return factor
 
     @staticmethod
     def _parse_draft_time(raw_text: str, draft: MealPhotoDraft) -> datetime:
