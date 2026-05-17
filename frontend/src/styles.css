@@ -74,6 +74,62 @@ textarea {
   max-width: 35rem;
 }
 
+.loading-screen {
+  min-height: calc(100vh - 80px);
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.loading-screen__orb {
+  width: 96px;
+  height: 96px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 40%),
+    linear-gradient(145deg, rgba(15, 118, 110, 0.9), rgba(15, 118, 110, 0.18));
+  box-shadow:
+    0 16px 40px rgba(15, 118, 110, 0.24),
+    inset 0 2px 10px rgba(255, 255, 255, 0.42);
+  animation: loadingFloat 2.1s ease-in-out infinite;
+}
+
+.loading-screen__logo {
+  font-size: 40px;
+  line-height: 0.95;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.loading-screen__label {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.loading-screen__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.loading-screen__dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.78);
+  animation: loadingPulse 1.2s ease-in-out infinite;
+}
+
+.loading-screen__dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.loading-screen__dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
 .tab-bar {
   position: sticky;
   top: 0;
@@ -330,6 +386,28 @@ textarea {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+}
+
+@keyframes loadingFloat {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-8px) scale(1.03);
+  }
+}
+
+@keyframes loadingPulse {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.82);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @media (min-width: 720px) {

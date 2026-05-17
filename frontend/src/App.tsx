@@ -93,7 +93,7 @@ export function App() {
   if (state.kind === "loading") {
     return (
       <Shell>
-        <StatusCard title="ai-me" text={state.label} />
+        <LoadingScreen label={state.label} />
       </Shell>
     );
   }
@@ -316,10 +316,6 @@ function TodayView({ dashboard }: { dashboard: DashboardPayload }) {
           </div>
         )}
       </Section>
-
-      <Section title="Шаги за вчера">
-        <StepCard dashboard={dashboard} />
-      </Section>
     </>
   );
 }
@@ -538,6 +534,21 @@ function StatusCard({ title, text, tone = "default" }: { title: string; text: st
       <div className="card__title">{title}</div>
       <div className="card__text">{text}</div>
     </div>
+  );
+}
+
+function LoadingScreen({ label }: { label: string }) {
+  return (
+    <section className="loading-screen">
+      <div className="loading-screen__orb" />
+      <div className="loading-screen__logo">ai-me</div>
+      <div className="loading-screen__label">{label}</div>
+      <div className="loading-screen__dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+    </section>
   );
 }
 
