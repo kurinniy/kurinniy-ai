@@ -10,6 +10,7 @@ from ai_me.domain.health import (
     DailyHealthGoals,
     DailyHealthSummary,
     MealEntry,
+    PostSaveCoachingSnapshot,
     SleepEntry,
     WaterEntry,
     WeightEntry,
@@ -177,6 +178,12 @@ class HealthStore(Protocol):
     def update_meal_draft_status(self, user_id: int, draft_id: str, status: MealDraftStatus) -> None:
         ...
 
+    def confirm_meal_draft_as_meal(self, user_id: int, draft_id: str, entry: MealEntry) -> None:
+        ...
+
+    def confirm_meal_draft_as_water(self, user_id: int, draft_id: str, entry: WaterEntry) -> None:
+        ...
+
     def add_water(self, user_id: int, entry: WaterEntry) -> None:
         ...
 
@@ -202,6 +209,9 @@ class HealthStore(Protocol):
         ...
 
     def build_health_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
+        ...
+
+    def build_post_save_coaching_snapshot(self, user_id: int, target_date: date) -> PostSaveCoachingSnapshot:
         ...
 
     def upsert_decisions(self, user_id: int, decisions: Iterable[DecisionLogEntry]) -> List[DecisionLogEntry]:

@@ -52,6 +52,7 @@ from ai_me.domain.health import (
     DailyHealthGoals,
     DailyHealthSummary,
     MealEntry,
+    PostSaveCoachingSnapshot,
     SleepEntry,
     StepProgressInsight,
     WaterEntry,
@@ -684,8 +685,7 @@ class HealthService:
                 occurred_at=draft.occurred_at,
                 amount_ml=draft.water_ml,
             )
-            self.store.add_water(user_id, water)
-            self.store.update_meal_draft_status(user_id, draft_id, MealDraftStatus.CONFIRMED)
+            self.store.confirm_meal_draft_as_water(user_id, draft_id, water)
             return PhotoLogResult(
                 entry_id=water.entry_id,
                 kind=PhotoLogKind.WATER,
@@ -713,15 +713,14 @@ class HealthService:
             ),
             created_at=now,
         )
-        self.store.add_meal(user_id, meal)
-        self.store.update_meal_draft_status(user_id, draft_id, MealDraftStatus.CONFIRMED)
-        self.store.attach_meal_media_to_meal(user_id, draft_id, meal.entry_id)
+        self.store.confirm_meal_draft_as_meal(user_id, draft_id, meal)
         return PhotoLogResult(
             entry_id=meal.entry_id,
             kind=PhotoLogKind.MEAL,
             title=meal.title,
             occurred_at=meal.occurred_at,
             water_ml=meal.water_ml,
+            meal_entry=meal,
         )
 
     def reject_meal_draft(self, user_id: int, draft_id: str) -> MealPhotoDraft:
@@ -929,6 +928,9 @@ class HealthService:
 
     def get_daily_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
         return self.store.build_health_summary(user_id, target_date)
+
+    def get_post_save_coaching_snapshot(self, user_id: int, target_date: date) -> PostSaveCoachingSnapshot:
+        return self.store.build_post_save_coaching_snapshot(user_id, target_date)
 
     def build_step_progress_insight(
         self,

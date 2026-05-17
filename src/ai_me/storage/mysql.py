@@ -12,6 +12,7 @@ from ai_me.domain.health import (
     DailyHealthGoals,
     DailyHealthSummary,
     MealEntry,
+    PostSaveCoachingSnapshot,
     SleepEntry,
     WaterEntry,
     WeightEntry,
@@ -939,6 +940,76 @@ class MySQLStore:
             (status.value, user_id, draft_id),
         )
 
+    def confirm_meal_draft_as_meal(self, user_id: int, draft_id: str, entry: MealEntry) -> None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            created_at = entry.created_at or entry.occurred_at
+            cursor.execute(
+                """
+                INSERT INTO meals (entry_id, user_id, created_at, occurred_at, title, calories, protein_g, fat_g, carbs_g, water_ml, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    entry.entry_id,
+                    user_id,
+                    created_at,
+                    entry.occurred_at,
+                    entry.title,
+                    entry.calories,
+                    entry.protein_g,
+                    entry.fat_g,
+                    entry.carbs_g,
+                    entry.water_ml,
+                    entry.notes,
+                ),
+            )
+            cursor.execute(
+                """
+                UPDATE meal_photo_drafts
+                SET status = %s
+                WHERE user_id = %s AND draft_id = %s
+                """,
+                (MealDraftStatus.CONFIRMED.value, user_id, draft_id),
+            )
+            cursor.execute(
+                """
+                UPDATE meal_media
+                SET meal_entry_id = %s
+                WHERE user_id = %s
+                  AND draft_id = %s
+                """,
+                (entry.entry_id, user_id, draft_id),
+            )
+            connection.commit()
+        finally:
+            cursor.close()
+            connection.close()
+
+    def confirm_meal_draft_as_water(self, user_id: int, draft_id: str, entry: WaterEntry) -> None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                INSERT INTO water_entries (entry_id, user_id, occurred_at, amount_ml)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (entry.entry_id, user_id, entry.occurred_at, entry.amount_ml),
+            )
+            cursor.execute(
+                """
+                UPDATE meal_photo_drafts
+                SET status = %s
+                WHERE user_id = %s AND draft_id = %s
+                """,
+                (MealDraftStatus.CONFIRMED.value, user_id, draft_id),
+            )
+            connection.commit()
+        finally:
+            cursor.close()
+            connection.close()
+
     def add_water(self, user_id: int, entry: WaterEntry) -> None:
         self._execute(
             """
@@ -1064,60 +1135,71 @@ class MySQLStore:
     def build_health_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
         day_start = datetime.combine(target_date, time.min)
         day_end = datetime.combine(target_date, time.max)
-
-        meals = self._fetchone(
-            """
-            SELECT COUNT(*) AS meals_count,
-                   COALESCE(SUM(calories), 0) AS calories,
-                   COALESCE(SUM(protein_g), 0) AS protein_g,
-                   COALESCE(SUM(fat_g), 0) AS fat_g,
-                   COALESCE(SUM(carbs_g), 0) AS carbs_g,
-                   COALESCE(SUM(water_ml), 0) AS meal_water_ml
-            FROM meals
-            WHERE user_id = %s
-              AND occurred_at BETWEEN %s AND %s
-            """,
-            (user_id, day_start, day_end),
-        )
-        water = self._fetchone(
-            """
-            SELECT COALESCE(SUM(amount_ml), 0) AS water_ml
-            FROM water_entries
-            WHERE user_id = %s
-              AND occurred_at BETWEEN %s AND %s
-            """,
-            (user_id, day_start, day_end),
-        )
-        activity = self._fetchone(
-            """
-            SELECT COALESCE(SUM(steps), 0) AS steps,
-                   COALESCE(SUM(duration_minutes), 0) AS activity_minutes
-            FROM activity_entries
-            WHERE user_id = %s
-              AND occurred_at BETWEEN %s AND %s
-            """,
-            (user_id, day_start, day_end),
-        )
-        latest_weight = self._fetchone(
-            """
-            SELECT weight_kg
-            FROM weight_entries
-            WHERE user_id = %s
-              AND occurred_at BETWEEN %s AND %s
-            ORDER BY occurred_at DESC
-            LIMIT 1
-            """,
-            (user_id, day_start, day_end),
-        )
-        sleep_rows = self._fetchall(
-            """
-            SELECT start_at, end_at
-            FROM sleep_entries
-            WHERE user_id = %s
-              AND end_at BETWEEN %s AND %s
-            """,
-            (user_id, day_start, day_end),
-        )
+        connection = self._connect()
+        try:
+            cursor = connection.cursor(dictionary=True)
+            meals = self._fetchone_with_cursor(
+                cursor,
+                """
+                SELECT COUNT(*) AS meals_count,
+                       COALESCE(SUM(calories), 0) AS calories,
+                       COALESCE(SUM(protein_g), 0) AS protein_g,
+                       COALESCE(SUM(fat_g), 0) AS fat_g,
+                       COALESCE(SUM(carbs_g), 0) AS carbs_g,
+                       COALESCE(SUM(water_ml), 0) AS meal_water_ml
+                FROM meals
+                WHERE user_id = %s
+                  AND occurred_at BETWEEN %s AND %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            water = self._fetchone_with_cursor(
+                cursor,
+                """
+                SELECT COALESCE(SUM(amount_ml), 0) AS water_ml
+                FROM water_entries
+                WHERE user_id = %s
+                  AND occurred_at BETWEEN %s AND %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            activity = self._fetchone_with_cursor(
+                cursor,
+                """
+                SELECT COALESCE(SUM(steps), 0) AS steps,
+                       COALESCE(SUM(duration_minutes), 0) AS activity_minutes
+                FROM activity_entries
+                WHERE user_id = %s
+                  AND occurred_at BETWEEN %s AND %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            latest_weight = self._fetchone_with_cursor(
+                cursor,
+                """
+                SELECT weight_kg
+                FROM weight_entries
+                WHERE user_id = %s
+                  AND occurred_at BETWEEN %s AND %s
+                ORDER BY occurred_at DESC
+                LIMIT 1
+                """,
+                (user_id, day_start, day_end),
+            )
+            sleep_rows = self._fetchall_with_cursor(
+                cursor,
+                """
+                SELECT start_at, end_at
+                FROM sleep_entries
+                WHERE user_id = %s
+                  AND end_at BETWEEN %s AND %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            goals = self._get_health_goals_with_cursor(cursor, user_id, target_date)
+        finally:
+            cursor.close()
+            connection.close()
 
         sleep_hours = 0.0
         for row in sleep_rows:
@@ -1135,47 +1217,91 @@ class MySQLStore:
             steps=int(activity["steps"]),
             activity_minutes=int(activity["activity_minutes"]),
             latest_weight_kg=float(latest_weight["weight_kg"]) if latest_weight else None,
-            goals=self.get_health_goals(user_id, target_date),
+            goals=goals,
+        )
+
+    def build_post_save_coaching_snapshot(self, user_id: int, target_date: date) -> PostSaveCoachingSnapshot:
+        day_start = datetime.combine(target_date, time.min)
+        day_end = datetime.combine(target_date, time.max)
+        connection = self._connect()
+        try:
+            cursor = connection.cursor(dictionary=True)
+            meals = self._fetchone_with_cursor(
+                cursor,
+                """
+                SELECT COUNT(*) AS meals_count,
+                       COALESCE(SUM(water_ml), 0) AS meal_water_ml
+                FROM meals
+                WHERE user_id = %s
+                  AND occurred_at BETWEEN %s AND %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            water = self._fetchone_with_cursor(
+                cursor,
+                """
+                SELECT COALESCE(SUM(amount_ml), 0) AS water_ml
+                FROM water_entries
+                WHERE user_id = %s
+                  AND occurred_at BETWEEN %s AND %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            goals = self._get_health_goals_with_cursor(cursor, user_id, target_date)
+        finally:
+            cursor.close()
+            connection.close()
+        return PostSaveCoachingSnapshot(
+            meals_count=int(meals["meals_count"]),
+            water_ml=int(water["water_ml"]) + int(meals["meal_water_ml"]),
+            goals=goals,
         )
 
     def upsert_decisions(self, user_id: int, decisions: Iterable[DecisionLogEntry]) -> List[DecisionLogEntry]:
         inserted = []
-        for decision in decisions:
-            rowcount = self._execute(
-                """
-                INSERT INTO decision_log (
-                    decision_id,
-                    user_id,
-                    decision_key,
-                    created_at,
-                    agent,
-                    kind,
-                    title,
-                    rationale,
-                    context_date,
-                    status,
-                    payload
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            for decision in decisions:
+                cursor.execute(
+                    """
+                    INSERT INTO decision_log (
+                        decision_id,
+                        user_id,
+                        decision_key,
+                        created_at,
+                        agent,
+                        kind,
+                        title,
+                        rationale,
+                        context_date,
+                        status,
+                        payload
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        decision_id = decision_id
+                    """,
+                    (
+                        decision.decision_id,
+                        user_id,
+                        decision.decision_key,
+                        decision.created_at,
+                        decision.agent,
+                        decision.kind.value,
+                        decision.title,
+                        decision.rationale,
+                        decision.context_date,
+                        decision.status.value,
+                        json.dumps(decision.payload, sort_keys=True),
+                    ),
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    decision_id = decision_id
-                """,
-                (
-                    decision.decision_id,
-                    user_id,
-                    decision.decision_key,
-                    decision.created_at,
-                    decision.agent,
-                    decision.kind.value,
-                    decision.title,
-                    decision.rationale,
-                    decision.context_date,
-                    decision.status.value,
-                    json.dumps(decision.payload, sort_keys=True),
-                ),
-            )
-            if rowcount == 1:
-                inserted.append(decision)
+                if cursor.rowcount == 1:
+                    inserted.append(decision)
+            connection.commit()
+        finally:
+            cursor.close()
+            connection.close()
         return inserted
 
     def list_decisions(
@@ -1863,6 +1989,40 @@ class MySQLStore:
         connection = mysql.connect(**self._connect_kwargs)
         connection.autocommit = False
         return connection
+
+    @staticmethod
+    def _fetchone_with_cursor(cursor, query: str, params: tuple):
+        cursor.execute(query, params)
+        return cursor.fetchone()
+
+    @staticmethod
+    def _fetchall_with_cursor(cursor, query: str, params: tuple):
+        cursor.execute(query, params)
+        return cursor.fetchall()
+
+    def _get_health_goals_with_cursor(self, cursor, user_id: int, target_date: date) -> DailyHealthGoals:
+        row = self._fetchone_with_cursor(
+            cursor,
+            "SELECT * FROM health_goals WHERE user_id = %s AND target_date = %s",
+            (user_id, target_date),
+        )
+        if not row:
+            user_row = self._fetchone_with_cursor(cursor, "SELECT * FROM users WHERE user_id = %s", (user_id,))
+            if user_row is None:
+                return DailyHealthGoals(target_date=target_date)
+            user = self._to_user(user_row)
+            return DailyHealthGoals(
+                target_date=target_date,
+                water_ml=user.target_water_ml,
+                protein_g=user.target_protein_g,
+            )
+        return DailyHealthGoals(
+            target_date=row["target_date"],
+            water_ml=row["water_ml"],
+            protein_g=row["protein_g"],
+            sleep_hours=float(row["sleep_hours"]),
+            steps=row["steps"],
+        )
 
     def _execute(self, query: str, params: tuple) -> int:
         connection = self._connect()

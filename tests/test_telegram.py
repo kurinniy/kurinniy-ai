@@ -8,7 +8,7 @@ from ai_me.config import TelegramSettings
 from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDigestHighlight, WeeklyFoodDigest
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft, PhotoLogKind, PhotoLogResult, WATER_PHOTO_SOURCE
-from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, StepProgressInsight
+from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, PostSaveCoachingSnapshot, StepProgressInsight
 from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
@@ -506,6 +506,14 @@ class DummyHealthService:
                 water_ml=user.target_water_ml if user is not None else 2000,
                 protein_g=user.target_protein_g if user is not None else 120,
             ),
+        )
+
+    def get_post_save_coaching_snapshot(self, user_id, target_date):
+        summary = self.get_daily_summary(user_id, target_date)
+        return PostSaveCoachingSnapshot(
+            meals_count=summary.meals_count,
+            water_ml=summary.water_ml,
+            goals=summary.goals,
         )
 
     def list_meals(self, user_id, target_date):

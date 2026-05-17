@@ -82,6 +82,13 @@ class DailyHealthSummary:
 
 
 @dataclass(frozen=True)
+class PostSaveCoachingSnapshot:
+    meals_count: int
+    water_ml: int
+    goals: DailyHealthGoals
+
+
+@dataclass(frozen=True)
 class StepProgressInsight:
     reference_date: date
     steps: int

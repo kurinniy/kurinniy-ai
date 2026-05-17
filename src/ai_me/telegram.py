@@ -15,7 +15,7 @@ from ai_me.config import TelegramSettings
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.digest import DailyFoodDigest, WeeklyFoodDigest
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft, PhotoLogKind
-from ai_me.domain.health import DailyHealthSummary, MealEntry, WaterEntry
+from ai_me.domain.health import DailyHealthSummary, MealEntry, PostSaveCoachingSnapshot, WaterEntry
 from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
 from ai_me.services.digest_renderer import DigestImageRenderer
 from ai_me.services.health_service import HealthService
@@ -379,7 +379,7 @@ class TelegramHealthBot:
             else:
                 self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
                 self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
-                saved_meal = self.service.get_meal_entry(app_user.user_id, meal.entry_id)
+                saved_meal = meal.meal_entry or self.service.get_meal_entry(app_user.user_id, meal.entry_id)
                 self._send_message(
                     chat_id,
                     self._format_saved_meal_text(app_user, saved_meal),
@@ -2184,7 +2184,7 @@ class TelegramHealthBot:
             meal = self.service.confirm_meal_draft(app_user.user_id, draft.draft_id)
             self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
             self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft.draft_id)
-            saved_meal = self.service.get_meal_entry(app_user.user_id, meal.entry_id)
+            saved_meal = meal.meal_entry or self.service.get_meal_entry(app_user.user_id, meal.entry_id)
             self._record_response_debug_step("автосохранение записи", auto_save_started_at)
             card_started_at = time.perf_counter()
             saved_text = self._format_saved_meal_text(app_user, saved_meal)
@@ -3603,13 +3603,13 @@ class TelegramHealthBot:
         )
 
     def _format_saved_meal_text(self, app_user: AppUser, meal: MealEntry) -> str:
-        summary = self.service.get_daily_summary(app_user.user_id, meal.occurred_at.date())
+        summary = self.service.get_post_save_coaching_snapshot(app_user.user_id, meal.occurred_at.date())
         coaching = self._build_optional_post_save_coaching(app_user, summary)
         trailing_note = coaching or "Если нужно, запись можно быстро изменить или отменить."
         return self._format_auto_saved_meal_text(meal, trailing_note=trailing_note)
 
     @staticmethod
-    def _build_optional_post_save_coaching(app_user: AppUser, summary: DailyHealthSummary) -> str:
+    def _build_optional_post_save_coaching(app_user: AppUser, summary: PostSaveCoachingSnapshot) -> str:
         if not app_user.reminders_enabled:
             return ""
         if app_user.reminder_meal_logging:

@@ -11,6 +11,7 @@ from ai_me.domain.health import (
     DailyHealthGoals,
     DailyHealthSummary,
     MealEntry,
+    PostSaveCoachingSnapshot,
     SleepEntry,
     WaterEntry,
     WeightEntry,
@@ -475,6 +476,15 @@ class InMemoryStore:
             water_ml=current.water_ml,
         )
 
+    def confirm_meal_draft_as_meal(self, user_id: int, draft_id: str, entry: MealEntry) -> None:
+        self.add_meal(user_id, entry)
+        self.update_meal_draft_status(user_id, draft_id, MealDraftStatus.CONFIRMED)
+        self.attach_meal_media_to_meal(user_id, draft_id, entry.entry_id)
+
+    def confirm_meal_draft_as_water(self, user_id: int, draft_id: str, entry: WaterEntry) -> None:
+        self.add_water(user_id, entry)
+        self.update_meal_draft_status(user_id, draft_id, MealDraftStatus.CONFIRMED)
+
     def add_water(self, user_id: int, entry: WaterEntry) -> None:
         self._water_entries.setdefault(user_id, []).append(entry)
 
@@ -547,6 +557,17 @@ class InMemoryStore:
             steps=sum(entry.steps for entry in activity_entries),
             activity_minutes=sum(entry.duration_minutes for entry in activity_entries),
             latest_weight_kg=latest_weight,
+            goals=self.get_health_goals(user_id, target_date),
+        )
+
+    def build_post_save_coaching_snapshot(self, user_id: int, target_date: date) -> PostSaveCoachingSnapshot:
+        meals = [entry for entry in self._meals.get(user_id, []) if entry.occurred_at.date() == target_date]
+        water_entries = [
+            entry for entry in self._water_entries.get(user_id, []) if entry.occurred_at.date() == target_date
+        ]
+        return PostSaveCoachingSnapshot(
+            meals_count=len(meals),
+            water_ml=sum(entry.amount_ml for entry in water_entries) + sum(entry.water_ml for entry in meals),
             goals=self.get_health_goals(user_id, target_date),
         )
 

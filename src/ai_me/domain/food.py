@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import List
+from typing import List, Optional
+
+from ai_me.domain.health import MealEntry
 
 
 class MealDraftStatus(str, Enum):
@@ -67,6 +69,7 @@ class PhotoLogResult:
     title: str
     occurred_at: datetime
     water_ml: int = 0
+    meal_entry: Optional[MealEntry] = None
 
 
 @dataclass(frozen=True)
