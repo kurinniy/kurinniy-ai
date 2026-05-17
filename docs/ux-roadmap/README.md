@@ -21,10 +21,10 @@
 ## Порядок этапов
 
 9. [09-onboarding-with-illustrations.md](./09-onboarding-with-illustrations.md)
-   Новый пошаговый онбординг с иллюстрациями, который знакомит пользователя с назначением бота, ежедневными сводками и Mini App.
+   Новый пошаговый онбординг с иллюстрациями, который открывается по `/start` и знакомит пользователя с назначением бота и Mini App.
 
 1. [01-welcome-and-primary-navigation.md](./01-welcome-and-primary-navigation.md)
-   Первый запуск, приветственный экран, понятный стартовый сценарий, action-first навигация.
+   Домашний экран, action-first навигация и короткие тексты без технических терминов.
 
 2. [02-quick-water-logging.md](./02-quick-water-logging.md)
    Быстрый ввод воды без фото, короткий feedback и возврат в основной сценарий.
@@ -36,13 +36,13 @@
    Быстрое исправление последней записи в чате и переход в Mini App для полной истории.
 
 5. [05-editing-saved-entries.md](./05-editing-saved-entries.md)
-   Mini App как архив приемов пищи и распознаваний с карточками записей.
+   Mini App как архив приемов пищи и распознаваний с read-only карточками записей.
 
 6. [06-profile-goals-and-reminders.md](./06-profile-goals-and-reminders.md)
    Профиль, персональные настройки, цели и опциональные напоминания.
 
 7. [07-mini-app-history-and-analytics.md](./07-mini-app-history-and-analytics.md)
-   Mini App для истории, аналитики, графиков и доступа обычным пользователям.
+   Mini App для истории, аналитики, графиков и профиля обычного пользователя.
 
 8. [08-smart-clarifications-and-optional-coaching.md](./08-smart-clarifications-and-optional-coaching.md)
    Умное автосохранение после фото и мягкие коучинговые сценарии.
@@ -55,7 +55,9 @@
 
 ## Базовые ожидания ко всем этапам
 
-- Не ломать текущие рабочие сценарии `photo -> draft -> confirm`.
+- Не ломать текущие рабочие сценарии:
+  - `photo -> auto-save -> edit/cancel` для уверенного распознавания;
+  - `photo -> draft -> save/edit/cancel` для сомнительного распознавания.
 - Сохранять fallback через slash-команды, даже если основной UX переезжает на кнопки.
 - Для Telegram-изменений обновлять unit-тесты в `tests/test_telegram.py`.
 - Для Mini App-изменений обновлять backend и frontend вместе, а также тесты `tests/test_web_*`.
