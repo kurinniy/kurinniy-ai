@@ -60,6 +60,18 @@ export type DashboardPayload = {
     items: RecognitionListItem[];
     has_more: boolean;
   };
+  analytics: {
+    window_days: number;
+    points: AnalyticsPoint[];
+    logging_days: number;
+    logging_frequency_pct: number;
+    current_streak: number;
+    longest_streak: number;
+    average_calories: number;
+    average_protein_g: number;
+    average_water_ml: number;
+  };
+  profile: ProfilePayload;
   decisions: Array<{
     decision_id: string;
     kind: string;
@@ -123,6 +135,39 @@ export type RecognitionDetail = {
   status_label: string;
   is_water_only: boolean;
   photo_data_url: string | null;
+};
+
+export type AnalyticsPoint = {
+  date: string;
+  calories: number;
+  protein_g: number;
+  water_ml: number;
+  meals_count: number;
+  has_logging: boolean;
+};
+
+export type ProfilePayload = {
+  about: {
+    sex: string | null;
+    sex_label: string;
+    age_years: number | null;
+    height_cm: number | null;
+    profile_weight_kg: number | null;
+    goal: string | null;
+    goal_label: string;
+  };
+  goals: {
+    target_water_ml: number;
+    target_protein_g: number;
+    target_calories_min: number | null;
+    target_calories_max: number | null;
+  };
+  reminders: {
+    enabled: boolean;
+    meal_logging: boolean;
+    water: boolean;
+    evening_summary: boolean;
+  };
 };
 
 export type AuthResponse = {

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type {
+  AnalyticsPoint,
   AuthResponse,
   BootstrapResponse,
   DashboardPayload,
   MealEntryDetail,
+  ProfilePayload,
   RecognitionDetail,
 } from "./types";
 
@@ -30,7 +32,7 @@ type AppState =
   | { kind: "error"; title: string; message: string }
   | { kind: "ready"; auth: AuthResponse; dashboard: DashboardPayload };
 
-type TabKey = "today" | "history" | "recognitions" | "more";
+type TabKey = "today" | "history" | "analytics" | "profile";
 
 type MealDetailState =
   | { kind: "idle" }
@@ -109,6 +111,21 @@ export function App() {
 
   const { auth, dashboard } = state;
 
+  const replaceProfile = (profile: ProfilePayload) => {
+    setState((current) => {
+      if (current.kind !== "ready") {
+        return current;
+      }
+      return {
+        ...current,
+        dashboard: {
+          ...current.dashboard,
+          profile,
+        },
+      };
+    });
+  };
+
   const openMealDetail = async (entryId: string) => {
     setMealDetail({ kind: "loading", entryId });
     setActiveTab("history");
@@ -126,7 +143,7 @@ export function App() {
 
   const openRecognitionDetail = async (draftId: string) => {
     setRecognitionDetail({ kind: "loading", draftId });
-    setActiveTab("recognitions");
+    setActiveTab("history");
     try {
       const detail = await fetchRecognitionDetail(auth.token, draftId);
       setRecognitionDetail({ kind: "ready", draftId, detail });
@@ -145,11 +162,23 @@ export function App() {
       <TabBar activeTab={activeTab} onSelect={setActiveTab} />
 
       {activeTab === "today" ? <TodayView dashboard={dashboard} /> : null}
-      {activeTab === "history" ? <HistoryView dashboard={dashboard} detailState={mealDetail} onOpenDetail={openMealDetail} /> : null}
-      {activeTab === "recognitions" ? (
-        <RecognitionView dashboard={dashboard} detailState={recognitionDetail} onOpenDetail={openRecognitionDetail} />
+      {activeTab === "history" ? (
+        <HistoryView
+          dashboard={dashboard}
+          mealDetailState={mealDetail}
+          recognitionDetailState={recognitionDetail}
+          onOpenMealDetail={openMealDetail}
+          onOpenRecognitionDetail={openRecognitionDetail}
+        />
       ) : null}
-      {activeTab === "more" ? <MoreView dashboard={dashboard} /> : null}
+      {activeTab === "analytics" ? <AnalyticsView dashboard={dashboard} /> : null}
+      {activeTab === "profile" ? (
+        <ProfileView
+          token={auth.token}
+          dashboard={dashboard}
+          onProfileUpdate={replaceProfile}
+        />
+      ) : null}
 
       <Footer version={dashboard.version.app_version} releaseDate={dashboard.version.release_date} />
     </Shell>
@@ -171,7 +200,10 @@ async function loadApplication(initData: string): Promise<{ auth: AuthResponse; 
   const bootstrap = await postJson<BootstrapResponse>("/api/webapp/bootstrap", {
     init_data: initData,
   });
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token: bootstrap.token, expires_in: bootstrap.expires_in, user: bootstrap.user }));
+  sessionStorage.setItem(
+    SESSION_KEY,
+    JSON.stringify({ token: bootstrap.token, expires_in: bootstrap.expires_in, user: bootstrap.user }),
+  );
   return {
     auth: {
       token: bootstrap.token,
@@ -194,10 +226,58 @@ async function fetchRecognitionDetail(token: string, draftId: string): Promise<R
   return getJson<RecognitionDetail>(`/api/history/recognitions/${encodeURIComponent(draftId)}`, token);
 }
 
+async function updateProfileAbout(token: string, payload: Record<string, unknown>): Promise<ProfilePayload> {
+  return patchJson<ProfilePayload>("/api/profile/about", token, payload);
+}
+
+async function updateProfileGoals(token: string, payload: Record<string, unknown>): Promise<ProfilePayload> {
+  return patchJson<ProfilePayload>("/api/profile/goals", token, payload);
+}
+
+async function resetProfileGoals(token: string): Promise<ProfilePayload> {
+  return postAuthJson<ProfilePayload>("/api/profile/goals/reset", token, {});
+}
+
+async function updateProfileReminders(token: string, payload: Record<string, unknown>): Promise<ProfilePayload> {
+  return patchJson<ProfilePayload>("/api/profile/reminders", token, payload);
+}
+
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
     headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await safeReadJson(response);
+    throw new Error(mapApiError(error?.detail));
+  }
+  return (await response.json()) as T;
+}
+
+async function postAuthJson<T>(url: string, token: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await safeReadJson(response);
+    throw new Error(mapApiError(error?.detail));
+  }
+  return (await response.json()) as T;
+}
+
+async function patchJson<T>(url: string, token: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
@@ -253,7 +333,7 @@ function Hero({ firstName }: { firstName: string }) {
       <div className="hero__eyebrow">Telegram Mini App</div>
       <h1 className="hero__title">ai-me</h1>
       <p className="hero__subtitle">
-        Привет, {firstName}. Здесь удобно смотреть архив приёмов пищи и распознаваний, а чат остаётся для быстрых действий.
+        Привет, {firstName}. Здесь удобно смотреть историю, аналитику и настраивать профиль, а чат остаётся для быстрых действий.
       </p>
     </section>
   );
@@ -263,8 +343,8 @@ function TabBar({ activeTab, onSelect }: { activeTab: TabKey; onSelect: (tab: Ta
   const items: Array<{ key: TabKey; label: string }> = [
     { key: "today", label: "Сегодня" },
     { key: "history", label: "История" },
-    { key: "recognitions", label: "Распознавания" },
-    { key: "more", label: "Еще" },
+    { key: "analytics", label: "Аналитика" },
+    { key: "profile", label: "Профиль" },
   ];
   return (
     <nav className="tab-bar">
@@ -291,7 +371,7 @@ function TodayView({ dashboard }: { dashboard: DashboardPayload }) {
             { label: "Калории", value: formatInteger(dashboard.summary.calories) },
             { label: "Белок", value: `${formatDecimal(dashboard.summary.protein_g)} г` },
             { label: "Вода", value: `${formatLiters(dashboard.summary.water_ml)} л` },
-            { label: "Приемы пищи", value: String(dashboard.summary.meals_count) },
+            { label: "Приемы пищи", value: formatInteger(dashboard.summary.meals_count) },
           ]}
         />
       </Section>
@@ -322,25 +402,32 @@ function TodayView({ dashboard }: { dashboard: DashboardPayload }) {
 
 function HistoryView({
   dashboard,
-  detailState,
-  onOpenDetail,
+  mealDetailState,
+  recognitionDetailState,
+  onOpenMealDetail,
+  onOpenRecognitionDetail,
 }: {
   dashboard: DashboardPayload;
-  detailState: MealDetailState;
-  onOpenDetail: (entryId: string) => void;
+  mealDetailState: MealDetailState;
+  recognitionDetailState: RecognitionDetailState;
+  onOpenMealDetail: (entryId: string) => void;
+  onOpenRecognitionDetail: (draftId: string) => void;
 }) {
   return (
     <>
       <Section title="История">
-        <StatusCard
-          title="Архив приемов пищи"
-          text="Здесь можно открыть сохраненные записи по дням. Полное редактирование появится следующим этапом."
-        />
+        <StatusCard title="Архив приемов пищи" text="Здесь удобно просматривать сохраненные записи и историю распознаваний." />
       </Section>
 
-      {detailState.kind !== "idle" ? (
+      {mealDetailState.kind !== "idle" ? (
         <Section title="Карточка записи">
-          <MealDetailCard detailState={detailState} />
+          <MealDetailCard detailState={mealDetailState} />
+        </Section>
+      ) : null}
+
+      {recognitionDetailState.kind !== "idle" ? (
+        <Section title="Карточка распознавания">
+          <RecognitionDetailCard detailState={recognitionDetailState} />
         </Section>
       ) : null}
 
@@ -354,7 +441,7 @@ function HistoryView({
                 <div className="card__title">{formatHistoryDate(day.date)}</div>
                 <div className="list">
                   {day.entries.map((entry) => (
-                    <button className="list-button" key={entry.entry_id} type="button" onClick={() => onOpenDetail(entry.entry_id)}>
+                    <button className="list-button" key={entry.entry_id} type="button" onClick={() => onOpenMealDetail(entry.entry_id)}>
                       <div className="list-button__main">
                         <span className="list-button__title">{entry.title}</span>
                         <span className="badge badge--neutral">Сохранено</span>
@@ -370,43 +457,15 @@ function HistoryView({
             ))}
           </div>
         )}
-        {dashboard.history.has_more ? <Hint text="Пока показываем последние записи. Дальше архив будет расширен." /> : null}
       </Section>
-    </>
-  );
-}
 
-function RecognitionView({
-  dashboard,
-  detailState,
-  onOpenDetail,
-}: {
-  dashboard: DashboardPayload;
-  detailState: RecognitionDetailState;
-  onOpenDetail: (draftId: string) => void;
-}) {
-  return (
-    <>
       <Section title="Распознавания">
-        <StatusCard
-          title="Лента распознаваний"
-          text="Здесь видно, что уже сохранено, что отклонено и какие распознавания еще ждут решения."
-        />
-      </Section>
-
-      {detailState.kind !== "idle" ? (
-        <Section title="Карточка распознавания">
-          <RecognitionDetailCard detailState={detailState} />
-        </Section>
-      ) : null}
-
-      <Section title="Последние распознавания">
         {dashboard.recognitions.items.length === 0 ? (
           <EmptyCard title="Распознаваний пока нет" text="Пока нет распознаваний. Просто отправьте фото еды в чат." />
         ) : (
           <div className="stack">
             {dashboard.recognitions.items.map((item) => (
-              <button className="card card--button" key={item.draft_id} type="button" onClick={() => onOpenDetail(item.draft_id)}>
+              <button className="card card--button" key={item.draft_id} type="button" onClick={() => onOpenRecognitionDetail(item.draft_id)}>
                 <div className="card__headline">
                   <span>{item.title}</span>
                   <span className={`badge ${recognitionBadgeClass(item.status)}`}>{item.status_label}</span>
@@ -421,29 +480,366 @@ function RecognitionView({
             ))}
           </div>
         )}
-        {dashboard.recognitions.has_more ? <Hint text="Пока показываем последние распознавания. История будет расширяться дальше." /> : null}
       </Section>
     </>
   );
 }
 
-function MoreView({ dashboard }: { dashboard: DashboardPayload }) {
+function AnalyticsView({ dashboard }: { dashboard: DashboardPayload }) {
+  const analytics = dashboard.analytics;
+
   return (
     <>
-      <Section title="Профиль и еще">
-        <div className="stack">
-          <div className="card">
-            <div className="card__headline">
-              <span>{dashboard.user.first_name || "Пользователь"}</span>
-              <span className="badge badge--neutral">{dashboard.user.status}</span>
-            </div>
-            <div className="card__text">
-              Telegram ID: {dashboard.user.telegram_user_id}
-              <br />
-              В приложении сейчас доступны история, распознавания и просмотр карточек записей.
-            </div>
+      <Section title="Аналитика">
+        <MetricGrid
+          items={[
+            { label: "Дней с логированием", value: String(analytics.logging_days) },
+            { label: "Частота", value: `${formatPercent(analytics.logging_frequency_pct)}` },
+            { label: "Текущий streak", value: `${analytics.current_streak} дн` },
+            { label: "Лучший streak", value: `${analytics.longest_streak} дн` },
+          ]}
+        />
+      </Section>
+
+      <Section title="Средние за окно">
+        <MetricGrid
+          items={[
+            { label: "Калории", value: `${formatDecimal(analytics.average_calories)} ккал` },
+            { label: "Белок", value: `${formatDecimal(analytics.average_protein_g)} г` },
+            { label: "Вода", value: `${formatLiters(analytics.average_water_ml)} л` },
+            { label: "Период", value: `${analytics.window_days} дней` },
+          ]}
+        />
+      </Section>
+
+      <Section title="Калории по дням">
+        <AnalyticsBars
+          points={analytics.points}
+          getValue={(point) => point.calories}
+          renderValue={(point) => `${formatInteger(point.calories)} ккал`}
+        />
+      </Section>
+
+      <Section title="Белок по дням">
+        <AnalyticsBars
+          points={analytics.points}
+          getValue={(point) => point.protein_g}
+          renderValue={(point) => `${formatDecimal(point.protein_g)} г`}
+        />
+      </Section>
+
+      <Section title="Вода по дням">
+        <AnalyticsBars
+          points={analytics.points}
+          getValue={(point) => point.water_ml}
+          renderValue={(point) => `${formatLiters(point.water_ml)} л`}
+        />
+      </Section>
+    </>
+  );
+}
+
+function ProfileView({
+  token,
+  dashboard,
+  onProfileUpdate,
+}: {
+  token: string;
+  dashboard: DashboardPayload;
+  onProfileUpdate: (profile: ProfilePayload) => void;
+}) {
+  const [draft, setDraft] = useState<ProfilePayload>(dashboard.profile);
+  const [status, setStatus] = useState<{ tone: "default" | "danger"; text: string } | null>(null);
+
+  useEffect(() => {
+    setDraft(dashboard.profile);
+  }, [dashboard.profile]);
+
+  const saveAbout = async () => {
+    setStatus({ tone: "default", text: "Сохраняю изменения..." });
+    try {
+      const profile = await updateProfileAbout(token, draft.about);
+      setDraft(profile);
+      onProfileUpdate(profile);
+      setStatus({ tone: "default", text: "Параметры сохранены." });
+    } catch (error) {
+      setStatus({ tone: "danger", text: error instanceof Error ? error.message : "Не удалось сохранить профиль." });
+    }
+  };
+
+  const saveGoals = async () => {
+    setStatus({ tone: "default", text: "Сохраняю цели..." });
+    try {
+      const profile = await updateProfileGoals(token, draft.goals);
+      setDraft(profile);
+      onProfileUpdate(profile);
+      setStatus({ tone: "default", text: "Цели сохранены." });
+    } catch (error) {
+      setStatus({ tone: "danger", text: error instanceof Error ? error.message : "Не удалось сохранить цели." });
+    }
+  };
+
+  const resetGoalsAction = async () => {
+    setStatus({ tone: "default", text: "Сбрасываю цели..." });
+    try {
+      const profile = await resetProfileGoals(token);
+      setDraft(profile);
+      onProfileUpdate(profile);
+      setStatus({ tone: "default", text: "Цели сброшены к рекомендованным." });
+    } catch (error) {
+      setStatus({ tone: "danger", text: error instanceof Error ? error.message : "Не удалось сбросить цели." });
+    }
+  };
+
+  const saveReminders = async () => {
+    setStatus({ tone: "default", text: "Сохраняю напоминания..." });
+    try {
+      const profile = await updateProfileReminders(token, draft.reminders);
+      setDraft(profile);
+      onProfileUpdate(profile);
+      setStatus({ tone: "default", text: "Настройки напоминаний сохранены." });
+    } catch (error) {
+      setStatus({ tone: "danger", text: error instanceof Error ? error.message : "Не удалось сохранить напоминания." });
+    }
+  };
+
+  return (
+    <>
+      <Section title="Профиль">
+        <StatusCard
+          title="Настройки пользователя"
+          text="Здесь можно обновить личные параметры, цели и напоминания. Чат остаётся быстрым местом для действий, а Mini App — местом для настроек."
+        />
+      </Section>
+
+      {status ? <StatusCard title="Статус" text={status.text} tone={status.tone} /> : null}
+
+      <Section title="Обо мне">
+        <div className="card form-card">
+          <div className="form-grid">
+            <label className="field">
+              <span className="field__label">Пол</span>
+              <select
+                className="field__control"
+                value={draft.about.sex ?? ""}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    about: { ...current.about, sex: event.target.value || null },
+                  }))
+                }
+              >
+                <option value="">Не указан</option>
+                <option value="male">Мужчина</option>
+                <option value="female">Женщина</option>
+              </select>
+            </label>
+            <label className="field">
+              <span className="field__label">Возраст</span>
+              <input
+                className="field__control"
+                type="number"
+                inputMode="numeric"
+                value={draft.about.age_years ?? ""}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    about: { ...current.about, age_years: parseNullableInt(event.target.value) },
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span className="field__label">Рост</span>
+              <input
+                className="field__control"
+                type="number"
+                inputMode="numeric"
+                value={draft.about.height_cm ?? ""}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    about: { ...current.about, height_cm: parseNullableInt(event.target.value) },
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span className="field__label">Вес</span>
+              <input
+                className="field__control"
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                value={draft.about.profile_weight_kg ?? ""}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    about: { ...current.about, profile_weight_kg: parseNullableFloat(event.target.value) },
+                  }))
+                }
+              />
+            </label>
+            <label className="field field--full">
+              <span className="field__label">Цель</span>
+              <select
+                className="field__control"
+                value={draft.about.goal ?? ""}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    about: { ...current.about, goal: event.target.value || null },
+                  }))
+                }
+              >
+                <option value="">Не указана</option>
+                <option value="maintenance">Поддержание</option>
+                <option value="weight_loss">Похудение</option>
+                <option value="mass_gain">Набор массы</option>
+              </select>
+            </label>
           </div>
-          <DecisionList dashboard={dashboard} />
+          <div className="action-row">
+            <button className="action-button" type="button" onClick={saveAbout}>
+              Сохранить параметры
+            </button>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Цели">
+        <div className="card form-card">
+          <div className="form-grid">
+            <label className="field">
+              <span className="field__label">Вода, мл</span>
+              <input
+                className="field__control"
+                type="number"
+                inputMode="numeric"
+                value={draft.goals.target_water_ml}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    goals: { ...current.goals, target_water_ml: parseNullableInt(event.target.value) ?? 0 },
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span className="field__label">Белок, г</span>
+              <input
+                className="field__control"
+                type="number"
+                inputMode="numeric"
+                value={draft.goals.target_protein_g}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    goals: { ...current.goals, target_protein_g: parseNullableInt(event.target.value) ?? 0 },
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span className="field__label">Калории от</span>
+              <input
+                className="field__control"
+                type="number"
+                inputMode="numeric"
+                value={draft.goals.target_calories_min ?? ""}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    goals: { ...current.goals, target_calories_min: parseNullableInt(event.target.value) },
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span className="field__label">Калории до</span>
+              <input
+                className="field__control"
+                type="number"
+                inputMode="numeric"
+                value={draft.goals.target_calories_max ?? ""}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    goals: { ...current.goals, target_calories_max: parseNullableInt(event.target.value) },
+                  }))
+                }
+              />
+            </label>
+          </div>
+          <div className="action-row">
+            <button className="action-button" type="button" onClick={saveGoals}>
+              Сохранить цели
+            </button>
+            <button className="action-button action-button--secondary" type="button" onClick={resetGoalsAction}>
+              Сбросить к рекомендованным
+            </button>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Напоминания">
+        <div className="card form-card">
+          <div className="toggle-list">
+            <ToggleRow
+              label="Включить напоминания"
+              checked={draft.reminders.enabled}
+              onChange={(checked) =>
+                setDraft((current) => ({
+                  ...current,
+                  reminders: {
+                    ...current.reminders,
+                    enabled: checked,
+                    meal_logging: checked ? current.reminders.meal_logging : false,
+                    water: checked ? current.reminders.water : false,
+                    evening_summary: checked ? current.reminders.evening_summary : false,
+                  },
+                }))
+              }
+            />
+            <ToggleRow
+              label="Напомнить записать еду"
+              checked={draft.reminders.meal_logging}
+              disabled={!draft.reminders.enabled}
+              onChange={(checked) =>
+                setDraft((current) => ({
+                  ...current,
+                  reminders: { ...current.reminders, meal_logging: checked, enabled: true },
+                }))
+              }
+            />
+            <ToggleRow
+              label="Напомнить про воду"
+              checked={draft.reminders.water}
+              disabled={!draft.reminders.enabled}
+              onChange={(checked) =>
+                setDraft((current) => ({
+                  ...current,
+                  reminders: { ...current.reminders, water: checked, enabled: true },
+                }))
+              }
+            />
+            <ToggleRow
+              label="Вечерний итог дня"
+              checked={draft.reminders.evening_summary}
+              disabled={!draft.reminders.enabled}
+              onChange={(checked) =>
+                setDraft((current) => ({
+                  ...current,
+                  reminders: { ...current.reminders, evening_summary: checked, enabled: true },
+                }))
+              }
+            />
+          </div>
+          <div className="action-row">
+            <button className="action-button" type="button" onClick={saveReminders}>
+              Сохранить напоминания
+            </button>
+          </div>
         </div>
       </Section>
     </>
@@ -479,7 +875,6 @@ function MealDetailCard({ detailState }: { detailState: MealDetailState }) {
           { label: "Вода", value: `${formatLiters(detail.water_ml)} л` },
         ]}
       />
-      <div className="detail-card__footer">Редактирование скоро появится в Mini App.</div>
     </div>
   );
 }
@@ -514,8 +909,55 @@ function RecognitionDetailCard({ detailState }: { detailState: RecognitionDetail
           { label: "Вода", value: `${formatLiters(detail.water_ml)} л` },
         ]}
       />
-      <div className="detail-card__footer">Редактирование и удаление появятся следующим этапом.</div>
     </div>
+  );
+}
+
+function AnalyticsBars({
+  points,
+  getValue,
+  renderValue,
+}: {
+  points: AnalyticsPoint[];
+  getValue: (point: AnalyticsPoint) => number;
+  renderValue: (point: AnalyticsPoint) => string;
+}) {
+  const maxValue = Math.max(...points.map((point) => getValue(point)), 1);
+  return (
+    <div className="chart">
+      {points.map((point) => {
+        const value = getValue(point);
+        const height = Math.max(8, Math.round((value / maxValue) * 100));
+        return (
+          <div className="chart__item" key={point.date}>
+            <div className="chart__bar-wrap">
+              <div className={`chart__bar${point.has_logging ? "" : " chart__bar--muted"}`} style={{ height: `${height}%` }} />
+            </div>
+            <div className="chart__value">{renderValue(point)}</div>
+            <div className="chart__label">{formatShortDate(point.date)}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={`toggle-row${disabled ? " toggle-row--disabled" : ""}`}>
+      <span>{label}</span>
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+    </label>
   );
 }
 
@@ -561,10 +1003,6 @@ function EmptyCard({ title, text }: { title: string; text: string }) {
   );
 }
 
-function Hint({ text }: { text: string }) {
-  return <div className="hint">{text}</div>;
-}
-
 function MetricGrid({
   items,
   compact = false,
@@ -584,42 +1022,6 @@ function MetricGrid({
   );
 }
 
-function StepCard({ dashboard }: { dashboard: DashboardPayload }) {
-  const stepProgress = dashboard.summary.step_progress;
-  return (
-    <div className="card">
-      <div className="card__headline">
-        <span>{formatInteger(stepProgress.steps)} шагов</span>
-        <span className="card__muted">цель {formatInteger(stepProgress.target_steps)}</span>
-      </div>
-      <div className="card__text">{stepProgress.comment}</div>
-      <div className="chip-row">
-        <span className="chip">Средняя 30 дней: {stepProgress.average_steps_30d ?? "нет данных"}</span>
-        <span className="chip">Дней с данными: {stepProgress.days_with_data_30d}</span>
-      </div>
-    </div>
-  );
-}
-
-function DecisionList({ dashboard }: { dashboard: DashboardPayload }) {
-  if (dashboard.decisions.length === 0) {
-    return <StatusCard title="Открытые решения" text="На сегодня открытых решений нет." />;
-  }
-  return (
-    <div className="stack">
-      {dashboard.decisions.map((decision) => (
-        <div className="card" key={decision.decision_id}>
-          <div className="card__headline">
-            <span>{decision.title}</span>
-            <span className="badge">{decision.kind}</span>
-          </div>
-          <div className="card__text">{decision.rationale}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function Footer({ version, releaseDate }: { version: string; releaseDate: string }) {
   return (
     <footer className="footer">
@@ -630,7 +1032,7 @@ function Footer({ version, releaseDate }: { version: string; releaseDate: string
 }
 
 function formatInteger(value: number): string {
-  return new Intl.NumberFormat("ru-RU").format(value);
+  return new Intl.NumberFormat("ru-RU").format(Math.round(value));
 }
 
 function formatDecimal(value: number): string {
@@ -639,6 +1041,10 @@ function formatDecimal(value: number): string {
 
 function formatLiters(valueMl: number): string {
   return (valueMl / 1000).toFixed(1);
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(1)}%`;
 }
 
 function formatTime(raw: string): string {
@@ -663,6 +1069,14 @@ function formatHistoryDate(raw: string): string {
   });
 }
 
+function formatShortDate(raw: string): string {
+  const value = new Date(`${raw}T00:00:00`);
+  return value.toLocaleDateString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+  });
+}
+
 function recognitionBadgeClass(status: string): string {
   if (status === "confirmed") {
     return "badge--success";
@@ -671,4 +1085,18 @@ function recognitionBadgeClass(status: string): string {
     return "badge--danger";
   }
   return "badge--warning";
+}
+
+function parseNullableInt(value: string): number | null {
+  if (!value.trim()) {
+    return null;
+  }
+  return Number.parseInt(value, 10);
+}
+
+function parseNullableFloat(value: string): number | null {
+  if (!value.trim()) {
+    return null;
+  }
+  return Number.parseFloat(value);
 }

@@ -162,6 +162,8 @@ class WebAppTest(unittest.TestCase):
         payload = response.json()
         self.assertIn("history", payload)
         self.assertIn("recognitions", payload)
+        self.assertIn("analytics", payload)
+        self.assertIn("profile", payload)
 
     def test_meal_entry_detail_endpoint_returns_detail_payload(self) -> None:
         self.service.log_meal(
@@ -224,6 +226,110 @@ class WebAppTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["draft_id"], "draft-1")
         self.assertEqual(payload["status"], "pending")
+
+    def test_profile_endpoint_returns_current_profile(self) -> None:
+        init_data = build_init_data(
+            {"id": 111, "first_name": "Guest", "username": "guest"},
+            auth_date=int(datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc).timestamp()),
+        )
+        auth_response = self.client.post("/api/webapp/auth", json={"init_data": init_data})
+        token = auth_response.json()["token"]
+
+        response = self.client.get("/api/profile", headers={"Authorization": "Bearer %s" % token})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("about", payload)
+        self.assertIn("goals", payload)
+        self.assertIn("reminders", payload)
+        self.assertEqual(payload["goals"]["target_water_ml"], 2000)
+
+    def test_profile_about_endpoint_updates_profile(self) -> None:
+        init_data = build_init_data(
+            {"id": 111, "first_name": "Guest", "username": "guest"},
+            auth_date=int(datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc).timestamp()),
+        )
+        auth_response = self.client.post("/api/webapp/auth", json={"init_data": init_data})
+        token = auth_response.json()["token"]
+
+        response = self.client.patch(
+            "/api/profile/about",
+            headers={"Authorization": "Bearer %s" % token},
+            json={
+                "sex": "male",
+                "age_years": 35,
+                "height_cm": 182,
+                "profile_weight_kg": 84.5,
+                "goal": "maintenance",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["about"]["sex"], "male")
+        self.assertEqual(payload["about"]["age_years"], 35)
+        self.assertEqual(payload["about"]["height_cm"], 182)
+        self.assertEqual(payload["about"]["profile_weight_kg"], 84.5)
+        self.assertEqual(payload["about"]["goal"], "maintenance")
+
+    def test_profile_goals_reset_endpoint_resets_values(self) -> None:
+        init_data = build_init_data(
+            {"id": 111, "first_name": "Guest", "username": "guest"},
+            auth_date=int(datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc).timestamp()),
+        )
+        auth_response = self.client.post("/api/webapp/auth", json={"init_data": init_data})
+        token = auth_response.json()["token"]
+
+        update_response = self.client.patch(
+            "/api/profile/goals",
+            headers={"Authorization": "Bearer %s" % token},
+            json={
+                "target_water_ml": 2600,
+                "target_protein_g": 140,
+                "target_calories_min": 2200,
+                "target_calories_max": 2600,
+            },
+        )
+        self.assertEqual(update_response.status_code, 200)
+
+        response = self.client.post(
+            "/api/profile/goals/reset",
+            headers={"Authorization": "Bearer %s" % token},
+            json={},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["goals"]["target_water_ml"], 2000)
+        self.assertEqual(payload["goals"]["target_protein_g"], 120)
+        self.assertIsNone(payload["goals"]["target_calories_min"])
+        self.assertIsNone(payload["goals"]["target_calories_max"])
+
+    def test_profile_reminders_endpoint_updates_switches(self) -> None:
+        init_data = build_init_data(
+            {"id": 111, "first_name": "Guest", "username": "guest"},
+            auth_date=int(datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc).timestamp()),
+        )
+        auth_response = self.client.post("/api/webapp/auth", json={"init_data": init_data})
+        token = auth_response.json()["token"]
+
+        response = self.client.patch(
+            "/api/profile/reminders",
+            headers={"Authorization": "Bearer %s" % token},
+            json={
+                "enabled": True,
+                "meal_logging": True,
+                "water": True,
+                "evening_summary": False,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["reminders"]["enabled"])
+        self.assertTrue(payload["reminders"]["meal_logging"])
+        self.assertTrue(payload["reminders"]["water"])
+        self.assertFalse(payload["reminders"]["evening_summary"])
 
 
 if __name__ == "__main__":

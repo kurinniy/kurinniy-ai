@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.food import MealDraftStatus, MealMedia, MealPhotoDraft
 from ai_me.domain.health import DailyHealthSummary, MealEntry, StepProgressInsight
-from ai_me.domain.user import AppUser
+from ai_me.domain.user import AppUser, UserGoal, UserSex
 from ai_me.services.health_service import HealthService
 from ai_me.version import APP_RELEASE_DATE, APP_VERSION
 
@@ -41,6 +41,8 @@ def build_dashboard_payload(
         "summary": _serialize_summary(summary, meals, step_progress),
         "history": _serialize_meal_history(service=service, user_id=app_user.user_id),
         "recognitions": _serialize_recognition_history(service=service, user_id=app_user.user_id),
+        "analytics": _serialize_analytics(service=service, user_id=app_user.user_id, target_date=target_date),
+        "profile": _serialize_profile(app_user),
         "decisions": [
             {
                 "decision_id": decision.decision_id,
@@ -123,6 +125,10 @@ def _serialize_summary(
     }
 
 
+def build_profile_payload(app_user: AppUser) -> Dict[str, object]:
+    return _serialize_profile(app_user)
+
+
 def _serialize_meal_history(*, service: HealthService, user_id: int) -> Dict[str, object]:
     recent_meals = service.list_recent_meals(user_id, limit=40, lookback_days=365)
     days_by_date: Dict[str, List[Dict[str, object]]] = {}
@@ -156,6 +162,88 @@ def _serialize_recognition_history(*, service: HealthService, user_id: int) -> D
     return {
         "items": [_serialize_recognition_list_item(draft) for draft in drafts],
         "has_more": len(drafts) == 40,
+    }
+
+
+def _serialize_analytics(*, service: HealthService, user_id: int, target_date: date) -> Dict[str, object]:
+    points = []
+    logging_days = 0
+    days_with_calories = 0
+    total_calories = 0
+    total_protein = 0.0
+    total_water_ml = 0
+    longest_streak = 0
+    running_streak = 0
+
+    start_date = target_date - timedelta(days=13)
+    cursor = start_date
+    while cursor <= target_date:
+        summary = service.get_daily_summary(user_id, cursor)
+        has_logging = summary.meals_count > 0
+        if has_logging:
+            logging_days += 1
+            days_with_calories += 1
+            total_calories += summary.calories
+            total_protein += summary.protein_g
+            total_water_ml += summary.water_ml
+            running_streak += 1
+            longest_streak = max(longest_streak, running_streak)
+        else:
+            running_streak = 0
+        points.append(
+            {
+                "date": cursor.isoformat(),
+                "calories": summary.calories,
+                "protein_g": round(summary.protein_g, 1),
+                "water_ml": summary.water_ml,
+                "meals_count": summary.meals_count,
+                "has_logging": has_logging,
+            }
+        )
+        cursor += timedelta(days=1)
+
+    current_streak = 0
+    for point in reversed(points):
+        if not point["has_logging"]:
+            break
+        current_streak += 1
+
+    return {
+        "window_days": len(points),
+        "points": points,
+        "logging_days": logging_days,
+        "logging_frequency_pct": round((logging_days / max(len(points), 1)) * 100, 1),
+        "current_streak": current_streak,
+        "longest_streak": longest_streak,
+        "average_calories": round(total_calories / days_with_calories, 1) if days_with_calories else 0.0,
+        "average_protein_g": round(total_protein / days_with_calories, 1) if days_with_calories else 0.0,
+        "average_water_ml": round(total_water_ml / days_with_calories) if days_with_calories else 0,
+    }
+
+
+def _serialize_profile(app_user: AppUser) -> Dict[str, object]:
+    return {
+        "about": {
+            "sex": app_user.sex.value if app_user.sex is not None else None,
+            "sex_label": _sex_label(app_user.sex),
+            "age_years": app_user.age_years,
+            "height_cm": app_user.height_cm,
+            "profile_weight_kg": app_user.profile_weight_kg,
+            "goal": app_user.goal.value if app_user.goal is not None else None,
+            "goal_label": _goal_label(app_user.goal),
+        },
+        "goals": {
+            "target_water_ml": app_user.target_water_ml,
+            "target_protein_g": app_user.target_protein_g,
+            "target_calories_min": app_user.target_calories_min,
+            "target_calories_max": app_user.target_calories_max,
+        },
+        "reminders": {
+            "enabled": app_user.reminders_enabled,
+            "meal_logging": app_user.reminder_meal_logging,
+            "water": app_user.reminder_water,
+            "evening_summary": app_user.reminder_evening_summary,
+        },
     }
 
 
@@ -236,3 +324,21 @@ def _draft_status_label(status: MealDraftStatus) -> str:
     if status == MealDraftStatus.CONFIRMED:
         return "Сохранено"
     return "Отклонено"
+
+
+def _sex_label(sex: Optional[UserSex]) -> str:
+    if sex == UserSex.MALE:
+        return "Мужчина"
+    if sex == UserSex.FEMALE:
+        return "Женщина"
+    return "Не указан"
+
+
+def _goal_label(goal: Optional[UserGoal]) -> str:
+    if goal == UserGoal.MAINTENANCE:
+        return "Поддержание"
+    if goal == UserGoal.WEIGHT_LOSS:
+        return "Похудение"
+    if goal == UserGoal.MASS_GAIN:
+        return "Набор массы"
+    return "Не указана"

@@ -38,7 +38,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -328,6 +329,139 @@ textarea {
   margin-top: 14px;
 }
 
+.chart {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(44px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.chart__item {
+  display: grid;
+  gap: 8px;
+}
+
+.chart__bar-wrap {
+  height: 144px;
+  padding: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.58);
+  display: flex;
+  align-items: flex-end;
+}
+
+.chart__bar {
+  width: 100%;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(15, 118, 110, 0.92), rgba(15, 118, 110, 0.4));
+  min-height: 8px;
+}
+
+.chart__bar--muted {
+  background: linear-gradient(180deg, rgba(156, 163, 175, 0.76), rgba(156, 163, 175, 0.28));
+}
+
+.chart__value {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.chart__label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.form-card {
+  display: grid;
+  gap: 18px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field--full {
+  grid-column: 1 / -1;
+}
+
+.field__label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.field__control {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(31, 41, 55, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+  padding: 11px 14px;
+}
+
+.field__control:focus {
+  outline: 2px solid rgba(15, 118, 110, 0.18);
+  outline-offset: 1px;
+  border-color: rgba(15, 118, 110, 0.32);
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.action-button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--accent);
+  color: white;
+  font-weight: 700;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+.action-button--secondary {
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--accent-strong);
+}
+
+.toggle-list {
+  display: grid;
+  gap: 10px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 2px;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+}
+
+.toggle-row--disabled {
+  color: var(--muted);
+}
+
 .chip,
 .badge {
   display: inline-flex;
@@ -413,5 +547,11 @@ textarea {
 @media (min-width: 720px) {
   .metric-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .form-grid {
+    grid-template-columns: 1fr;
   }
 }

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 
 from ai_me.config import AppSettings
+from ai_me.domain.user import UserGoal, UserSex
 from ai_me.services.health_service import HealthService
 from ai_me.version import APP_VERSION
 from ai_me.web.auth import (
@@ -15,6 +16,7 @@ from ai_me.web.auth import (
 from ai_me.web.dashboard import (
     build_dashboard_payload,
     build_meal_entry_detail_payload,
+    build_profile_payload,
     build_recognition_detail_payload,
 )
 
@@ -191,6 +193,55 @@ def create_web_app(settings: AppSettings, service: HealthService):
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/profile")
+    def api_profile(app_user=Depends(_resolve_current_user)):
+        return build_profile_payload(app_user)
+
+    @app.patch("/api/profile/about")
+    def api_profile_about(payload: dict, app_user=Depends(_resolve_current_user)):
+        try:
+            updated = service.update_user_about(
+                app_user.user_id,
+                sex=_parse_user_sex(payload.get("sex")),
+                age_years=_parse_optional_int(payload.get("age_years")),
+                height_cm=_parse_optional_int(payload.get("height_cm")),
+                profile_weight_kg=_parse_optional_float(payload.get("profile_weight_kg")),
+                goal=_parse_user_goal(payload.get("goal")),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return build_profile_payload(updated)
+
+    @app.patch("/api/profile/goals")
+    def api_profile_goals(payload: dict, app_user=Depends(_resolve_current_user)):
+        try:
+            updated = service.update_user_goal_settings(
+                app_user.user_id,
+                target_water_ml=_parse_optional_int(payload.get("target_water_ml")),
+                target_protein_g=_parse_optional_int(payload.get("target_protein_g")),
+                target_calories_min=_parse_optional_int(payload.get("target_calories_min")),
+                target_calories_max=_parse_optional_int(payload.get("target_calories_max")),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return build_profile_payload(updated)
+
+    @app.post("/api/profile/goals/reset")
+    def api_profile_goals_reset(app_user=Depends(_resolve_current_user)):
+        updated = service.reset_user_goal_settings(app_user.user_id)
+        return build_profile_payload(updated)
+
+    @app.patch("/api/profile/reminders")
+    def api_profile_reminders(payload: dict, app_user=Depends(_resolve_current_user)):
+        updated = service.update_user_reminders(
+            app_user.user_id,
+            reminders_enabled=_parse_optional_bool(payload.get("enabled")),
+            reminder_meal_logging=_parse_optional_bool(payload.get("meal_logging")),
+            reminder_water=_parse_optional_bool(payload.get("water")),
+            reminder_evening_summary=_parse_optional_bool(payload.get("evening_summary")),
+        )
+        return build_profile_payload(updated)
+
     @app.get("/{full_path:path}")
     def spa_fallback(full_path: str):
         index_file = frontend_dist / "index.html"
@@ -213,3 +264,41 @@ def create_web_app(settings: AppSettings, service: HealthService):
         )
 
     return app
+
+
+def _parse_user_sex(raw: object) -> Optional[UserSex]:
+    if raw in (None, ""):
+        return None
+    return UserSex(str(raw))
+
+
+def _parse_user_goal(raw: object) -> Optional[UserGoal]:
+    if raw in (None, ""):
+        return None
+    return UserGoal(str(raw))
+
+
+def _parse_optional_int(raw: object) -> Optional[int]:
+    if raw in (None, ""):
+        return None
+    return int(raw)
+
+
+def _parse_optional_float(raw: object) -> Optional[float]:
+    if raw in (None, ""):
+        return None
+    return float(raw)
+
+
+def _parse_optional_bool(raw: object) -> Optional[bool]:
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    raise HTTPException(status_code=400, detail="Некорректное значение переключателя.")

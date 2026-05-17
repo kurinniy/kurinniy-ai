@@ -4,7 +4,7 @@ from datetime import date, datetime
 from ai_me.domain.decision_log import DecisionKind, DecisionLogEntry, DecisionStatus
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, StepProgressInsight
-from ai_me.domain.user import AppUser, UserStatus
+from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
 from ai_me.web.dashboard import (
     build_dashboard_payload,
     build_meal_entry_detail_payload,
@@ -160,10 +160,22 @@ class WebDashboardTest(unittest.TestCase):
             first_name="Alexander",
             status=UserStatus.ACTIVE,
             is_admin=True,
+            sex=UserSex.MALE,
+            age_years=35,
+            height_cm=182,
+            profile_weight_kg=84.5,
+            goal=UserGoal.MAINTENANCE,
+            target_water_ml=2400,
+            target_protein_g=135,
+            target_calories_min=2100,
+            target_calories_max=2500,
+            reminders_enabled=True,
+            reminder_meal_logging=True,
+            reminder_water=True,
             created_at=datetime(2026, 5, 7, 8, 0),
         )
 
-    def test_dashboard_payload_contains_history_and_recognitions(self) -> None:
+    def test_dashboard_payload_contains_history_analytics_and_profile(self) -> None:
         payload = build_dashboard_payload(
             service=self.service,
             app_user=self.app_user,
@@ -174,8 +186,16 @@ class WebDashboardTest(unittest.TestCase):
         self.assertIn("decisions", payload)
         self.assertIn("history", payload)
         self.assertIn("recognitions", payload)
+        self.assertIn("analytics", payload)
+        self.assertIn("profile", payload)
         self.assertEqual(payload["history"]["days"][0]["entries"][0]["entry_id"], "meal-2")
         self.assertEqual(payload["recognitions"]["items"][0]["status_label"], "Сохранено")
+        self.assertEqual(payload["analytics"]["window_days"], 14)
+        self.assertEqual(payload["analytics"]["logging_days"], 14)
+        self.assertEqual(payload["profile"]["about"]["sex_label"], "Мужчина")
+        self.assertEqual(payload["profile"]["about"]["goal_label"], "Поддержание")
+        self.assertEqual(payload["profile"]["goals"]["target_water_ml"], 2400)
+        self.assertTrue(payload["profile"]["reminders"]["enabled"])
         self.assertNotIn("drive", payload)
         self.assertNotIn("finance", payload)
         self.assertNotIn("digest", payload)
