@@ -53,17 +53,9 @@ select {
   padding: 22px 6px 12px;
 }
 
-.hero__eyebrow {
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
 .hero__title {
-  margin: 8px 0 10px;
-  font-size: 42px;
+  margin: 0 0 10px;
+  font-size: 22px;
   line-height: 0.95;
 }
 

@@ -50,7 +50,7 @@ const SESSION_KEY = "ai_me_web_session";
 const MIN_LOADING_SCREEN_MS = 900;
 
 export function App() {
-  const [state, setState] = useState<AppState>({ kind: "loading", label: "Запуск Mini App" });
+  const [state, setState] = useState<AppState>({ kind: "loading", label: "Загрузка приложения" });
   const [activeTab, setActiveTab] = useState<TabKey>("today");
   const [mealDetail, setMealDetail] = useState<MealDetailState>({ kind: "idle" });
   const [recognitionDetail, setRecognitionDetail] = useState<RecognitionDetailState>({ kind: "idle" });
@@ -342,8 +342,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 function Hero({ firstName }: { firstName: string }) {
   return (
     <section className="hero">
-      <div className="hero__eyebrow">Telegram Mini App</div>
-      <h1 className="hero__title">ai-me</h1>
+      <h1 className="hero__title">Что я ем!</h1>
       <p className="hero__subtitle">
         Привет, {firstName}. Здесь удобно смотреть историю, аналитику и настраивать профиль, а чат остаётся для быстрых действий.
       </p>
@@ -995,7 +994,7 @@ function LoadingScreen({ label }: { label: string }) {
   return (
     <section className="loading-screen">
       <div className="loading-screen__orb" />
-      <div className="loading-screen__logo">ai-me</div>
+      <div className="loading-screen__logo">Что я ем!</div>
       <div className="loading-screen__label">{label}</div>
       <div className="loading-screen__dots" aria-hidden="true">
         <span />
