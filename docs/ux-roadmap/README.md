@@ -20,6 +20,9 @@
 
 ## Порядок этапов
 
+9. [09-onboarding-with-illustrations.md](./09-onboarding-with-illustrations.md)
+   Новый пошаговый онбординг с иллюстрациями, который знакомит пользователя с назначением бота, ежедневными сводками и Mini App.
+
 1. [01-welcome-and-primary-navigation.md](./01-welcome-and-primary-navigation.md)
    Первый запуск, приветственный экран, понятный стартовый сценарий, action-first навигация.
 
@@ -30,10 +33,10 @@
    Редактирование черновика еды до сохранения вместо бинарного Confirm/Reject.
 
 4. [04-history-and-recognition-log.md](./04-history-and-recognition-log.md)
-   История сохраненных приемов пищи и история распознаваний в чате.
+   Быстрое исправление последней записи в чате и переход в Mini App для полной истории.
 
 5. [05-editing-saved-entries.md](./05-editing-saved-entries.md)
-   Возврат к уже сохраненным приемам пищи и их исправление.
+   Mini App как архив приемов пищи и распознаваний с карточками записей.
 
 6. [06-profile-goals-and-reminders.md](./06-profile-goals-and-reminders.md)
    Профиль, персональные настройки, цели и опциональные напоминания.
