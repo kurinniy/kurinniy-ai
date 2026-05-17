@@ -1908,8 +1908,10 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[0][0], "answerCallbackQuery")
         self.assertEqual(calls[1][0], "editMessageText")
         self.assertEqual(calls[2][0], "sendMessage")
-        self.assertIn("Сохранено: Chicken rice bowl.", calls[2][1]["text"])
-        self.assertIn("Сегодня:", calls[2][1]["text"])
+        self.assertIn("Сохранено:", calls[2][1]["text"])
+        self.assertIn("Время:", calls[2][1]["text"])
+        self.assertIn("Б ", calls[2][1]["text"])
+        self.assertIn("meal_saved_cancel", calls[2][1]["reply_markup"])
 
     def test_confirm_callback_continues_when_callback_answer_fails(self) -> None:
         calls = []
@@ -2640,10 +2642,12 @@ class TelegramHealthBotTest(unittest.TestCase):
             reminders_enabled=True,
             reminder_meal_logging=True,
         )
+        meal = self.service.get_meal_entry(1, "meal-1")
 
-        text = self.bot._format_saved_meal_text(app_user, "Гречка с курицей", date(2026, 5, 6))
+        text = self.bot._format_saved_meal_text(app_user, meal)
 
         self.assertIn("Хорошее начало", text)
+        self.assertNotIn("Если нужно, запись можно быстро изменить или отменить.", text)
 
     def test_saved_meal_text_adds_water_coaching_when_enabled(self) -> None:
         app_user = replace(
@@ -2651,8 +2655,9 @@ class TelegramHealthBotTest(unittest.TestCase):
             reminders_enabled=True,
             reminder_water=True,
         )
+        meal = self.service.get_meal_entry(1, "meal-1")
 
-        text = self.bot._format_saved_meal_text(app_user, "Гречка с курицей", date(2026, 5, 6))
+        text = self.bot._format_saved_meal_text(app_user, meal)
 
         self.assertIn("воду можно добавить отдельно одним тапом", text)
 

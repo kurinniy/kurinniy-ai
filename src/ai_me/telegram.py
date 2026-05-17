@@ -322,10 +322,11 @@ class TelegramHealthBot:
             else:
                 self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
                 self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
+                saved_meal = self.service.get_meal_entry(app_user.user_id, meal.entry_id)
                 self._send_message(
                     chat_id,
-                    self._format_saved_meal_text(app_user, meal.title, meal.occurred_at.date()),
-                    reply_markup=self._post_save_meal_reply_markup(),
+                    self._format_saved_meal_text(app_user, saved_meal),
+                    reply_markup=self._saved_meal_reply_markup(saved_meal.entry_id),
                 )
             return
 
@@ -2027,7 +2028,7 @@ class TelegramHealthBot:
                 "sendMessage",
                 {
                     "chat_id": chat_id,
-                    "text": self._format_auto_saved_meal_text(saved_meal),
+                    "text": self._format_saved_meal_text(app_user, saved_meal),
                     "reply_markup": self._saved_meal_reply_markup(saved_meal.entry_id),
                 },
             )
@@ -3203,7 +3204,7 @@ class TelegramHealthBot:
         return prefix + TelegramHealthBot._format_meal_draft_card_text(draft)
 
     @staticmethod
-    def _format_auto_saved_meal_text(meal: MealEntry) -> str:
+    def _format_auto_saved_meal_text(meal: MealEntry, trailing_note: Optional[str] = None) -> str:
         summary = TelegramHealthBot._extract_meal_summary_from_notes(meal)
         lines = [
             "Сохранено: %s." % meal.title,
@@ -3219,12 +3220,8 @@ class TelegramHealthBot:
         ]
         if summary:
             lines.append("Состав: %s" % summary)
-        lines.extend(
-            [
-                "",
-                "Если нужно, запись можно быстро изменить или отменить.",
-            ]
-        )
+        lines.append("")
+        lines.append(trailing_note or "Если нужно, запись можно быстро изменить или отменить.")
         return "\n".join(lines)
 
     @staticmethod
@@ -3384,26 +3381,11 @@ class TelegramHealthBot:
             ensure_ascii=False,
         )
 
-    def _format_saved_meal_text(self, app_user: AppUser, title: str, target_date: date) -> str:
-        summary = self.service.get_daily_summary(app_user.user_id, target_date)
-        message = (
-            "Сохранено: %s.\n\n"
-            "Сегодня:\n"
-            "%s приема пищи\n"
-            "Белок: %s / %s г\n"
-            "Вода: %s / %s л"
-        ) % (
-            title,
-            summary.meals_count,
-            self._format_decimal(summary.protein_g),
-            self._format_decimal(summary.goals.protein_g),
-            self._format_liters_fixed(summary.water_ml),
-            self._format_liters_fixed(summary.goals.water_ml),
-        )
+    def _format_saved_meal_text(self, app_user: AppUser, meal: MealEntry) -> str:
+        summary = self.service.get_daily_summary(app_user.user_id, meal.occurred_at.date())
         coaching = self._build_optional_post_save_coaching(app_user, summary)
-        if coaching:
-            return "%s\n\n%s" % (message, coaching)
-        return message
+        trailing_note = coaching or "Если нужно, запись можно быстро изменить или отменить."
+        return self._format_auto_saved_meal_text(meal, trailing_note=trailing_note)
 
     @staticmethod
     def _build_optional_post_save_coaching(app_user: AppUser, summary: DailyHealthSummary) -> str:
@@ -3418,19 +3400,6 @@ class TelegramHealthBot:
         if app_user.reminder_water and water_goal_ml > 0 and summary.water_ml < (water_goal_ml / 2):
             return "Если был напиток, воду можно добавить отдельно одним тапом."
         return ""
-
-    @classmethod
-    def _post_save_meal_reply_markup(cls) -> str:
-        return json.dumps(
-            {
-                "resize_keyboard": True,
-                "keyboard": [
-                    [{"text": "Добавить воду"}],
-                    [{"text": "История"}, {"text": "Прогресс"}],
-                ],
-            },
-            ensure_ascii=False,
-        )
 
     @staticmethod
     def _saved_meal_reply_markup(entry_id: str) -> str:
