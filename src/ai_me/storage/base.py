@@ -48,6 +48,9 @@ class HealthStore(Protocol):
     def update_user_admin_mode(self, user_id: int, enabled: bool) -> AppUser:
         ...
 
+    def complete_user_onboarding(self, user_id: int, completed_at: datetime) -> AppUser:
+        ...
+
     def get_user_google_drive_settings(self, user_id: int) -> Optional[UserGoogleDriveSettings]:
         ...
 

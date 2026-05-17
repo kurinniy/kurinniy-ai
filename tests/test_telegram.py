@@ -238,6 +238,14 @@ class DummyHealthService:
         self.users_by_telegram_id[updated.telegram_user_id] = updated
         return updated
 
+    def complete_onboarding(self, user_id: int, *, now=None):
+        user = self.get_user_by_id(user_id)
+        if user is None:
+            raise ValueError("Пользователь не найден.")
+        updated = replace(user, onboarding_completed_at=now)
+        self.users_by_telegram_id[updated.telegram_user_id] = updated
+        return updated
+
     def update_user_goal_settings(self, user_id, **kwargs):
         user = self.get_user_by_id(user_id)
         if user is None:
@@ -776,9 +784,8 @@ class TelegramHealthBotTest(unittest.TestCase):
             first_name="New",
             app_user=None,
         )
-        self.assertIn("Привет, New!", response)
-        self.assertIn("Что можно сделать прямо сейчас", response)
-        self.assertIn("Добавить еду", response)
+        self.assertIn("Фотографируйте еду", response)
+        self.assertIn("● ○ ○", response)
         self.assertIn(999, self.service.users_by_telegram_id)
 
     def test_start_for_existing_user_returns_home_screen(self) -> None:
@@ -1595,14 +1602,19 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Добавить еду", flat)
         self.assertIn("Как это работает", flat)
 
-    def test_start_message_for_new_user_attaches_welcome_keyboard(self) -> None:
-        messages = []
+    def test_start_message_for_new_user_sends_first_onboarding_step(self) -> None:
+        calls = []
 
         def fake_telegram_api(method, params):
-            messages.append((method, params))
+            calls.append((method, params))
+            return True
+
+        def fake_telegram_api_multipart(method, **kwargs):
+            calls.append((method, kwargs))
             return True
 
         self.bot._telegram_api = fake_telegram_api
+        self.bot._telegram_api_multipart = fake_telegram_api_multipart
         self.bot._handle_update(
             {
                 "update_id": 1,
@@ -1614,11 +1626,121 @@ class TelegramHealthBotTest(unittest.TestCase):
             }
         )
 
-        send_message = next(item for item in messages if item[0] == "sendMessage")
-        markup = json.loads(send_message[1]["reply_markup"])
-        self.assertEqual(markup["keyboard"][0][0]["text"], "Добавить еду")
-        self.assertEqual(markup["keyboard"][1][0]["text"], "Добавить воду")
-        self.assertEqual(markup["keyboard"][2][0]["text"], "Как это работает")
+        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
+        self.assertEqual(business_calls[0][0], "sendPhoto")
+        self.assertIn("Фотографируйте еду", business_calls[0][1]["params"]["caption"])
+        self.assertIn("● ○ ○", business_calls[0][1]["params"]["caption"])
+        self.assertIn("onboarding:next:2", business_calls[0][1]["params"]["reply_markup"])
+        self.assertIn("onboarding:skip", business_calls[0][1]["params"]["reply_markup"])
+
+    def test_onboarding_next_sends_second_step_and_deletes_previous_message(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        def fake_telegram_api_multipart(method, **kwargs):
+            calls.append((method, kwargs))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._telegram_api_multipart = fake_telegram_api_multipart
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "onboarding:next:2",
+                "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 778, "type": "private"},
+                },
+            }
+        )
+
+        self.assertEqual(calls[0][0], "answerCallbackQuery")
+        self.assertEqual(calls[1][0], "sendPhoto")
+        self.assertIn("Каждый день —", calls[1][1]["params"]["caption"])
+        self.assertIn("○ ● ○", calls[1][1]["params"]["caption"])
+        self.assertEqual(calls[2][0], "deleteMessage")
+
+    def test_onboarding_skip_marks_user_complete_and_opens_home(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "onboarding:skip",
+                "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 778, "type": "private"},
+                },
+            }
+        )
+
+        self.assertIsNotNone(self.service.users_by_telegram_id[77].onboarding_completed_at)
+        self.assertEqual(calls[0][0], "answerCallbackQuery")
+        self.assertEqual(calls[1][0], "sendMessage")
+        self.assertIn("Главный экран", calls[1][1]["text"])
+        self.assertEqual(calls[2][0], "deleteMessage")
+
+    def test_onboarding_start_marks_user_complete_and_opens_home(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "onboarding:start",
+                "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 778, "type": "private"},
+                },
+            }
+        )
+
+        self.assertIsNotNone(self.service.users_by_telegram_id[77].onboarding_completed_at)
+        self.assertEqual(calls[0][0], "answerCallbackQuery")
+        self.assertEqual(calls[1][0], "sendMessage")
+        self.assertIn("Главный экран", calls[1][1]["text"])
+
+    def test_completed_onboarding_is_not_shown_again_on_start(self) -> None:
+        self.service.users_by_telegram_id[77] = replace(
+            self.service.users_by_telegram_id[77],
+            onboarding_completed_at=datetime(2026, 5, 17, 12, 0),
+        )
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/start",
+                    "chat": {"id": 778, "type": "private"},
+                    "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                },
+            }
+        )
+
+        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
+        self.assertEqual(business_calls[0][0], "sendMessage")
+        self.assertIn("Главный экран", business_calls[0][1]["text"])
 
     def test_sync_bot_commands_registers_menu_entries(self) -> None:
         calls = []

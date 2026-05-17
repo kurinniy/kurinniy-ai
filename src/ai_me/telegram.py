@@ -4,6 +4,7 @@ import math
 import shlex
 import time
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 from urllib import error as urlerror, parse, request
 from uuid import uuid4
@@ -27,6 +28,8 @@ class TelegramHealthBot:
     HISTORY_PAGE_SIZE = 10
     HISTORY_EDIT_WINDOW = timedelta(minutes=15)
     HISTORY_DELETE_WINDOW = timedelta(minutes=3)
+    ONBOARDING_STEP_COUNT = 3
+    ONBOARDING_ASSET_DIR = Path(__file__).resolve().parent / "assets"
     BUTTON_TO_COMMAND = {
         "Добавить еду": "/add_food",
         "Добавить воду": "/add_water",
@@ -214,8 +217,16 @@ class TelegramHealthBot:
                 first_name=first_name,
                 app_user=app_user,
             )
+            reply_user = self.service.get_user_by_telegram_user_id(user_id) or app_user
+            if (
+                normalized_text == "/start"
+                and app_user is None
+                and reply_user is not None
+                and self._should_show_onboarding(reply_user)
+            ):
+                self._send_onboarding_step(chat_id, step=1)
+                return
             if response:
-                reply_user = self.service.get_user_by_telegram_user_id(user_id) or app_user
                 reply_markup = self._reply_markup_for_response(
                     text=normalized_text,
                     original_app_user=app_user,
@@ -281,6 +292,16 @@ class TelegramHealthBot:
             return
         if app_user.status == UserStatus.BLOCKED:
             self._answer_callback_query(query_id, "Ваш доступ к боту заблокирован.")
+            return
+
+        if data.startswith("onboarding:"):
+            self._handle_onboarding_callback(
+                query_id=query_id,
+                chat_id=chat_id,
+                message_id=message_id,
+                app_user=app_user,
+                data=data,
+            )
             return
 
         if data.startswith("meal_confirm:"):
@@ -1161,6 +1182,8 @@ class TelegramHealthBot:
             first_name=first_name,
             now=self._local_now(),
         )
+        if self._should_show_onboarding(registered_user):
+            return self._onboarding_caption(step=1)
         return self._welcome_text(registered_user)
 
     def _handle_whoami(self, chat_id: Optional[int], user_id: Optional[int], app_user: Optional[AppUser]) -> str:
@@ -1521,6 +1544,55 @@ class TelegramHealthBot:
             "- Добавить воду\n"
             "- Как это работает"
         ) % first_name
+
+    @staticmethod
+    def _should_show_onboarding(app_user: AppUser) -> bool:
+        return app_user.onboarding_completed_at is None
+
+    @classmethod
+    def _onboarding_indicator(cls, step: int) -> str:
+        return " ".join("●" if index == step else "○" for index in range(1, cls.ONBOARDING_STEP_COUNT + 1))
+
+    @classmethod
+    def _onboarding_caption(cls, step: int) -> str:
+        steps = {
+            1: (
+                "Фотографируйте еду — остальное я беру на себя",
+                "Просто отправьте фото еды одним сообщением — я распознаю блюдо и сохраню его в дневник.\n\n"
+                "Так проще следить за питанием, смотреть историю и получать ежедневные сводки.",
+            ),
+            2: (
+                "Каждый день — наглядная сводка",
+                "Я могу присылать ежедневные сводки по питанию: фотографии блюд, общую картину за день и короткие выводы.\n\n"
+                "Так проще замечать свои привычки и возвращаться к дневнику каждый день.",
+            ),
+            3: (
+                "История и профиль — в мини-приложении",
+                "Историю приемов пищи, профиль и личные настройки удобно смотреть в мини-приложении внутри Telegram.\n\n"
+                "Там можно открыть прошлые записи, следить за прогрессом и управлять своим профилем в одном месте.",
+            ),
+        }
+        title, body = steps[step]
+        return "%s\n\n%s\n\n%s" % (title, body, cls._onboarding_indicator(step))
+
+    @classmethod
+    def _onboarding_asset_path(cls, step: int) -> Path:
+        return cls.ONBOARDING_ASSET_DIR / ("onboarding-step-%s.jpg" % step)
+
+    @classmethod
+    def _onboarding_reply_markup(cls, step: int) -> str:
+        keyboard: List[List[Dict[str, str]]] = []
+        if step < cls.ONBOARDING_STEP_COUNT:
+            keyboard.append(
+                [
+                    {"text": "Далее", "callback_data": "onboarding:next:%s" % (step + 1)},
+                    {"text": "Пропустить", "callback_data": "onboarding:skip"},
+                ]
+            )
+        else:
+            keyboard.append([{"text": "Начать", "callback_data": "onboarding:start"}])
+            keyboard.append([{"text": "Пропустить", "callback_data": "onboarding:skip"}])
+        return json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False)
 
     def _home_text(self, app_user: AppUser) -> str:
         digest_settings = self.service.get_digest_settings(app_user.user_id)
@@ -1932,18 +2004,54 @@ class TelegramHealthBot:
         *,
         filename: str = "digest.jpg",
         caption: Optional[str] = None,
+        reply_markup: Optional[str] = None,
+        mime_type: str = "image/jpeg",
     ):
         params: Dict[str, object] = {"chat_id": chat_id}
         if caption:
             params["caption"] = caption
+        if reply_markup is not None:
+            params["reply_markup"] = reply_markup
         return self._telegram_api_multipart(
             "sendPhoto",
             params=params,
             file_field_name="photo",
             filename=filename,
             file_bytes=photo_bytes,
+            mime_type=mime_type,
+        )
+
+    def _send_onboarding_step(self, chat_id: int, *, step: int) -> None:
+        asset_path = self._onboarding_asset_path(step)
+        photo_bytes = asset_path.read_bytes()
+        self._send_photo_bytes(
+            chat_id,
+            photo_bytes,
+            filename=asset_path.name,
+            caption=self._onboarding_caption(step),
+            reply_markup=self._onboarding_reply_markup(step),
             mime_type="image/jpeg",
         )
+
+    def _delete_message(self, chat_id: int, message_id: int) -> None:
+        self._telegram_api(
+            "deleteMessage",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+            },
+        )
+
+    def _try_delete_message(self, chat_id: int, message_id: int) -> None:
+        try:
+            self._delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "Message delete failed chat_id=%s message_id=%s error=%s",
+                chat_id,
+                message_id,
+                exc,
+            )
 
     def _edit_message_text(
         self,
@@ -2377,6 +2485,48 @@ class TelegramHealthBot:
         except Exception as exc:  # pragma: no cover
             logger.warning("Callback answer failed callback_query_id=%s error=%s", callback_query_id, exc)
 
+    def _handle_onboarding_callback(
+        self,
+        *,
+        query_id: str,
+        chat_id: int,
+        message_id: Optional[int],
+        app_user: AppUser,
+        data: str,
+    ) -> None:
+        if data == "onboarding:skip":
+            updated = self.service.complete_onboarding(app_user.user_id, now=self._local_now())
+            self._try_answer_callback_query(query_id, "Онбординг можно открыть позже.")
+            self._send_message(chat_id, self._home_text(updated), reply_markup=self._menu_reply_markup(updated))
+            if isinstance(message_id, int):
+                self._try_delete_message(chat_id, message_id)
+            return
+        if data == "onboarding:start":
+            updated = self.service.complete_onboarding(app_user.user_id, now=self._local_now())
+            self._try_answer_callback_query(query_id, "Поехали.")
+            self._send_message(chat_id, self._home_text(updated), reply_markup=self._menu_reply_markup(updated))
+            if isinstance(message_id, int):
+                self._try_delete_message(chat_id, message_id)
+            return
+        if data.startswith("onboarding:next:"):
+            if not self._should_show_onboarding(app_user):
+                self._try_answer_callback_query(query_id, "Онбординг уже завершен.")
+                return
+            try:
+                step = int(data.rsplit(":", 1)[1])
+            except ValueError:
+                self._try_answer_callback_query(query_id, "Не удалось открыть следующий шаг.")
+                return
+            if step < 1 or step > self.ONBOARDING_STEP_COUNT:
+                self._try_answer_callback_query(query_id, "Такого шага онбординга нет.")
+                return
+            self._try_answer_callback_query(query_id, "Дальше")
+            self._send_onboarding_step(chat_id, step=step)
+            if isinstance(message_id, int):
+                self._try_delete_message(chat_id, message_id)
+            return
+        self._try_answer_callback_query(query_id, "Неизвестное действие.")
+
     def _handle_photo_message(self, chat_id: int, app_user: AppUser, photo: List[dict], caption: str) -> None:
         largest_photo = max(photo, key=lambda item: item.get("file_size", 0))
         file_id = largest_photo.get("file_id")
@@ -2519,6 +2669,13 @@ class TelegramHealthBot:
         original_app_user: Optional[AppUser],
         reply_user: Optional[AppUser],
     ) -> Optional[str]:
+        if (
+            text == "/start"
+            and original_app_user is None
+            and reply_user is not None
+            and self._should_show_onboarding(reply_user)
+        ):
+            return None
         if text == "/start" and original_app_user is None and reply_user is not None:
             return self._welcome_reply_markup()
         if reply_user is None:

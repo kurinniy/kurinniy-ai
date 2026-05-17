@@ -51,6 +51,7 @@ class AppUser:
     reminder_meal_logging: bool = False
     reminder_water: bool = False
     reminder_evening_summary: bool = False
+    onboarding_completed_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     @property

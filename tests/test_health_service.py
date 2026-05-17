@@ -271,6 +271,13 @@ class HealthServiceTest(unittest.TestCase):
         self.assertFalse(updated.reminder_water)
         self.assertFalse(updated.reminder_evening_summary)
 
+    def test_complete_onboarding_sets_timestamp_once(self) -> None:
+        finished = self.service.complete_onboarding(self.user.user_id, now=datetime(2026, 5, 17, 12, 0))
+        repeated = self.service.complete_onboarding(self.user.user_id, now=datetime(2026, 5, 17, 12, 5))
+
+        self.assertEqual(finished.onboarding_completed_at, datetime(2026, 5, 17, 12, 0))
+        self.assertEqual(repeated.onboarding_completed_at, datetime(2026, 5, 17, 12, 0))
+
     def test_daily_summary_uses_user_goal_defaults_when_daily_goals_are_not_set(self) -> None:
         self.service.update_user_goal_settings(
             self.user.user_id,

@@ -151,7 +151,8 @@ class MySQLStore:
                 reminders_enabled = %s,
                 reminder_meal_logging = %s,
                 reminder_water = %s,
-                reminder_evening_summary = %s
+                reminder_evening_summary = %s,
+                onboarding_completed_at = %s
             WHERE user_id = %s
             """,
             (
@@ -168,6 +169,7 @@ class MySQLStore:
                 1 if user.reminder_meal_logging else 0,
                 1 if user.reminder_water else 0,
                 1 if user.reminder_evening_summary else 0,
+                user.onboarding_completed_at,
                 user.user_id,
             ),
         )
@@ -188,6 +190,20 @@ class MySQLStore:
         row = self._fetchone("SELECT * FROM users WHERE user_id = %s", (user_id,))
         if row is None:
             raise RuntimeError("Не удалось обновить режим администратора для пользователя %s" % user_id)
+        return self._to_user(row)
+
+    def complete_user_onboarding(self, user_id: int, completed_at: datetime) -> AppUser:
+        self._execute(
+            """
+            UPDATE users
+            SET onboarding_completed_at = %s
+            WHERE user_id = %s
+            """,
+            (completed_at, user_id),
+        )
+        row = self._fetchone("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        if row is None:
+            raise RuntimeError("Не удалось обновить статус онбординга для пользователя %s" % user_id)
         return self._to_user(row)
 
     def get_user_google_drive_settings(self, user_id: int) -> Optional[UserGoogleDriveSettings]:
@@ -1315,6 +1331,7 @@ class MySQLStore:
                 reminder_meal_logging TINYINT(1) NOT NULL DEFAULT 0,
                 reminder_water TINYINT(1) NOT NULL DEFAULT 0,
                 reminder_evening_summary TINYINT(1) NOT NULL DEFAULT 0,
+                onboarding_completed_at DATETIME(6) NULL,
                 created_at DATETIME(6) NOT NULL,
                 INDEX idx_users_status (status)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
@@ -1617,6 +1634,11 @@ class MySQLStore:
             "reminder_evening_summary",
             "ALTER TABLE users ADD COLUMN reminder_evening_summary TINYINT(1) NOT NULL DEFAULT 0 AFTER reminder_water",
         )
+        self._ensure_column(
+            "users",
+            "onboarding_completed_at",
+            "ALTER TABLE users ADD COLUMN onboarding_completed_at DATETIME(6) NULL AFTER reminder_evening_summary",
+        )
         self._ensure_column("meals", "fat_g", "ALTER TABLE meals ADD COLUMN fat_g DOUBLE NOT NULL DEFAULT 0 AFTER protein_g")
         self._ensure_column("meals", "carbs_g", "ALTER TABLE meals ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g")
         self._ensure_column("meals", "water_ml", "ALTER TABLE meals ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g")
@@ -1891,6 +1913,7 @@ class MySQLStore:
             reminder_meal_logging=bool(row.get("reminder_meal_logging", 0)),
             reminder_water=bool(row.get("reminder_water", 0)),
             reminder_evening_summary=bool(row.get("reminder_evening_summary", 0)),
+            onboarding_completed_at=row.get("onboarding_completed_at"),
             created_at=row["created_at"],
         )
 

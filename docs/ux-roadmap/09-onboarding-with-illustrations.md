@@ -84,7 +84,9 @@ Mobile onboarding illustration for a Telegram food diary bot, clean editorial st
 
 #### Файл изображения
 
-Добавить после получения финального ассета. В итоговой реализации разработчик должен подключить переданный файл шага 1 в онбординг.
+Использовать финальный ассет:
+
+`src/ai_me/assets/onboarding-step-1.jpg`
 
 ### Шаг 2. Ежедневные сводки
 
@@ -112,7 +114,9 @@ Mobile onboarding illustration for a nutrition tracking bot, smartphone showing 
 
 #### Файл изображения
 
-Добавить после получения финального ассета. В итоговой реализации разработчик должен подключить переданный файл шага 2 в онбординг.
+Использовать финальный ассет:
+
+`src/ai_me/assets/onboarding-step-2.jpg`
 
 ### Шаг 3. История и профиль в Mini App
 
@@ -144,7 +148,9 @@ Telegram Mini App onboarding illustration, smartphone screen with a clean nutrit
 
 #### Файл изображения
 
-Добавить после получения финального ассета или скриншота. В итоговой реализации разработчик должен подключить переданный файл шага 3 в онбординг.
+Использовать финальный ассет:
+
+`src/ai_me/assets/onboarding-step-3.jpg`
 
 ## Поведение после завершения
 

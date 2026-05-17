@@ -218,6 +218,12 @@ class HealthService:
             raise ValueError("Команда доступна только администратору.")
         return self.store.update_user_admin_mode(user_id, enabled=enabled)
 
+    def complete_onboarding(self, user_id: int, *, now: Optional[datetime] = None) -> AppUser:
+        user = self._require_user(user_id)
+        if user.onboarding_completed_at is not None:
+            return user
+        return self.store.complete_user_onboarding(user_id, completed_at=now or datetime.now())
+
     def list_users_with_google_drive_enabled(self) -> List[AppUser]:
         users = self.store.list_users_with_google_drive_enabled()
         return [user for user in users if user.status == UserStatus.ACTIVE]

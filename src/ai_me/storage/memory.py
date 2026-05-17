@@ -87,6 +87,7 @@ class InMemoryStore:
                 reminder_meal_logging=existing.reminder_meal_logging,
                 reminder_water=existing.reminder_water,
                 reminder_evening_summary=existing.reminder_evening_summary,
+                onboarding_completed_at=existing.onboarding_completed_at,
                 created_at=existing.created_at,
             )
             self._users_by_id[existing.user_id] = updated
@@ -100,6 +101,7 @@ class InMemoryStore:
             status=status,
             is_admin=is_admin,
             admin_mode_enabled=is_admin,
+            onboarding_completed_at=None,
             created_at=datetime.now(),
         )
         self._next_user_id += 1
@@ -130,6 +132,7 @@ class InMemoryStore:
             reminder_meal_logging=user.reminder_meal_logging,
             reminder_water=user.reminder_water,
             reminder_evening_summary=user.reminder_evening_summary,
+            onboarding_completed_at=user.onboarding_completed_at,
             created_at=user.created_at,
         )
         self._users_by_id[user.user_id] = updated
@@ -164,8 +167,15 @@ class InMemoryStore:
             reminder_meal_logging=user.reminder_meal_logging,
             reminder_water=user.reminder_water,
             reminder_evening_summary=user.reminder_evening_summary,
+            onboarding_completed_at=user.onboarding_completed_at,
             created_at=user.created_at,
         )
+        self._users_by_id[user_id] = updated
+        return updated
+
+    def complete_user_onboarding(self, user_id: int, completed_at: datetime) -> AppUser:
+        user = self._users_by_id[user_id]
+        updated = replace(user, onboarding_completed_at=completed_at)
         self._users_by_id[user_id] = updated
         return updated
 

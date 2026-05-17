@@ -131,6 +131,10 @@ class MySQLStoreMigrationTest(unittest.TestCase):
             "ALTER TABLE users ADD COLUMN reminder_evening_summary TINYINT(1) NOT NULL DEFAULT 0 AFTER reminder_water",
             executed_sql,
         )
+        self.assertIn(
+            "ALTER TABLE users ADD COLUMN onboarding_completed_at DATETIME(6) NULL AFTER reminder_evening_summary",
+            executed_sql,
+        )
         self.assertIn("ALTER TABLE meals ADD COLUMN carbs_g DOUBLE NOT NULL DEFAULT 0 AFTER fat_g", executed_sql)
         self.assertIn("ALTER TABLE meals ADD COLUMN water_ml INT NOT NULL DEFAULT 0 AFTER carbs_g", executed_sql)
         self.assertIn("ALTER TABLE meals ADD COLUMN user_id BIGINT NULL AFTER entry_id", executed_sql)
