@@ -1551,8 +1551,7 @@ class TelegramHealthBot:
         steps = {
             1: (
                 "Фотографируйте еду — остальное я беру на себя",
-                "Просто отправьте фото еды одним сообщением — я распознаю блюдо и сохраню его в дневник.\n\n"
-                "Так проще следить за питанием, смотреть историю и получать ежедневные сводки.",
+                "Теперь просто отправьте фото еды в чат — я распознаю блюдо и сохраню запись.",
             ),
             2: (
                 "Каждый день — наглядная сводка",
@@ -1588,23 +1587,10 @@ class TelegramHealthBot:
         return json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False)
 
     def _home_text(self, app_user: AppUser) -> str:
-        digest_settings = self.service.get_digest_settings(app_user.user_id)
-        daily_status = "включен" if digest_settings.daily_digest_enabled else "выключен"
-        weekly_status = "включен" if digest_settings.weekly_digest_enabled else "выключен"
         return (
             "Главный экран\n"
-            "Просто отправьте фото еды одним сообщением — я распознаю блюдо и сохраню запись сразу или предложу её проверить.\n\n"
-            "Сейчас:\n"
-            "- Ежедневная сводка: %s\n"
-            "- Недельная сводка: %s\n\n"
-            "Основные действия:\n"
-            "- Добавить еду\n"
-            "- Добавить воду\n"
-            "- История\n"
-            "- Прогресс\n"
-            "- Профиль\n"
-            "- Как это работает"
-        ) % (daily_status, weekly_status)
+            "Теперь просто отправьте фото еды в чат — я распознаю блюдо и сохраню запись."
+        )
 
     @staticmethod
     def _add_food_text() -> str:

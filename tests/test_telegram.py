@@ -797,9 +797,7 @@ class TelegramHealthBotTest(unittest.TestCase):
     def test_menu_for_existing_user_returns_home_screen(self) -> None:
         response = self.bot._route_command("/menu", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Главный экран", response)
-        self.assertIn("Ежедневная сводка: включен", response)
-        self.assertIn("Недельная сводка: включен", response)
-        self.assertIn("Как это работает", response)
+        self.assertIn("Теперь просто отправьте фото еды в чат", response)
 
     def test_profile_command_opens_profile_home_with_sections(self) -> None:
         response = self.bot._route_command("/profile", app_user=self.service.users_by_telegram_id[77])
