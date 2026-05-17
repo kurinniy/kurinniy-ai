@@ -947,7 +947,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/how_it_works", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Как это работает", response)
         self.assertIn("1. Отправьте фото еды", response)
-        self.assertIn("4. После этого запись попадет в сводку и историю.", response)
+        self.assertIn("3. Сохранённую запись можно удалить или отредактировать.", response)
+        self.assertIn("5. Настроить отчёты — ежедневный, еженедельный.", response)
 
     def test_history_command_returns_history_home(self) -> None:
         response = self.bot._route_command("/history", app_user=self.service.users_by_telegram_id[77])
@@ -1792,7 +1793,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[0][0], "setChatMenuButton")
         menu_button = json.loads(calls[0][1]["menu_button"])
         self.assertEqual(menu_button["type"], "web_app")
-        self.assertEqual(menu_button["text"], "Открыть приложение")
+        self.assertEqual(menu_button["text"], "Открыть")
 
     def test_sync_mini_app_menu_button_registers_web_app_for_admin_chat(self) -> None:
         calls = []
@@ -1808,7 +1809,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[0][1]["chat_id"], 777)
         menu_button = json.loads(calls[0][1]["menu_button"])
         self.assertEqual(menu_button["type"], "web_app")
-        self.assertEqual(menu_button["text"], "Открыть приложение")
+        self.assertEqual(menu_button["text"], "Открыть")
         self.assertEqual(menu_button["web_app"]["url"], "https://staging-mini-app.example.com")
 
     def test_sync_mini_app_menu_button_registers_commands_for_regular_user_chat(self) -> None:

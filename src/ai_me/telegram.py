@@ -1756,9 +1756,10 @@ class TelegramHealthBot:
         return (
             "Как это работает\n"
             "1. Отправьте фото еды одним сообщением.\n"
-            "2. Я распознаю блюдо и, если уверен, сразу сохраню запись.\n"
-            "3. Если уверенность низкая, предложу быстро проверить запись перед сохранением.\n"
-            "4. После этого запись попадет в сводку и историю."
+            "2. Я распознаю блюдо и сохраню запись.\n"
+            "3. Сохранённую запись можно удалить или отредактировать.\n"
+            "4. В Профиле можно настроить цели по воде, калориям и БЖУ.\n"
+            "5. Настроить отчёты — ежедневный, еженедельный."
         )
 
     def _handle_log_water(self, app_user: AppUser, args: List[str]) -> str:
@@ -2617,7 +2618,7 @@ class TelegramHealthBot:
             return
         menu_button = {
             "type": "web_app",
-            "text": "Открыть приложение",
+            "text": "Открыть",
             "web_app": {"url": self.settings.mini_app_url},
         }
         params = {
@@ -2633,7 +2634,7 @@ class TelegramHealthBot:
     def _mini_app_help_line(self, app_user: AppUser) -> str:
         if not self.settings.mini_app_url:
             return "Mini App: пока не настроен в этом окружении."
-        return "Mini App: откройте через кнопку меню «Открыть приложение»."
+        return "Mini App: откройте через кнопку меню «Открыть»."
 
     @classmethod
     def _normalize_command_text(cls, text: str) -> str:
@@ -2774,7 +2775,7 @@ class TelegramHealthBot:
             {
                 "inline_keyboard": [
                     [
-                        {"text": "Открыть приложение", "web_app": {"url": self.settings.mini_app_url}},
+                        {"text": "Открыть", "web_app": {"url": self.settings.mini_app_url}},
                     ]
                 ]
             },
