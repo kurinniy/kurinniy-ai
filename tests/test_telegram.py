@@ -788,13 +788,11 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("● ○ ○", response)
         self.assertIn(999, self.service.users_by_telegram_id)
 
-    def test_start_for_existing_user_returns_home_screen(self) -> None:
+    def test_start_for_existing_user_returns_first_onboarding_step(self) -> None:
         response = self.bot._route_command("/start", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("Главный экран", response)
-        self.assertIn("Добавить еду", response)
-        self.assertIn("Добавить воду", response)
-        self.assertNotIn("digest", response)
-        self.assertNotIn("Бот уже подключен", response)
+        self.assertIn("Фотографируйте еду", response)
+        self.assertIn("● ○ ○", response)
+        self.assertNotIn("Главный экран", response)
 
     def test_menu_for_existing_user_returns_home_screen(self) -> None:
         response = self.bot._route_command("/menu", app_user=self.service.users_by_telegram_id[77])
@@ -1715,7 +1713,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[1][0], "sendMessage")
         self.assertIn("Главный экран", calls[1][1]["text"])
 
-    def test_completed_onboarding_is_not_shown_again_on_start(self) -> None:
+    def test_completed_onboarding_is_shown_again_on_start(self) -> None:
         self.service.users_by_telegram_id[77] = replace(
             self.service.users_by_telegram_id[77],
             onboarding_completed_at=datetime(2026, 5, 17, 12, 0),
@@ -1726,7 +1724,12 @@ class TelegramHealthBotTest(unittest.TestCase):
             calls.append((method, params))
             return True
 
+        def fake_telegram_api_multipart(method, **kwargs):
+            calls.append((method, kwargs))
+            return True
+
         self.bot._telegram_api = fake_telegram_api
+        self.bot._telegram_api_multipart = fake_telegram_api_multipart
         self.bot._handle_update(
             {
                 "update_id": 1,
@@ -1739,8 +1742,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
-        self.assertEqual(business_calls[0][0], "sendMessage")
-        self.assertIn("Главный экран", business_calls[0][1]["text"])
+        self.assertEqual(business_calls[0][0], "sendPhoto")
+        self.assertIn("Фотографируйте еду", business_calls[0][1]["params"]["caption"])
+        self.assertIn("● ○ ○", business_calls[0][1]["params"]["caption"])
 
     def test_sync_bot_commands_registers_menu_entries(self) -> None:
         calls = []

@@ -218,12 +218,7 @@ class TelegramHealthBot:
                 app_user=app_user,
             )
             reply_user = self.service.get_user_by_telegram_user_id(user_id) or app_user
-            if (
-                normalized_text == "/start"
-                and app_user is None
-                and reply_user is not None
-                and self._should_show_onboarding(reply_user)
-            ):
+            if normalized_text == "/start" and reply_user is not None:
                 self._send_onboarding_step(chat_id, step=1)
                 return
             if response:
@@ -1172,19 +1167,17 @@ class TelegramHealthBot:
     ) -> str:
         if app_user is not None:
             self._pending_custom_water_user_ids.discard(app_user.user_id)
-            return self._home_text(app_user)
+            return self._onboarding_caption(step=1)
         if chat_id is None or user_id is None:
             return self._registration_required_text()
-        registered_user = self.service.register_user(
+        self.service.register_user(
             telegram_user_id=user_id,
             chat_id=chat_id,
             username=username,
             first_name=first_name,
             now=self._local_now(),
         )
-        if self._should_show_onboarding(registered_user):
-            return self._onboarding_caption(step=1)
-        return self._welcome_text(registered_user)
+        return self._onboarding_caption(step=1)
 
     def _handle_whoami(self, chat_id: Optional[int], user_id: Optional[int], app_user: Optional[AppUser]) -> str:
         lines = [
@@ -2509,9 +2502,6 @@ class TelegramHealthBot:
                 self._try_delete_message(chat_id, message_id)
             return
         if data.startswith("onboarding:next:"):
-            if not self._should_show_onboarding(app_user):
-                self._try_answer_callback_query(query_id, "Онбординг уже завершен.")
-                return
             try:
                 step = int(data.rsplit(":", 1)[1])
             except ValueError:
@@ -2669,15 +2659,8 @@ class TelegramHealthBot:
         original_app_user: Optional[AppUser],
         reply_user: Optional[AppUser],
     ) -> Optional[str]:
-        if (
-            text == "/start"
-            and original_app_user is None
-            and reply_user is not None
-            and self._should_show_onboarding(reply_user)
-        ):
+        if text == "/start" and reply_user is not None:
             return None
-        if text == "/start" and original_app_user is None and reply_user is not None:
-            return self._welcome_reply_markup()
         if reply_user is None:
             return None
         if text in {"/add_water", "/water_custom"}:
