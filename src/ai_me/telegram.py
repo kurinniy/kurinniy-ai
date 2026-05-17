@@ -13,7 +13,7 @@ from ai_me.config import TelegramSettings
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.digest import DailyFoodDigest, WeeklyFoodDigest
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft, PhotoLogKind
-from ai_me.domain.health import MealEntry, WaterEntry
+from ai_me.domain.health import DailyHealthSummary, MealEntry, WaterEntry
 from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
 from ai_me.services.digest_renderer import DigestImageRenderer
 from ai_me.services.health_service import HealthService
@@ -73,6 +73,7 @@ class TelegramHealthBot:
         self._photo_rate_limit_until_by_user: Dict[int, datetime] = {}
         self._pending_custom_water_user_ids = set()
         self._pending_draft_edit_states: Dict[int, Dict[str, str]] = {}
+        self._pending_draft_clarifications: Dict[int, Dict[str, object]] = {}
         self._pending_last_meal_delete_by_user: Dict[int, str] = {}
         self._pending_profile_edit_states: Dict[int, Dict[str, str]] = {}
 
@@ -320,6 +321,7 @@ class TelegramHealthBot:
                 )
             else:
                 self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+                self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
                 self._send_message(
                     chat_id,
                     self._format_saved_meal_text(app_user, meal.title, meal.occurred_at.date()),
@@ -330,6 +332,7 @@ class TelegramHealthBot:
         if data.startswith("meal_edit_menu:"):
             draft_id = data.split(":", 1)[1]
             self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
             draft = self.service.get_meal_draft(app_user.user_id, draft_id)
             self._try_answer_callback_query(query_id, "Можно исправить черновик.")
             if isinstance(message_id, int):
@@ -344,6 +347,7 @@ class TelegramHealthBot:
         if data.startswith("meal_edit_back:"):
             draft_id = data.split(":", 1)[1]
             self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
             draft = self.service.get_meal_draft(app_user.user_id, draft_id)
             self._try_answer_callback_query(query_id, "Возвращаю черновик.")
             if isinstance(message_id, int):
@@ -396,6 +400,7 @@ class TelegramHealthBot:
                 occurred_at=self._local_now(),
             )
             self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
             self._try_answer_callback_query(query_id, "Время обновлено.")
             self._send_message(
                 chat_id,
@@ -437,7 +442,114 @@ class TelegramHealthBot:
                 "bigger": 1.2,
             }[portion_kind]
             draft = self.service.scale_meal_draft_portion(app_user.user_id, draft_id, factor)
+            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
             self._try_answer_callback_query(query_id, "Порция обновлена.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_meal_draft_card_text(draft),
+                    reply_markup=self._meal_draft_card_reply_markup(draft),
+                )
+            return
+
+        if data.startswith("meal_clarify_portion:"):
+            _, draft_id, action = data.split(":", 2)
+            state = self._pending_draft_clarifications.get(app_user.user_id)
+            if state is None or state.get("draft_id") != draft_id or state.get("kind") != "portion":
+                self._try_answer_callback_query(query_id, "Это уточнение уже неактуально.")
+                return
+            if action == "manual":
+                self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
+                draft = self.service.get_meal_draft(app_user.user_id, draft_id)
+                self._try_answer_callback_query(query_id, "Можно поправить вручную.")
+                if isinstance(message_id, int):
+                    self._try_edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=self._format_meal_draft_edit_menu_text(draft),
+                        reply_markup=self._meal_draft_edit_menu_reply_markup(draft),
+                    )
+                return
+            if action == "skip":
+                self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
+                draft = self.service.get_meal_draft(app_user.user_id, draft_id)
+                self._try_answer_callback_query(query_id, "Оставляю как есть.")
+                if isinstance(message_id, int):
+                    self._try_edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=self._format_meal_draft_card_text(draft),
+                        reply_markup=self._meal_draft_card_reply_markup(draft),
+                    )
+                return
+            factor = {
+                "small": 0.8,
+                "medium": 1.0,
+                "large": 1.2,
+            }.get(action)
+            if factor is None:
+                self._try_answer_callback_query(query_id, "Не удалось применить уточнение.")
+                return
+            draft = self.service.scale_meal_draft_portion(app_user.user_id, draft_id, factor)
+            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
+            self._try_answer_callback_query(query_id, "Спасибо, уточнение учтено.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=self._format_meal_draft_card_text(draft),
+                    reply_markup=self._meal_draft_card_reply_markup(draft),
+                )
+            return
+
+        if data.startswith("meal_clarify_title:"):
+            _, draft_id, action = data.split(":", 2)
+            state = self._pending_draft_clarifications.get(app_user.user_id)
+            if state is None or state.get("draft_id") != draft_id or state.get("kind") != "title":
+                self._try_answer_callback_query(query_id, "Это уточнение уже неактуально.")
+                return
+            if action == "manual":
+                self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
+                draft = self.service.get_meal_draft(app_user.user_id, draft_id)
+                self._try_answer_callback_query(query_id, "Можно поправить вручную.")
+                if isinstance(message_id, int):
+                    self._try_edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=self._format_meal_draft_edit_menu_text(draft),
+                        reply_markup=self._meal_draft_edit_menu_reply_markup(draft),
+                    )
+                return
+            if action == "skip":
+                self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
+                draft = self.service.get_meal_draft(app_user.user_id, draft_id)
+                self._try_answer_callback_query(query_id, "Оставляю как есть.")
+                if isinstance(message_id, int):
+                    self._try_edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=self._format_meal_draft_card_text(draft),
+                        reply_markup=self._meal_draft_card_reply_markup(draft),
+                    )
+                return
+            options = state.get("options")
+            if not isinstance(options, list):
+                self._try_answer_callback_query(query_id, "Не удалось применить уточнение.")
+                return
+            try:
+                title = str(options[int(action)])
+            except (ValueError, IndexError, TypeError):
+                self._try_answer_callback_query(query_id, "Не удалось применить уточнение.")
+                return
+            draft = self.service.update_meal_draft(
+                app_user.user_id,
+                draft_id,
+                title=title,
+                summary=title,
+            )
+            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
+            self._try_answer_callback_query(query_id, "Спасибо, уточнение учтено.")
             if isinstance(message_id, int):
                 self._try_edit_message_text(
                     chat_id=chat_id,
@@ -449,6 +561,7 @@ class TelegramHealthBot:
 
         if data.startswith("meal_rewrite_prompt:"):
             draft_id = data.split(":", 1)[1]
+            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
             self._set_pending_draft_edit_state(app_user.user_id, draft_id, "rewrite")
             self._try_answer_callback_query(query_id, "Опишите правильное блюдо.")
             self._send_message(
@@ -462,6 +575,7 @@ class TelegramHealthBot:
             draft_id = data.split(":", 1)[1]
             logger.info("Rejecting meal draft_id=%s user_id=%s", draft_id, app_user.user_id)
             self._clear_pending_draft_edit_state(app_user.user_id, draft_id=draft_id)
+            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft_id)
             self._try_answer_callback_query(query_id, "Отклоняю черновик...")
             try:
                 draft = self.service.reject_meal_draft(app_user.user_id, draft_id)
@@ -1161,6 +1275,7 @@ class TelegramHealthBot:
     def _handle_confirm_meal(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) != 1:
             return "Использование: /confirm_meal <draft_id>"
+        self._clear_pending_draft_clarification(app_user.user_id, draft_id=args[0])
         meal = self.service.confirm_meal_draft(app_user.user_id, args[0])
         decisions = self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
         if meal.kind == PhotoLogKind.WATER:
@@ -1170,6 +1285,7 @@ class TelegramHealthBot:
     def _handle_reject_meal(self, app_user: AppUser, args: List[str]) -> str:
         if len(args) != 1:
             return "Использование: /reject_meal <draft_id>"
+        self._clear_pending_draft_clarification(app_user.user_id, draft_id=args[0])
         draft = self.service.reject_meal_draft(app_user.user_id, args[0])
         return "Черновик приема пищи отклонен: %s." % draft.title
 
@@ -1776,7 +1892,7 @@ class TelegramHealthBot:
                 exc,
             )
 
-    def _send_meal_draft(self, chat_id: int, draft: MealPhotoDraft) -> None:
+    def _send_meal_draft(self, chat_id: int, draft: MealPhotoDraft, app_user: Optional[AppUser] = None) -> None:
         if draft.is_water_only:
             self._telegram_api(
                 "sendMessage",
@@ -1817,6 +1933,26 @@ class TelegramHealthBot:
                 },
             )
             return
+        clarification = self._build_draft_clarification(draft)
+        if clarification is not None:
+            if app_user is not None:
+                self._set_pending_draft_clarification(
+                    app_user.user_id,
+                    draft_id=draft.draft_id,
+                    kind=str(clarification["kind"]),
+                    options=clarification.get("options"),
+                )
+            self._telegram_api(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": str(clarification["text"]),
+                    "reply_markup": str(clarification["reply_markup"]),
+                },
+            )
+            return
+        if app_user is not None:
+            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft.draft_id)
         self._telegram_api(
             "sendMessage",
             {
@@ -2188,7 +2324,7 @@ class TelegramHealthBot:
             return
 
         logger.info("Food photo analyzed successfully chat_id=%s draft_id=%s", chat_id, draft.draft_id)
-        self._send_meal_draft(chat_id, draft)
+        self._send_meal_draft(chat_id, draft, app_user=app_user)
 
     def _handle_document_message(self, chat_id: int, app_user: AppUser, document: Dict[str, object]) -> None:
         if not app_user.has_admin_access:
@@ -2705,6 +2841,67 @@ class TelegramHealthBot:
             return
         self._pending_draft_edit_states.pop(user_id, None)
 
+    def _set_pending_draft_clarification(
+        self,
+        user_id: int,
+        draft_id: str,
+        kind: str,
+        options: Optional[List[str]] = None,
+    ) -> None:
+        state: Dict[str, object] = {"draft_id": draft_id, "kind": kind}
+        if options is not None:
+            state["options"] = options
+        self._pending_draft_clarifications[user_id] = state
+
+    def _clear_pending_draft_clarification(self, user_id: int, draft_id: Optional[str] = None) -> None:
+        state = self._pending_draft_clarifications.get(user_id)
+        if state is None:
+            return
+        if draft_id is not None and state.get("draft_id") != draft_id:
+            return
+        self._pending_draft_clarifications.pop(user_id, None)
+
+    @staticmethod
+    def _build_title_clarification_options(draft: MealPhotoDraft) -> List[str]:
+        options: List[str] = []
+        for title in [draft.title, *(item.title for item in draft.items)]:
+            normalized = title.strip()
+            if not normalized:
+                continue
+            if normalized in options:
+                continue
+            options.append(normalized)
+        return options[:3]
+
+    def _build_draft_clarification(self, draft: MealPhotoDraft) -> Optional[Dict[str, object]]:
+        if draft.is_water_only or draft.confidence >= 0.85:
+            return None
+        if draft.confidence >= 0.65:
+            return {
+                "kind": "portion",
+                "text": (
+                    "Хочу быстро уточнить порцию, чтобы запись была точнее.\n"
+                    "Какой размер порции больше похож на реальный?"
+                ),
+                "reply_markup": self._meal_draft_portion_clarification_reply_markup(draft.draft_id),
+            }
+        options = self._build_title_clarification_options(draft)
+        if len(options) < 2:
+            return {
+                "kind": "portion",
+                "text": (
+                    "Не до конца уверен в распознавании.\n"
+                    "Давайте быстро уточним порцию, а если нужно — потом поправите вручную."
+                ),
+                "reply_markup": self._meal_draft_portion_clarification_reply_markup(draft.draft_id),
+            }
+        return {
+            "kind": "title",
+            "text": "Не до конца уверен в блюде. Что ближе всего к фото?",
+            "reply_markup": self._meal_draft_title_clarification_reply_markup(draft.draft_id, options),
+            "options": options,
+        }
+
     def _set_pending_last_meal_delete(self, user_id: int, entry_id: str) -> None:
         self._pending_last_meal_delete_by_user[user_id] = entry_id
 
@@ -2969,6 +3166,41 @@ class TelegramHealthBot:
         )
 
     @staticmethod
+    def _meal_draft_portion_clarification_reply_markup(draft_id: str) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Маленькая", "callback_data": "meal_clarify_portion:%s:small" % draft_id},
+                        {"text": "Средняя", "callback_data": "meal_clarify_portion:%s:medium" % draft_id},
+                        {"text": "Большая", "callback_data": "meal_clarify_portion:%s:large" % draft_id},
+                    ],
+                    [
+                        {"text": "Изменить вручную", "callback_data": "meal_clarify_portion:%s:manual" % draft_id},
+                    ],
+                    [
+                        {"text": "Пропустить", "callback_data": "meal_clarify_portion:%s:skip" % draft_id},
+                    ],
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _meal_draft_title_clarification_reply_markup(draft_id: str, options: List[str]) -> str:
+        keyboard = [
+            [{"text": title, "callback_data": "meal_clarify_title:%s:%s" % (draft_id, index)}]
+            for index, title in enumerate(options)
+        ]
+        keyboard.append(
+            [{"text": "Изменить вручную", "callback_data": "meal_clarify_title:%s:manual" % draft_id}]
+        )
+        keyboard.append(
+            [{"text": "Пропустить", "callback_data": "meal_clarify_title:%s:skip" % draft_id}]
+        )
+        return json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False)
+
+    @staticmethod
     def _draft_edit_prompt_reply_markup(draft_id: str) -> str:
         return json.dumps(
             {
@@ -2995,7 +3227,7 @@ class TelegramHealthBot:
 
     def _format_saved_meal_text(self, app_user: AppUser, title: str, target_date: date) -> str:
         summary = self.service.get_daily_summary(app_user.user_id, target_date)
-        return (
+        message = (
             "Сохранено: %s.\n\n"
             "Сегодня:\n"
             "%s приема пищи\n"
@@ -3009,6 +3241,24 @@ class TelegramHealthBot:
             self._format_liters_fixed(summary.water_ml),
             self._format_liters_fixed(summary.goals.water_ml),
         )
+        coaching = self._build_optional_post_save_coaching(app_user, summary)
+        if coaching:
+            return "%s\n\n%s" % (message, coaching)
+        return message
+
+    @staticmethod
+    def _build_optional_post_save_coaching(app_user: AppUser, summary: DailyHealthSummary) -> str:
+        if not app_user.reminders_enabled:
+            return ""
+        if app_user.reminder_meal_logging:
+            if summary.meals_count == 1:
+                return "Хорошее начало: первая запись за день уже сохранена."
+            if summary.meals_count >= 3:
+                return "Хороший ритм: сегодня вы уже регулярно записываете еду."
+        water_goal_ml = summary.goals.water_ml
+        if app_user.reminder_water and water_goal_ml > 0 and summary.water_ml < (water_goal_ml / 2):
+            return "Если был напиток, воду можно добавить отдельно одним тапом."
+        return ""
 
     @classmethod
     def _post_save_meal_reply_markup(cls) -> str:
