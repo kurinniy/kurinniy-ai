@@ -483,7 +483,15 @@ class DummyHealthService:
     def set_goals(self, user_id, goals) -> None:
         return None
 
-    def evaluate_day(self, user_id, target_date, now=None):
+    def evaluate_day(self, user_id, target_date, now=None, debug_timings=None):
+        if debug_timings is not None:
+            debug_timings.update(
+                {
+                    "build daily summary": 0.11,
+                    "decision engine": 0.02,
+                    "upsert decisions": 0.03,
+                }
+            )
         return []
 
     def get_daily_summary(self, user_id, target_date):
@@ -1556,6 +1564,11 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("загрузка фото из Telegram:", send_message["text"])
         self.assertIn("распознавание и сборка черновика:", send_message["text"])
         self.assertIn("автосохранение записи:", send_message["text"])
+        self.assertIn("confirm meal transaction:", send_message["text"])
+        self.assertIn("build daily summary:", send_message["text"])
+        self.assertIn("decision engine:", send_message["text"])
+        self.assertIn("upsert decisions:", send_message["text"])
+        self.assertIn("clear pending clarification:", send_message["text"])
         self.assertIn("сборка карточки сохраненной записи:", send_message["text"])
 
     def test_user_mode_command_updates_reply_keyboard_immediately(self) -> None:

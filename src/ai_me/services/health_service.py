@@ -1126,11 +1126,29 @@ class HealthService:
     def list_meals(self, user_id: int, target_date: date) -> List[MealEntry]:
         return self.store.list_meals(user_id, target_date)
 
-    def evaluate_day(self, user_id: int, target_date: date, now: Optional[datetime] = None) -> List[DecisionLogEntry]:
+    def evaluate_day(
+        self,
+        user_id: int,
+        target_date: date,
+        now: Optional[datetime] = None,
+        debug_timings: Optional[Dict[str, float]] = None,
+    ) -> List[DecisionLogEntry]:
         current_time = now or datetime.now()
+        summary_started_at = time.perf_counter()
         summary = self.get_daily_summary(user_id, target_date)
+        decision_engine_started_at = time.perf_counter()
         decisions = self.decision_engine.evaluate(summary=summary, now=current_time)
-        return self.store.upsert_decisions(user_id, decisions)
+        upsert_started_at = time.perf_counter()
+        inserted = self.store.upsert_decisions(user_id, decisions)
+        if debug_timings is not None:
+            debug_timings.update(
+                {
+                    "build daily summary": round(decision_engine_started_at - summary_started_at, 2),
+                    "decision engine": round(upsert_started_at - decision_engine_started_at, 2),
+                    "upsert decisions": round(time.perf_counter() - upsert_started_at, 2),
+                }
+            )
+        return inserted
 
     def list_decisions(
         self,

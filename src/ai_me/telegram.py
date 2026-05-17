@@ -2008,6 +2008,12 @@ class TelegramHealthBot:
             return
         trace.add_step(label, time.perf_counter() - started_at)
 
+    def _add_response_debug_step(self, label: str, seconds: float) -> None:
+        trace = self._active_response_debug
+        if trace is None:
+            return
+        trace.add_step(label, seconds)
+
     def _append_response_debug_text(self, text: str) -> str:
         trace = self._active_response_debug
         if trace is None or "Отладка:" in text:
@@ -2181,11 +2187,29 @@ class TelegramHealthBot:
             return
         if app_user is not None and self._should_auto_save_draft(draft):
             auto_save_started_at = time.perf_counter()
+            confirm_started_at = time.perf_counter()
             meal = self.service.confirm_meal_draft(app_user.user_id, draft.draft_id)
-            self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
+            confirm_finished_at = time.perf_counter()
+            evaluate_timings: Dict[str, float] = {}
+            self.service.evaluate_day(
+                app_user.user_id,
+                meal.occurred_at.date(),
+                now=self._local_now(),
+                debug_timings=evaluate_timings,
+            )
+            pending_clear_started_at = time.perf_counter()
             self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft.draft_id)
+            pending_clear_finished_at = time.perf_counter()
             saved_meal = meal.meal_entry or self.service.get_meal_entry(app_user.user_id, meal.entry_id)
             self._record_response_debug_step("автосохранение записи", auto_save_started_at)
+            self._add_response_debug_step("confirm meal transaction", confirm_finished_at - confirm_started_at)
+            for label in ("build daily summary", "decision engine", "upsert decisions"):
+                if label in evaluate_timings:
+                    self._add_response_debug_step(label, evaluate_timings[label])
+            self._add_response_debug_step(
+                "clear pending clarification",
+                pending_clear_finished_at - pending_clear_started_at,
+            )
             card_started_at = time.perf_counter()
             saved_text = self._format_saved_meal_text(app_user, saved_meal)
             self._record_response_debug_step("сборка карточки сохраненной записи", card_started_at)
