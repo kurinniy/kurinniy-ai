@@ -47,6 +47,7 @@ type RecognitionDetailState =
   | { kind: "error"; draftId: string; message: string };
 
 const SESSION_KEY = "ai_me_web_session";
+const MIN_LOADING_SCREEN_MS = 900;
 
 export function App() {
   const [state, setState] = useState<AppState>({ kind: "loading", label: "Запуск Mini App" });
@@ -70,10 +71,13 @@ export function App() {
         return;
       }
 
+      const startedAt = Date.now();
       try {
         const result = await loadApplication(initData);
+        await ensureMinimumLoadingTime(startedAt);
         setState({ kind: "ready", auth: result.auth, dashboard: result.dashboard });
       } catch (error) {
+        await ensureMinimumLoadingTime(startedAt);
         setState({
           kind: "error",
           title: "Не удалось открыть приложение",
@@ -307,6 +311,14 @@ async function safeReadJson(response: Response): Promise<Record<string, unknown>
     return (await response.json()) as Record<string, unknown>;
   } catch {
     return null;
+  }
+}
+
+async function ensureMinimumLoadingTime(startedAt: number): Promise<void> {
+  const elapsed = Date.now() - startedAt;
+  const remaining = MIN_LOADING_SCREEN_MS - elapsed;
+  if (remaining > 0) {
+    await new Promise((resolve) => window.setTimeout(resolve, remaining));
   }
 }
 
