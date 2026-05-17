@@ -932,7 +932,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/how_it_works", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Как это работает", response)
         self.assertIn("1. Отправьте фото еды", response)
-        self.assertIn("4. После подтверждения запись попадет", response)
+        self.assertIn("4. После этого запись попадет в сводку и историю.", response)
 
     def test_history_command_returns_history_home(self) -> None:
         response = self.bot._route_command("/history", app_user=self.service.users_by_telegram_id[77])
@@ -1774,6 +1774,7 @@ class TelegramHealthBotTest(unittest.TestCase):
                 datetime(2026, 5, 8, 12, 0, 0),
                 datetime(2026, 5, 8, 12, 0, 0),
                 datetime(2026, 5, 8, 12, 0, 0),
+                datetime(2026, 5, 8, 12, 0, 0),
                 datetime(2026, 5, 8, 12, 0, 1),
             ]
         )
@@ -1990,7 +1991,6 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Похоже, это Chicken rice bowl.", text)
         self.assertIn("Сохранить", messages[0][1]["reply_markup"])
         self.assertIn("Изменить", messages[0][1]["reply_markup"])
-        self.assertIn("Не то блюдо", messages[0][1]["reply_markup"])
         self.assertIn("Отмена", messages[0][1]["reply_markup"])
         self.assertIn("Состав:", text)
 
@@ -2011,8 +2011,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Объем: 0.5 л", text)
         self.assertNotIn("Калории:", text)
 
-    def test_medium_confidence_draft_requests_portion_clarification(self) -> None:
-        draft = replace(self.service.list_meal_drafts(1)[0], confidence=0.74)
+    def test_high_confidence_draft_auto_saves_for_registered_user(self) -> None:
+        draft = replace(self.service.list_meal_drafts(1)[0], confidence=0.91)
         messages = []
 
         def fake_telegram_api(method, params):
@@ -2023,36 +2023,16 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._send_meal_draft(777, draft, app_user=self.service.users_by_telegram_id[42])
 
         self.assertEqual(messages[0][0], "sendMessage")
-        self.assertIn("уточнить порцию", messages[0][1]["text"])
-        self.assertIn("Маленькая", messages[0][1]["reply_markup"])
-        self.assertIn("Изменить вручную", messages[0][1]["reply_markup"])
-        self.assertEqual(
-            self.bot._pending_draft_clarifications[1]["kind"],
-            "portion",
-        )
+        self.assertIn("Сохранено:", messages[0][1]["text"])
+        self.assertIn("Изменить", messages[0][1]["reply_markup"])
+        self.assertIn("Отменить", messages[0][1]["reply_markup"])
+        self.assertNotIn("Сохранить", messages[0][1]["reply_markup"])
+        self.assertEqual(self.service.confirmed_draft_ids, [(1, "draft-1")])
 
-    def test_low_confidence_draft_requests_title_clarification(self) -> None:
+    def test_low_confidence_draft_requires_manual_save(self) -> None:
         draft = replace(
             self.service.list_meal_drafts(1)[0],
             confidence=0.42,
-            items=[
-                FoodItemEstimate(
-                    title="Курица",
-                    portion_text="150 г",
-                    calories=250,
-                    protein_g=31,
-                    fat_g=8,
-                    carbs_g=0,
-                ),
-                FoodItemEstimate(
-                    title="Плов",
-                    portion_text="300 г",
-                    calories=420,
-                    protein_g=14,
-                    fat_g=10,
-                    carbs_g=61,
-                ),
-            ],
         )
         messages = []
 
@@ -2064,11 +2044,11 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._send_meal_draft(777, draft, app_user=self.service.users_by_telegram_id[42])
 
         self.assertEqual(messages[0][0], "sendMessage")
-        self.assertIn("Что ближе всего к фото", messages[0][1]["text"])
-        self.assertIn("Chicken rice bowl", messages[0][1]["reply_markup"])
-        self.assertIn("Курица", messages[0][1]["reply_markup"])
-        self.assertIn("Плов", messages[0][1]["reply_markup"])
-        self.assertEqual(self.bot._pending_draft_clarifications[1]["kind"], "title")
+        self.assertIn("не до конца уверен", messages[0][1]["text"])
+        self.assertIn("Сохранить", messages[0][1]["reply_markup"])
+        self.assertIn("Изменить", messages[0][1]["reply_markup"])
+        self.assertIn("Отмена", messages[0][1]["reply_markup"])
+        self.assertEqual(self.service.confirmed_draft_ids, [])
 
     def test_edit_callback_opens_edit_menu(self) -> None:
         calls = []
@@ -2354,9 +2334,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[1][0], "editMessageText")
         self.assertIn("744 ккал", calls[1][1]["text"])
 
-    def test_clarify_portion_flow_updates_calories(self) -> None:
+    def test_saved_meal_cancel_deletes_entry(self) -> None:
         calls = []
-        self.bot._set_pending_draft_clarification(1, "draft-1", "portion")
 
         def fake_telegram_api(method, params):
             calls.append((method, params))
@@ -2366,7 +2345,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._handle_callback_query(
             {
                 "id": "query-1",
-                "data": "meal_clarify_portion:draft-1:large",
+                "data": "meal_saved_cancel:meal-1",
                 "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                 "message": {
                     "message_id": 555,
@@ -2376,17 +2355,16 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         self.assertEqual(calls[1][0], "editMessageText")
-        self.assertIn("744 ккал", calls[1][1]["text"])
-        self.assertNotIn(1, self.bot._pending_draft_clarifications)
+        self.assertIn("Сохранение отменено.", calls[1][1]["text"])
+        self.assertEqual(len(self.service.meals_by_user_id[1]), 1)
 
-    def test_clarify_title_flow_updates_draft_card(self) -> None:
+    def test_saved_meal_cancel_falls_back_to_app_when_entry_is_old(self) -> None:
         calls = []
-        self.bot._set_pending_draft_clarification(
-            1,
-            "draft-1",
-            "title",
-            options=["Chicken rice bowl", "Курица", "Плов"],
+        stale_meal = replace(
+            self.service.get_meal_entry(1, "meal-1"),
+            created_at=datetime(2026, 5, 6, 9, 0),
         )
+        self.service.meals_by_user_id[1][0] = stale_meal
 
         def fake_telegram_api(method, params):
             calls.append((method, params))
@@ -2396,7 +2374,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.bot._handle_callback_query(
             {
                 "id": "query-1",
-                "data": "meal_clarify_title:draft-1:1",
+                "data": "meal_saved_cancel:meal-1",
                 "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                 "message": {
                     "message_id": 555,
@@ -2406,58 +2384,21 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         self.assertEqual(calls[1][0], "editMessageText")
-        self.assertIn("Похоже, это Курица.", calls[1][1]["text"])
-        self.assertEqual(self.service.get_meal_draft(1, "draft-1").title, "Курица")
-        self.assertNotIn(1, self.bot._pending_draft_clarifications)
+        self.assertIn("Быстрое удаление доступно только для самой последней записи", calls[1][1]["text"])
 
-    def test_clarify_manual_opens_edit_menu(self) -> None:
+    def test_saved_meal_reply_markup_uses_edit_and_cancel(self) -> None:
         calls = []
-        self.bot._set_pending_draft_clarification(1, "draft-1", "portion")
+        draft = replace(self.service.list_meal_drafts(1)[0], confidence=0.91)
 
         def fake_telegram_api(method, params):
             calls.append((method, params))
             return True
 
         self.bot._telegram_api = fake_telegram_api
-        self.bot._handle_callback_query(
-            {
-                "id": "query-1",
-                "data": "meal_clarify_portion:draft-1:manual",
-                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                "message": {
-                    "message_id": 555,
-                    "chat": {"id": 777, "type": "private"},
-                },
-            }
-        )
+        self.bot._send_meal_draft(777, draft, app_user=self.service.users_by_telegram_id[42])
 
-        self.assertEqual(calls[1][0], "editMessageText")
-        self.assertIn("Что изменить", calls[1][1]["text"])
-        self.assertIn("Название", calls[1][1]["reply_markup"])
-
-    def test_clarify_skip_returns_to_draft_card(self) -> None:
-        calls = []
-        self.bot._set_pending_draft_clarification(1, "draft-1", "portion")
-
-        def fake_telegram_api(method, params):
-            calls.append((method, params))
-            return True
-
-        self.bot._telegram_api = fake_telegram_api
-        self.bot._handle_callback_query(
-            {
-                "id": "query-1",
-                "data": "meal_clarify_portion:draft-1:skip",
-                "from": {"id": 42, "username": "owner", "first_name": "Owner"},
-                "message": {
-                    "message_id": 555,
-                    "chat": {"id": 777, "type": "private"},
-                },
-            }
-        )
-
-        self.assertEqual(calls[1][0], "editMessageText")
-        self.assertIn("Похоже, это Chicken rice bowl.", calls[1][1]["text"])
+        self.assertIn("history_last_meal_edit", calls[0][1]["reply_markup"])
+        self.assertIn("meal_saved_cancel", calls[0][1]["reply_markup"])
 
     def test_edit_time_flow_rejects_invalid_time(self) -> None:
         messages = []

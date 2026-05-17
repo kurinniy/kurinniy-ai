@@ -598,6 +598,33 @@ class TelegramHealthBot:
             self._send_message(chat_id, "Черновик приема пищи отклонен: %s." % draft.title)
             return
 
+        if data.startswith("meal_saved_cancel:"):
+            entry_id = data.split(":", 1)[1]
+            try:
+                meal = self.service.get_meal_entry(app_user.user_id, entry_id)
+            except ValueError as exc:
+                self._send_message(chat_id, str(exc))
+                return
+            if not self._is_meal_recoverable_for_delete(meal):
+                self._try_answer_callback_query(query_id, "Быстрая отмена уже недоступна.")
+                if isinstance(message_id, int):
+                    self._try_edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=self._history_delete_in_app_text(),
+                        reply_markup=self._history_app_inline_reply_markup(),
+                    )
+                return
+            deleted = self.service.delete_meal_entry(app_user.user_id, entry_id)
+            self._try_answer_callback_query(query_id, "Сохранение отменено.")
+            if isinstance(message_id, int):
+                self._try_edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="Сохранение отменено.\nЗапись удалена: %s." % deleted.title,
+                )
+            return
+
         if data.startswith("history_last_meal_edit:"):
             entry_id = data.split(":", 1)[1]
             try:
@@ -1392,7 +1419,7 @@ class TelegramHealthBot:
             self._mini_app_help_line(app_user),
             "Команды:",
             "/whoami",
-            "Отправь фото еды, чтобы создать черновик приема пищи.",
+            "Отправь фото еды, чтобы я сразу сохранил запись или предложил её проверить.",
             "/menu",
             "/digest_status",
             "/digest_on",
@@ -1442,7 +1469,7 @@ class TelegramHealthBot:
         weekly_status = "включен" if digest_settings.weekly_digest_enabled else "выключен"
         return (
             "Главный экран\n"
-            "Просто отправьте фото еды одним сообщением — я распознаю блюдо и создам черновик для подтверждения.\n\n"
+            "Просто отправьте фото еды одним сообщением — я распознаю блюдо и сохраню запись сразу или предложу её проверить.\n\n"
             "Сейчас:\n"
             "- Ежедневная сводка: %s\n"
             "- Недельная сводка: %s\n\n"
@@ -1459,7 +1486,7 @@ class TelegramHealthBot:
     def _add_food_text() -> str:
         return (
             "Добавить еду\n"
-            "Просто отправьте фото еды одним сообщением. Я распознаю блюдо и создам черновик для подтверждения."
+            "Просто отправьте фото еды одним сообщением. Я распознаю блюдо и либо сохраню запись сразу, либо попрошу быстро её проверить."
         )
 
     @staticmethod
@@ -1619,9 +1646,9 @@ class TelegramHealthBot:
         return (
             "Как это работает\n"
             "1. Отправьте фото еды одним сообщением.\n"
-            "2. Я распознаю блюдо и соберу черновик приема пищи.\n"
-            "3. Вы подтвердите или отклоните черновик.\n"
-            "4. После подтверждения запись попадет в сводку и digest."
+            "2. Я распознаю блюдо и, если уверен, сразу сохраню запись.\n"
+            "3. Если уверенность низкая, предложу быстро проверить запись перед сохранением.\n"
+            "4. После этого запись попадет в сводку и историю."
         )
 
     def _handle_log_water(self, app_user: AppUser, args: List[str]) -> str:
@@ -1933,21 +1960,17 @@ class TelegramHealthBot:
                 },
             )
             return
-        clarification = self._build_draft_clarification(draft)
-        if clarification is not None:
-            if app_user is not None:
-                self._set_pending_draft_clarification(
-                    app_user.user_id,
-                    draft_id=draft.draft_id,
-                    kind=str(clarification["kind"]),
-                    options=clarification.get("options"),
-                )
+        if app_user is not None and self._should_auto_save_draft(draft):
+            meal = self.service.confirm_meal_draft(app_user.user_id, draft.draft_id)
+            self.service.evaluate_day(app_user.user_id, meal.occurred_at.date(), now=self._local_now())
+            self._clear_pending_draft_clarification(app_user.user_id, draft_id=draft.draft_id)
+            saved_meal = self.service.get_meal_entry(app_user.user_id, meal.entry_id)
             self._telegram_api(
                 "sendMessage",
                 {
                     "chat_id": chat_id,
-                    "text": str(clarification["text"]),
-                    "reply_markup": str(clarification["reply_markup"]),
+                    "text": self._format_auto_saved_meal_text(saved_meal),
+                    "reply_markup": self._saved_meal_reply_markup(saved_meal.entry_id),
                 },
             )
             return
@@ -1957,7 +1980,7 @@ class TelegramHealthBot:
             "sendMessage",
             {
                 "chat_id": chat_id,
-                "text": self._format_meal_draft_card_text(draft),
+                "text": self._format_low_confidence_draft_text(draft),
                 "reply_markup": self._meal_draft_card_reply_markup(draft),
             },
         )
@@ -2902,6 +2925,19 @@ class TelegramHealthBot:
             "options": options,
         }
 
+    @staticmethod
+    def _is_draft_determined(draft: MealPhotoDraft) -> bool:
+        if not draft.title.strip():
+            return False
+        if draft.summary.strip():
+            return True
+        if draft.items:
+            return True
+        return draft.calories > 0 or draft.protein_g > 0 or draft.fat_g > 0 or draft.carbs_g > 0
+
+    def _should_auto_save_draft(self, draft: MealPhotoDraft) -> bool:
+        return draft.confidence > 0.6 and self._is_draft_determined(draft)
+
     def _set_pending_last_meal_delete(self, user_id: int, entry_id: str) -> None:
         self._pending_last_meal_delete_by_user[user_id] = entry_id
 
@@ -3090,6 +3126,44 @@ class TelegramHealthBot:
         )
 
     @staticmethod
+    def _format_low_confidence_draft_text(draft: MealPhotoDraft) -> str:
+        prefix = (
+            "Я не до конца уверен, что правильно распознал блюдо.\n"
+            "Проверьте запись перед сохранением.\n\n"
+            if not TelegramHealthBot._is_draft_determined(draft)
+            else (
+                "Я не до конца уверен в распознавании.\n"
+                "Проверьте запись перед сохранением.\n\n"
+            )
+        )
+        return prefix + TelegramHealthBot._format_meal_draft_card_text(draft)
+
+    @staticmethod
+    def _format_auto_saved_meal_text(meal: MealEntry) -> str:
+        summary = TelegramHealthBot._extract_meal_summary_from_notes(meal)
+        lines = [
+            "Сохранено: %s." % meal.title,
+            "",
+            "%s ккал" % TelegramHealthBot._format_integer_with_spaces(meal.calories),
+            "Б %s г • Ж %s г • У %s г"
+            % (
+                TelegramHealthBot._format_decimal(meal.protein_g),
+                TelegramHealthBot._format_decimal(meal.fat_g),
+                TelegramHealthBot._format_decimal(meal.carbs_g),
+            ),
+            "Время: %s" % meal.occurred_at.strftime("%H:%M"),
+        ]
+        if summary:
+            lines.append("Состав: %s" % summary)
+        lines.extend(
+            [
+                "",
+                "Если нужно, запись можно быстро изменить или отменить.",
+            ]
+        )
+        return "\n".join(lines)
+
+    @staticmethod
     def _format_meal_draft_edit_menu_text(draft: MealPhotoDraft) -> str:
         return "Что изменить в черновике «%s»?" % draft.title
 
@@ -3115,7 +3189,6 @@ class TelegramHealthBot:
                         {"text": "Изменить", "callback_data": "meal_edit_menu:%s" % draft.draft_id},
                     ],
                     [
-                        {"text": "Не то блюдо", "callback_data": "meal_rewrite_prompt:%s" % draft.draft_id},
                         {"text": "Отмена", "callback_data": "meal_reject:%s" % draft.draft_id},
                     ],
                 ]
@@ -3269,6 +3342,20 @@ class TelegramHealthBot:
                     [{"text": "Добавить воду"}],
                     [{"text": "История"}, {"text": "Прогресс"}],
                 ],
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _saved_meal_reply_markup(entry_id: str) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {"text": "Изменить", "callback_data": "history_last_meal_edit:%s" % entry_id},
+                        {"text": "Отменить", "callback_data": "meal_saved_cancel:%s" % entry_id},
+                    ],
+                ]
             },
             ensure_ascii=False,
         )
