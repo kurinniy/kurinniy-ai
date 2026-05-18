@@ -863,7 +863,6 @@ class TelegramHealthBotTest(unittest.TestCase):
 
     def test_menu_for_existing_user_returns_home_screen(self) -> None:
         response = self.bot._route_command("/menu", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("Главный экран", response)
         self.assertIn("Теперь просто отправьте фото еды в чат", response)
 
     def test_profile_command_opens_profile_home_with_sections(self) -> None:
@@ -1237,7 +1236,7 @@ class TelegramHealthBotTest(unittest.TestCase):
     def test_water_custom_volume_back_returns_to_home_screen(self) -> None:
         self.bot._route_command("/water_custom", app_user=self.service.users_by_telegram_id[77])
         response = self.bot._route_command("/menu", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("Главный экран", response)
+        self.assertIn("Теперь просто отправьте фото еды в чат", response)
 
     def test_progress_command_returns_summary(self) -> None:
         response = self.bot._route_command("/progress", app_user=self.service.users_by_telegram_id[77])
@@ -1725,7 +1724,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("onboarding:skip", business_calls[0][1]["params"]["reply_markup"])
         markup = json.loads(business_calls[0][1]["params"]["reply_markup"])
         self.assertEqual(markup["inline_keyboard"][0][0]["text"], "Пропустить")
-        self.assertEqual(markup["inline_keyboard"][0][1]["text"], "⬅️ Далее")
+        self.assertEqual(markup["inline_keyboard"][0][1]["text"], "Далее ➡️")
 
     def test_onboarding_next_sends_second_step_and_deletes_previous_message(self) -> None:
         calls = []
@@ -1754,12 +1753,44 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         self.assertEqual(calls[0][0], "answerCallbackQuery")
         self.assertEqual(calls[1][0], "sendPhoto")
-        self.assertIn("Каждый день —", calls[1][1]["params"]["caption"])
+        self.assertNotIn("Каждый день —", calls[1][1]["params"]["caption"])
+        self.assertIn("Я могу присылать ежедневные сводки", calls[1][1]["params"]["caption"])
         self.assertIn("○ ● ○", calls[1][1]["params"]["caption"])
         markup = json.loads(calls[1][1]["params"]["reply_markup"])
         self.assertEqual(markup["inline_keyboard"][0][0]["text"], "Пропустить")
-        self.assertEqual(markup["inline_keyboard"][0][1]["text"], "⬅️ Далее")
+        self.assertEqual(markup["inline_keyboard"][0][1]["text"], "Далее ➡️")
         self.assertEqual(calls[2][0], "deleteMessage")
+
+    def test_onboarding_third_step_has_only_start_button_and_short_text(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        def fake_telegram_api_multipart(method, **kwargs):
+            calls.append((method, kwargs))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._telegram_api_multipart = fake_telegram_api_multipart
+        self.bot._handle_callback_query(
+            {
+                "id": "query-1",
+                "data": "onboarding:next:3",
+                "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 778, "type": "private"},
+                },
+            }
+        )
+
+        self.assertEqual(calls[1][0], "sendPhoto")
+        self.assertIn("История и профиль — в мини-приложении", calls[1][1]["params"]["caption"])
+        self.assertNotIn("Историю приемов пищи", calls[1][1]["params"]["caption"])
+        markup = json.loads(calls[1][1]["params"]["reply_markup"])
+        self.assertEqual(markup["inline_keyboard"], [[{"text": "Начать", "callback_data": "onboarding:start"}]])
 
     def test_onboarding_skip_marks_user_complete_and_opens_home(self) -> None:
         calls = []
@@ -1784,7 +1815,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIsNotNone(self.service.users_by_telegram_id[77].onboarding_completed_at)
         self.assertEqual(calls[0][0], "answerCallbackQuery")
         self.assertEqual(calls[1][0], "sendMessage")
-        self.assertIn("Главный экран", calls[1][1]["text"])
+        self.assertIn("Теперь просто отправьте фото еды в чат", calls[1][1]["text"])
         self.assertEqual(calls[2][0], "deleteMessage")
 
     def test_onboarding_start_marks_user_complete_and_opens_home(self) -> None:
@@ -1810,7 +1841,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIsNotNone(self.service.users_by_telegram_id[77].onboarding_completed_at)
         self.assertEqual(calls[0][0], "answerCallbackQuery")
         self.assertEqual(calls[1][0], "sendMessage")
-        self.assertIn("Главный экран", calls[1][1]["text"])
+        self.assertIn("Теперь просто отправьте фото еды в чат", calls[1][1]["text"])
 
     def test_completed_onboarding_is_shown_again_on_start(self) -> None:
         self.service.users_by_telegram_id[77] = replace(

@@ -1595,17 +1595,18 @@ class TelegramHealthBot:
                 "Просто отправьте фото в чат — я распознаю и сохраню блюдо.",
             ),
             2: (
-                "Каждый день — наглядная сводка",
+                "",
                 "Я могу присылать ежедневные сводки — общую картину за день и короткие выводы.\n\n"
                 "Так проще замечать свои привычки и менять их.",
             ),
             3: (
                 "История и профиль — в мини-приложении",
-                "Историю приемов пищи, профиль и личные настройки удобно смотреть в мини-приложении — голубая кнопка *Открыть*.",
+                "",
             ),
         }
         title, body = steps[step]
-        return "%s\n\n%s\n\n%s" % (title, body, cls._onboarding_indicator(step))
+        parts = [part for part in (title, body, cls._onboarding_indicator(step)) if part]
+        return "\n\n".join(parts)
 
     @classmethod
     def _onboarding_asset_path(cls, step: int) -> Path:
@@ -1618,19 +1619,15 @@ class TelegramHealthBot:
             keyboard.append(
                 [
                     {"text": "Пропустить", "callback_data": "onboarding:skip"},
-                    {"text": "⬅️ Далее", "callback_data": "onboarding:next:%s" % (step + 1)},
+                    {"text": "Далее ➡️", "callback_data": "onboarding:next:%s" % (step + 1)},
                 ]
             )
         else:
             keyboard.append([{"text": "Начать", "callback_data": "onboarding:start"}])
-            keyboard.append([{"text": "Пропустить", "callback_data": "onboarding:skip"}])
         return json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False)
 
     def _home_text(self, app_user: AppUser) -> str:
-        return (
-            "Главный экран\n"
-            "Теперь просто отправьте фото еды в чат — я распознаю блюдо и сохраню запись."
-        )
+        return "Теперь просто отправьте фото еды в чат — я распознаю блюдо и сохраню запись."
 
     @staticmethod
     def _add_food_text() -> str:
