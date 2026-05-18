@@ -1367,20 +1367,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Daily digest preview за 2026-05-06", business_calls[1][1]["text"])
         self.assertIn("Вода: 1.2 л / 2 л", business_calls[1][1]["text"])
         self.assertIn("Шаги за день: 6200 / 10000", business_calls[1][1]["text"])
-        self.assertIn("Отладка:", business_calls[1][1]["text"])
-        self.assertIn("Сбор daily digest:", business_calls[1][1]["text"])
-        self.assertIn("история за 30 дней:", business_calls[1][1]["text"])
-        self.assertIn("текущий день:", business_calls[1][1]["text"])
-        self.assertIn("слияние cache:", business_calls[1][1]["text"])
-        self.assertIn("загрузка изображений текущего дня:", business_calls[1][1]["text"])
-        self.assertIn("daily summary:", business_calls[1][1]["text"])
-        self.assertIn("trend windows 7/14/30:", business_calls[1][1]["text"])
-        self.assertIn("построение commentary data:", business_calls[1][1]["text"])
-        self.assertIn("построение текста:", business_calls[1][1]["text"])
-        self.assertIn("построение step insight:", business_calls[1][1]["text"])
-        self.assertIn("Рендер изображения:", business_calls[1][1]["text"])
-        self.assertIn("Отправка фото в Telegram:", business_calls[1][1]["text"])
-        self.assertIn("Полный ответ до отправки текста:", business_calls[1][1]["text"])
+        self.assertNotIn("Отладка:", business_calls[1][1]["text"])
         self.assertEqual(business_calls[1][1]["parse_mode"], "Markdown")
 
     def test_digest_preview_update_for_regular_user_hides_step_block(self) -> None:
@@ -1413,8 +1400,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(business_calls[1][0], "sendMessage")
         self.assertNotIn("Шаги за день:", business_calls[1][1]["text"])
         self.assertNotIn("Комментарий по шагам:", business_calls[1][1]["text"])
-        self.assertIn("Отладка:", business_calls[1][1]["text"])
-        self.assertIn("Сценарий: text /digest_preview 2026-05-06", business_calls[1][1]["text"])
+        self.assertNotIn("Отладка:", business_calls[1][1]["text"])
         self.assertEqual(business_calls[1][1]["parse_mode"], "Markdown")
 
     def test_format_daily_digest_text_groups_meals_by_day_periods(self) -> None:
@@ -1511,18 +1497,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(business_calls[0][0], "sendPhoto")
         self.assertEqual(business_calls[1][0], "sendMessage")
         self.assertIn("Weekly digest preview", business_calls[1][1]["text"])
-        self.assertIn("Отладка:", business_calls[1][1]["text"])
-        self.assertIn("Сбор weekly digest:", business_calls[1][1]["text"])
-        self.assertIn("baseline за 30 дней:", business_calls[1][1]["text"])
-        self.assertIn("загрузка недели с изображениями:", business_calls[1][1]["text"])
-        self.assertIn("слияние cache:", business_calls[1][1]["text"])
-        self.assertIn("сбор блюд по 7 дням:", business_calls[1][1]["text"])
-        self.assertIn("выбор highlight по дням:", business_calls[1][1]["text"])
-        self.assertIn("построение commentary data:", business_calls[1][1]["text"])
-        self.assertIn("построение текста:", business_calls[1][1]["text"])
-        self.assertIn("Рендер изображения:", business_calls[1][1]["text"])
-        self.assertIn("Отправка фото в Telegram:", business_calls[1][1]["text"])
-        self.assertIn("Полный ответ до отправки текста:", business_calls[1][1]["text"])
+        self.assertNotIn("Отладка:", business_calls[1][1]["text"])
 
     def test_weekly_digest_preview_prev_update_sends_previous_week(self) -> None:
         calls = []
@@ -1597,10 +1572,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         )
 
         send_message = next(item for item in messages if item[0] == "sendMessage")
-        self.assertIn("Отладка:", send_message[1]["text"])
-        self.assertIn("Сценарий: text /help", send_message[1]["text"])
-        self.assertIn("маршрутизация команды:", send_message[1]["text"])
-        self.assertIn("сборка reply markup:", send_message[1]["text"])
+        self.assertNotIn("Отладка:", send_message[1]["text"])
         markup = json.loads(send_message[1]["reply_markup"])
         self.assertEqual(markup["keyboard"][0][0]["text"], "Добавить еду")
         self.assertEqual(markup["keyboard"][0][1]["text"], "Добавить воду")
@@ -1632,13 +1604,7 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         send_message = [params for method, params in calls if method == "sendMessage"][-1]
         self.assertIn("Сохранено:", send_message["text"])
-        self.assertIn("Отладка:", send_message["text"])
-        self.assertIn("Сценарий: photo", send_message["text"])
-        self.assertIn("получение file_path:", send_message["text"])
-        self.assertIn("загрузка фото из Telegram:", send_message["text"])
-        self.assertIn("распознавание фото:", send_message["text"])
-        self.assertIn("автосохранение записи:", send_message["text"])
-        self.assertIn("сборка карточки сохраненной записи:", send_message["text"])
+        self.assertNotIn("Отладка:", send_message["text"])
 
     def test_user_mode_command_updates_reply_keyboard_immediately(self) -> None:
         messages = []

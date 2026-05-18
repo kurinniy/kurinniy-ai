@@ -1592,7 +1592,6 @@ class TelegramHealthBot:
         steps = {
             1: (
                 "Фотографируйте еду — остальное я беру на себя",
-                "Фотографируйте еду — остальное я беру на себя.\n\n"
                 "Просто отправьте фото в чат — я распознаю и сохраню блюдо.",
             ),
             2: (
@@ -1992,7 +1991,7 @@ class TelegramHealthBot:
         return "\n".join(lines)
 
     def _response_debug_enabled(self) -> bool:
-        return self.settings.environment_name.strip().lower() == "staging"
+        return False
 
     def _begin_response_debug(self, label: str) -> Optional[ResponseDebugTrace]:
         previous = self._active_response_debug
@@ -2258,7 +2257,7 @@ class TelegramHealthBot:
             send_photo_seconds = time.perf_counter() - send_photo_started_at
         debug_info = None
         app_user = self.service.get_user_by_id(user_id)
-        if app_user is not None and app_user.has_admin_access:
+        if self._response_debug_enabled() and app_user is not None and app_user.has_admin_access:
             debug_info = {
                 "build_label": "daily digest",
                 "build_seconds": build_timings.get("build_digest_seconds", 0.0),
@@ -2308,7 +2307,7 @@ class TelegramHealthBot:
             send_photo_seconds = time.perf_counter() - send_photo_started_at
         debug_info = None
         app_user = self.service.get_user_by_id(user_id)
-        if app_user is not None and app_user.has_admin_access:
+        if self._response_debug_enabled() and app_user is not None and app_user.has_admin_access:
             debug_info = {
                 "build_label": "weekly digest",
                 "build_seconds": build_timings.get("build_digest_seconds", 0.0),
