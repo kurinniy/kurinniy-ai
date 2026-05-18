@@ -1753,9 +1753,13 @@ class TelegramHealthBotTest(unittest.TestCase):
         business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
         self.assertEqual(business_calls[0][0], "sendPhoto")
         self.assertIn("Фотографируйте еду", business_calls[0][1]["params"]["caption"])
+        self.assertIn("Просто отправьте фото в чат — я распознаю и сохраню блюдо.", business_calls[0][1]["params"]["caption"])
         self.assertIn("● ○ ○", business_calls[0][1]["params"]["caption"])
         self.assertIn("onboarding:next:2", business_calls[0][1]["params"]["reply_markup"])
         self.assertIn("onboarding:skip", business_calls[0][1]["params"]["reply_markup"])
+        markup = json.loads(business_calls[0][1]["params"]["reply_markup"])
+        self.assertEqual(markup["inline_keyboard"][0][0]["text"], "Пропустить")
+        self.assertEqual(markup["inline_keyboard"][0][1]["text"], "⬅️ Далее")
 
     def test_onboarding_next_sends_second_step_and_deletes_previous_message(self) -> None:
         calls = []
@@ -1786,6 +1790,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(calls[1][0], "sendPhoto")
         self.assertIn("Каждый день —", calls[1][1]["params"]["caption"])
         self.assertIn("○ ● ○", calls[1][1]["params"]["caption"])
+        markup = json.loads(calls[1][1]["params"]["reply_markup"])
+        self.assertEqual(markup["inline_keyboard"][0][0]["text"], "Пропустить")
+        self.assertEqual(markup["inline_keyboard"][0][1]["text"], "⬅️ Далее")
         self.assertEqual(calls[2][0], "deleteMessage")
 
     def test_onboarding_skip_marks_user_complete_and_opens_home(self) -> None:

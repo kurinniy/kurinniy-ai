@@ -1592,7 +1592,8 @@ class TelegramHealthBot:
         steps = {
             1: (
                 "Фотографируйте еду — остальное я беру на себя",
-                "Теперь просто отправьте фото еды в чат — я распознаю блюдо и сохраню запись.",
+                "Фотографируйте еду — остальное я беру на себя.\n\n"
+                "Просто отправьте фото в чат — я распознаю и сохраню блюдо.",
             ),
             2: (
                 "Каждый день — наглядная сводка",
@@ -1618,8 +1619,8 @@ class TelegramHealthBot:
         if step < cls.ONBOARDING_STEP_COUNT:
             keyboard.append(
                 [
-                    {"text": "Далее", "callback_data": "onboarding:next:%s" % (step + 1)},
                     {"text": "Пропустить", "callback_data": "onboarding:skip"},
+                    {"text": "⬅️ Далее", "callback_data": "onboarding:next:%s" % (step + 1)},
                 ]
             )
         else:
