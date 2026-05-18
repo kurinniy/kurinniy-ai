@@ -15,6 +15,9 @@
 5. Только после успешной проверки в staging выкладывать изменения в production.
 6. Изменения, связанные со схемой базы данных, сначала проверять в staging на реалистичных данных или сценариях.
 7. Новые команды, кнопки и пользовательские сценарии Telegram сначала проверять только в staging-боте.
+8. Для выкладки в staging использовать `bash scripts/deploy_stage.sh <feature-branch>` или `bash scripts/deploy_stage.sh`, если текущая ветка и есть фича.
+9. Выкатка в staging считается завершенной только если скрипт сделал `git push origin stage` и локальный `stage` совпадает с `origin/stage`.
+10. Не делать ручной `merge` в `stage` без последующего `push` и без `scripts/deploy_stage.sh`.
 
 ### Release
 
