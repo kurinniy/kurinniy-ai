@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 from ai_me.domain.decision_log import DecisionStatus
 from ai_me.domain.food import MealDraftStatus, MealMedia, MealPhotoDraft
-from ai_me.domain.health import DailyHealthSummary, MealEntry, StepProgressInsight
+from ai_me.domain.health import DailyHealthSummary, MealEntry
 from ai_me.domain.user import AppUser, UserGoal, UserSex
 from ai_me.services.health_service import HealthService
 from ai_me.version import APP_RELEASE_DATE, APP_VERSION
@@ -21,7 +21,6 @@ def build_dashboard_payload(
     summary = service.get_daily_summary(app_user.user_id, target_date)
     meals = service.list_meals(app_user.user_id, target_date)
     decisions = service.list_decisions(app_user.user_id, status=DecisionStatus.OPEN, target_date=target_date)
-    step_progress = service.build_step_progress_insight(app_user.user_id, target_date - timedelta(days=1))
 
     return {
         "user": {
@@ -38,7 +37,7 @@ def build_dashboard_payload(
             "app_version": APP_VERSION,
             "release_date": APP_RELEASE_DATE,
         },
-        "summary": _serialize_summary(summary, meals, step_progress),
+        "summary": _serialize_summary(summary, meals),
         "history": _serialize_meal_history(service=service, user_id=app_user.user_id),
         "recognitions": _serialize_recognition_history(service=service, user_id=app_user.user_id),
         "analytics": _serialize_analytics(service=service, user_id=app_user.user_id, target_date=target_date),
@@ -82,7 +81,6 @@ def build_recognition_detail_payload(
 def _serialize_summary(
     summary: DailyHealthSummary,
     meals: List[MealEntry],
-    step_progress: StepProgressInsight,
 ) -> Dict[str, object]:
     return {
         "target_date": summary.target_date.isoformat(),
@@ -92,15 +90,9 @@ def _serialize_summary(
         "fat_g": summary.fat_g,
         "carbs_g": summary.carbs_g,
         "water_ml": summary.water_ml,
-        "sleep_hours": summary.sleep_hours,
-        "steps": summary.steps,
-        "activity_minutes": summary.activity_minutes,
-        "latest_weight_kg": summary.latest_weight_kg,
         "goals": {
             "water_ml": summary.goals.water_ml,
             "protein_g": summary.goals.protein_g,
-            "sleep_hours": summary.goals.sleep_hours,
-            "steps": summary.goals.steps,
         },
         "meals": [
             {
@@ -114,14 +106,6 @@ def _serialize_summary(
             }
             for meal in meals
         ],
-        "step_progress": {
-            "reference_date": step_progress.reference_date.isoformat(),
-            "steps": step_progress.steps,
-            "target_steps": step_progress.target_steps,
-            "average_steps_30d": step_progress.average_steps_30d,
-            "days_with_data_30d": step_progress.days_with_data_30d,
-            "comment": step_progress.comment,
-        },
     }
 
 

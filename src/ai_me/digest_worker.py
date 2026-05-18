@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 class DigestSchedulerWorker:
-    GOOGLE_DRIVE_STALE_HOURS = 24
-
     def __init__(
         self,
         service: HealthService,
@@ -39,72 +37,7 @@ class DigestSchedulerWorker:
         current_utc = now_utc or datetime.now(timezone.utc)
         users = self.service.list_users(status=UserStatus.ACTIVE)
         for user in users:
-            self._process_google_drive_import(user, current_utc=current_utc)
             self._process_user(user, current_utc=current_utc)
-
-    def _process_google_drive_import(self, user: AppUser, current_utc: datetime) -> None:
-        if not user.has_admin_access:
-            return
-        settings = self.service.get_google_drive_settings(user.user_id)
-        if settings is None or not settings.enabled:
-            return
-        self._notify_if_google_drive_import_is_stale(user, settings, current_utc=current_utc)
-        result = self.service.import_google_drive_health_data(user.user_id, now=current_utc.replace(tzinfo=None))
-        if result.scanned_files == 0:
-            return
-        logger.info(
-            "Google Drive health import user_id=%s scanned=%s imported=%s updated=%s skipped=%s failed=%s activity_entries=%s",
-            user.user_id,
-            result.scanned_files,
-            result.imported_files,
-            result.updated_files,
-            result.skipped_files,
-            result.failed_files,
-            result.activity_entries_count,
-        )
-
-    def _notify_if_google_drive_import_is_stale(
-        self,
-        user: AppUser,
-        settings,
-        *,
-        current_utc: datetime,
-    ) -> None:
-        if settings.last_successful_import_at is None:
-            return
-        current_local = current_utc.replace(tzinfo=None)
-        stale_for = current_local - settings.last_successful_import_at
-        if stale_for < timedelta(hours=self.GOOGLE_DRIVE_STALE_HOURS):
-            return
-        if (
-            settings.last_stale_alert_sent_at is not None
-            and settings.last_stale_alert_sent_at >= settings.last_successful_import_at
-        ):
-            return
-
-        alert_text = (
-            "Алерт Google Drive импорта\n"
-            "Пользователь: %s (%s)\n"
-            "user_id=%s\n"
-            "folder_id=%s\n"
-            "Последний успешный импорт: %s\n"
-            "Отставание: %.1f ч"
-        ) % (
-            user.first_name or user.username or str(user.telegram_user_id),
-            user.telegram_user_id,
-            user.user_id,
-            settings.folder_id,
-            settings.last_successful_import_at.strftime("%Y-%m-%d %H:%M"),
-            round(stale_for.total_seconds() / 3600, 1),
-        )
-        admin_users = [
-            admin_user
-            for admin_user in self.service.list_users(status=UserStatus.ACTIVE)
-            if admin_user.is_admin
-        ]
-        for admin_user in admin_users:
-            self.bot.send_text_message(admin_user.chat_id, alert_text)
-        self.service.set_google_drive_alert_sent(user.user_id, sent_at=current_local)
 
     def _process_user(self, user: AppUser, current_utc: datetime) -> None:
         settings = self.service.get_digest_settings(user.user_id)
@@ -150,7 +83,6 @@ class DigestSchedulerWorker:
                 chat_id=user.chat_id,
                 user_id=user.user_id,
                 digest_date=digest_date,
-                include_step_insight=user.has_admin_access,
             ),
             completed_at=user_now,
         )

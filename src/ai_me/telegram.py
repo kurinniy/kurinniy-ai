@@ -64,7 +64,6 @@ class TelegramHealthBot:
         "Свой объем": "/water_custom",
         "Сводка за сегодня": "/summary",
         "Финансы за месяц": "/finance_month",
-        "Google Drive": "/drive_status",
         "Открытые решения": "/decisions",
         "Импорт Т-Банк": "/import_tbank",
         "Черновики еды": "/drafts",
@@ -1156,14 +1155,6 @@ class TelegramHealthBot:
                 return self._handle_import_tbank()
             if command == "/finance_month":
                 return self._handle_finance_month(app_user, args)
-            if command == "/connect_drive":
-                return self._handle_connect_drive(app_user, args)
-            if command == "/drive_status":
-                return self._handle_drive_status(app_user)
-            if command == "/drive_on":
-                return self._handle_drive_toggle(app_user, enabled=True)
-            if command == "/drive_off":
-                return self._handle_drive_toggle(app_user, enabled=False)
             if command == "/digest_status":
                 return self._handle_digest_status(app_user)
             if command == "/user_mode":
@@ -1274,79 +1265,6 @@ class TelegramHealthBot:
             lines.append("Расходов за этот месяц пока нет.")
         return "\n".join(lines)
 
-    def _handle_connect_drive(self, app_user: AppUser, args: List[str]) -> str:
-        self._ensure_admin(app_user)
-        if not self.service.google_drive_is_configured():
-            return "Интеграция с Google Drive пока не настроена на сервере."
-        if not args:
-            return (
-                "Подключение Google Drive\n"
-                "Пришлите ссылку на папку Google Drive или folder ID.\n"
-                "Папка должна быть открыта для service account, настроенного на сервере.\n\n"
-                "Пример:\n"
-                "/connect_drive https://drive.google.com/drive/folders/..."
-            )
-        try:
-            settings = self.service.connect_google_drive_folder(
-                app_user.user_id,
-                folder_input=args[0],
-                now=self._local_now(),
-            )
-        except RuntimeError as exc:
-            logger.warning("Google Drive connect failed user_id=%s error=%s", app_user.user_id, exc)
-            return str(exc)
-        return (
-            "Папка Google Drive подключена.\n"
-            "folder_id=%s\n"
-            "Импорт: %s"
-            % (
-                settings.folder_id,
-                "включен" if settings.enabled else "выключен",
-            )
-        )
-
-    def _handle_drive_status(self, app_user: AppUser) -> str:
-        self._ensure_admin(app_user)
-        settings = self.service.get_google_drive_settings(app_user.user_id)
-        if settings is None:
-            return (
-                "Google Drive не подключен.\n"
-                "Подключите папку командой:\n"
-                "/connect_drive <folder_url>"
-            )
-        import_files = self.service.list_health_import_files(app_user.user_id, provider=None)
-        last_import = import_files[-1] if import_files else None
-        lines = [
-            "Статус Google Drive",
-            "Импорт: %s" % ("включен" if settings.enabled else "выключен"),
-            "folder_id=%s" % settings.folder_id,
-        ]
-        if settings.last_successful_import_at is not None:
-            lines.append("Последняя успешная проверка: %s" % settings.last_successful_import_at.strftime("%Y-%m-%d %H:%M"))
-        if last_import is not None:
-            lines.append("Последний импорт: %s" % last_import.imported_at.strftime("%Y-%m-%d %H:%M"))
-            lines.append("Последний файл: %s" % last_import.file_name)
-            lines.append("Статус файла: %s" % last_import.status.value)
-        else:
-            lines.append("Импортов пока не было.")
-        return "\n".join(lines)
-
-    def _handle_drive_toggle(self, app_user: AppUser, enabled: bool) -> str:
-        self._ensure_admin(app_user)
-        settings = self.service.set_google_drive_enabled(
-            app_user.user_id,
-            enabled=enabled,
-            now=self._local_now(),
-        )
-        return (
-            "Импорт Google Drive %s.\n"
-            "folder_id=%s"
-            % (
-                "включен" if settings.enabled else "выключен",
-                settings.folder_id,
-            )
-        )
-
     def _handle_digest_status(self, app_user: AppUser) -> str:
         settings = self.service.get_digest_settings(app_user.user_id)
         return (
@@ -1392,8 +1310,7 @@ class TelegramHealthBot:
         digest = self.service.build_daily_food_digest(app_user.user_id, target_date)
         if digest is None:
             return "Для %s нет подтвержденных фото-блюд для daily digest." % target_date.isoformat()
-        step_progress = self.service.build_step_progress_insight(app_user.user_id, target_date) if app_user.has_admin_access else None
-        return self._format_daily_digest_text(digest, preview=True, step_progress=step_progress)
+        return self._format_daily_digest_text(digest, preview=True)
 
     def _handle_weekly_digest_preview(self, app_user: AppUser, args: List[str]) -> str:
         week_start = self._resolve_weekly_digest_preview_week_start(args)
@@ -1451,7 +1368,6 @@ class TelegramHealthBot:
             target_date = self._local_today()
         self.service.evaluate_day(app_user.user_id, target_date, now=self._local_now())
         summary = self.service.get_daily_summary(app_user.user_id, target_date)
-        yesterday_steps = self.service.build_step_progress_insight(app_user.user_id, target_date - timedelta(days=1))
         response = (
             "Сводка за %s\n"
             "Приемы пищи: %s\n"
@@ -1459,9 +1375,7 @@ class TelegramHealthBot:
             "Белок: %.1f / %s г\n"
             "Жиры: %.1f г\n"
             "Углеводы: %.1f г\n"
-            "Вода: %s / %s мл\n"
-            "Сон: %.2f / %.1f ч\n"
-            "Шаги: %s / %s"
+            "Вода: %s / %s мл"
             % (
                 target_date.isoformat(),
                 summary.meals_count,
@@ -1472,25 +1386,8 @@ class TelegramHealthBot:
                 summary.carbs_g,
                 summary.water_ml,
                 summary.goals.water_ml,
-                summary.sleep_hours,
-                summary.goals.sleep_hours,
-                summary.steps,
-                summary.goals.steps,
             )
         )
-        response += (
-            "\nШаги за вчера (%s): %s / %s"
-            % (
-                yesterday_steps.reference_date.isoformat(),
-                yesterday_steps.steps,
-                yesterday_steps.target_steps,
-            )
-        )
-        if yesterday_steps.average_steps_30d is not None:
-            response += "\n30-дневная средняя: %.1f" % yesterday_steps.average_steps_30d
-        else:
-            response += "\n30-дневная средняя: нет данных"
-        response += "\nКомментарий по шагам: %s" % yesterday_steps.comment
         return response
 
     def _handle_decisions(self, app_user: AppUser, args: List[str]) -> str:
@@ -1560,10 +1457,6 @@ class TelegramHealthBot:
                 [
                     "/import_tbank",
                     "/finance_month [YYYY-MM]",
-                    "/connect_drive <folder_url>",
-                    "/drive_status",
-                    "/drive_on",
-                    "/drive_off",
                 ]
             )
         return "\n".join(commands)
@@ -2203,7 +2096,6 @@ class TelegramHealthBot:
             user_id=app_user.user_id,
             digest_date=target_date,
             preview=True,
-            include_step_insight=app_user.has_admin_access,
         ) is None:
             self._send_message(chat_id, "Для %s нет подтвержденных фото-блюд для daily digest." % target_date.isoformat())
 
@@ -2222,23 +2114,12 @@ class TelegramHealthBot:
         user_id: int,
         digest_date: date,
         preview: bool = False,
-        include_step_insight: bool = False,
     ) -> Optional[Dict[str, object]]:
         started_at = time.perf_counter()
         build_timings: Dict[str, float] = {}
         digest = self.service.build_daily_food_digest(user_id, digest_date, debug_timings=build_timings)
         if digest is None:
             return None
-        step_progress = None
-        step_insight_seconds = 0.0
-        if include_step_insight:
-            step_insight_started_at = time.perf_counter()
-            step_progress = self.service.build_step_progress_insight(
-                user_id,
-                digest_date,
-                target_steps=digest.steps_goal,
-            )
-            step_insight_seconds = time.perf_counter() - step_insight_started_at
         photo_result = None
         render_started_at = time.perf_counter()
         mosaic_bytes = self.digest_renderer.render_daily_mosaic(digest)
@@ -2258,7 +2139,7 @@ class TelegramHealthBot:
             debug_info = {
                 "build_label": "daily digest",
                 "build_seconds": build_timings.get("build_digest_seconds", 0.0),
-                "build_steps": self._build_daily_digest_debug_steps(build_timings, step_insight_seconds),
+                "build_steps": self._build_daily_digest_debug_steps(build_timings, 0.0),
                 "image_generation_seconds": image_generation_seconds,
                 "send_photo_seconds": send_photo_seconds,
                 "total_response_seconds": time.perf_counter() - started_at,
@@ -2268,7 +2149,6 @@ class TelegramHealthBot:
             self._format_daily_digest_text(
                 digest,
                 preview=preview,
-                step_progress=step_progress,
                 debug_info=debug_info,
             ),
             parse_mode="Markdown",
@@ -2332,7 +2212,6 @@ class TelegramHealthBot:
     def _format_daily_digest_text(
         digest: DailyFoodDigest,
         preview: bool = False,
-        step_progress=None,
         debug_info: Optional[Dict[str, float]] = None,
     ) -> str:
         grouped_meals = TelegramHealthBot._group_daily_digest_meals(digest.meals)
@@ -2369,19 +2248,6 @@ class TelegramHealthBot:
                 lines.append("- %s | %s | %s ккал" % (meal.occurred_at.strftime("%H:%M"), meal.title, meal.calories))
         lines.append("")
         lines.append(digest.commentary)
-        if step_progress is not None:
-            lines.extend(
-                [
-                    "",
-                    "Шаги за день: %s / %s" % (step_progress.steps, step_progress.target_steps),
-                    (
-                        "30-дневная средняя: %.1f" % step_progress.average_steps_30d
-                        if step_progress.average_steps_30d is not None
-                        else "30-дневная средняя: нет данных"
-                    ),
-                    "Комментарий по шагам: %s" % step_progress.comment,
-                ]
-            )
         if debug_info is not None:
             TelegramHealthBot._append_digest_debug_lines(lines, debug_info)
         return "\n".join(lines)
@@ -2693,10 +2559,6 @@ class TelegramHealthBot:
             {"command": "menu", "description": "Показать кнопки и список команд"},
             {"command": "summary", "description": "Сводка за сегодня"},
             {"command": "finance_month", "description": "Финансовая сводка за месяц"},
-            {"command": "connect_drive", "description": "Подключить папку Google Drive"},
-            {"command": "drive_status", "description": "Статус импорта Google Drive"},
-            {"command": "drive_on", "description": "Включить импорт Google Drive"},
-            {"command": "drive_off", "description": "Выключить импорт Google Drive"},
             {"command": "decisions", "description": "Открытые решения"},
             {"command": "digest_status", "description": "Статус ежедневных и недельных digest"},
             {"command": "digest_on", "description": "Включить ежедневные и недельные digest"},
@@ -3007,8 +2869,8 @@ class TelegramHealthBot:
                 [{"text": "История"}, {"text": "Прогресс"}],
                 [{"text": "Профиль"}, {"text": "Как это работает"}],
                 [{"text": "Помощь"}],
-                [{"text": "Финансы за месяц"}, {"text": "Google Drive"}],
-                [{"text": "Импорт Т-Банк"}, {"text": "Открытые решения"}],
+                [{"text": "Финансы за месяц"}, {"text": "Импорт Т-Банк"}],
+                [{"text": "Открытые решения"}],
             ]
         return json.dumps(
             {

@@ -61,27 +61,6 @@ class HealthDecisionEngine:
                 )
             )
 
-        if summary.sleep_hours and summary.sleep_hours < max(6.0, summary.goals.sleep_hours - 1):
-            if summary.activity_minutes > 0 or now.hour <= 12:
-                decisions.append(
-                    self._build_decision(
-                        summary=summary,
-                        now=now,
-                        agent=agent,
-                        kind=DecisionKind.RECOMMENDATION,
-                        decision_key="sleep_recovery",
-                        title="Recovery day adjustment is recommended",
-                        rationale=(
-                            "Sleep was meaningfully below target. Training intensity and planning load "
-                            "should be reduced today to avoid compounding fatigue."
-                        ),
-                        payload={
-                            "sleep_hours": str(summary.sleep_hours),
-                            "target_sleep_hours": str(summary.goals.sleep_hours),
-                        },
-                    )
-                )
-
         return decisions
 
     def _build_decision(

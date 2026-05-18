@@ -21,15 +21,9 @@ export type DashboardPayload = {
     fat_g: number;
     carbs_g: number;
     water_ml: number;
-    sleep_hours: number;
-    steps: number;
-    activity_minutes: number;
-    latest_weight_kg: number | null;
     goals: {
       water_ml: number;
       protein_g: number;
-      sleep_hours: number;
-      steps: number;
     };
     meals: Array<{
       entry_id: string;
@@ -40,14 +34,6 @@ export type DashboardPayload = {
       fat_g: number;
       carbs_g: number;
     }>;
-    step_progress: {
-      reference_date: string;
-      steps: number;
-      target_steps: number;
-      average_steps_30d: number | null;
-      days_with_data_30d: number;
-      comment: string;
-    };
   };
   history: {
     days: Array<{

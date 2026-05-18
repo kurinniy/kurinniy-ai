@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from ai_me.domain.decision_log import DecisionKind, DecisionLogEntry, DecisionStatus
 from ai_me.domain.food import MealDraftStatus, MealPhotoDraft
-from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, StepProgressInsight
+from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry
 from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
 from ai_me.web.dashboard import (
     build_dashboard_payload,
@@ -25,10 +25,10 @@ class DashboardServiceStub:
             fat_g=18.0,
             carbs_g=71.0,
             water_ml=1200,
-            sleep_hours=7.5,
-            steps=8300,
-            activity_minutes=45,
-            latest_weight_kg=81.2,
+            sleep_hours=0.0,
+            steps=0,
+            activity_minutes=0,
+            latest_weight_kg=None,
             goals=DailyHealthGoals(target_date=target_date),
         )
 
@@ -59,16 +59,6 @@ class DashboardServiceStub:
                 status=DecisionStatus.OPEN,
             )
         ]
-
-    def build_step_progress_insight(self, user_id: int, reference_date: date):
-        return StepProgressInsight(
-            reference_date=reference_date,
-            steps=6200,
-            target_steps=10000,
-            average_steps_30d=5400.0,
-            days_with_data_30d=30,
-            comment="Вы выше средней за 30 дней, но ниже цели.",
-        )
 
     def list_recent_meals(self, user_id: int, limit: int = 40, offset: int = 0, lookback_days: int = 365):
         return [

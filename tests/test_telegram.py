@@ -8,7 +8,7 @@ from ai_me.config import TelegramSettings
 from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDigestHighlight, WeeklyFoodDigest
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft, PhotoLogKind, PhotoLogResult, PhotoProcessingResult, WATER_PHOTO_SOURCE
-from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, PostSaveCoachingSnapshot, StepProgressInsight, WaterProgressSnapshot
+from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, PostSaveCoachingSnapshot, WaterProgressSnapshot
 from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
@@ -597,16 +597,6 @@ class DummyHealthService:
             water_ml=max(0, int(round(meal.water_ml * factor))),
         )
 
-    def build_step_progress_insight(self, user_id, reference_date, target_steps=None):
-        return StepProgressInsight(
-            reference_date=reference_date,
-            steps=6200,
-            target_steps=target_steps or 10000,
-            average_steps_30d=5400.0,
-            days_with_data_30d=30,
-            comment="Это на 15% выше вашей средней за последние 30 дней. До цели не хватило 3800 шагов.",
-        )
-
     def list_decisions(self, user_id, status=None, target_date=None):
         return []
 
@@ -815,8 +805,10 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn(format_version_line(), response)
         self.assertIn(format_release_date_line(), response)
         self.assertIn("Mini App: откройте через кнопку меню", response)
-        self.assertIn("/connect_drive <folder_url>", response)
-        self.assertIn("/drive_status", response)
+        self.assertNotIn("/connect_drive", response)
+        self.assertNotIn("/drive_status", response)
+        self.assertNotIn("/drive_on", response)
+        self.assertNotIn("/drive_off", response)
         self.assertNotIn("/water", response)
         self.assertNotIn("/meal <calories>", response)
         self.assertNotIn("/weight", response)
@@ -1248,41 +1240,16 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Ежедневная сводка: включена в 08:00", response)
         self.assertIn("Недельная сводка: включена по понедельникам в 08:00", response)
 
-    def test_connect_drive_command_saves_folder_for_user(self) -> None:
-        response = self.bot._route_command(
+    def test_drive_commands_are_unknown(self) -> None:
+        for command in (
             "/connect_drive https://drive.google.com/drive/folders/folder-123",
-            app_user=self.service.users_by_telegram_id[42],
-        )
-        self.assertIn("Папка Google Drive подключена", response)
-        self.assertEqual(
-            self.service.drive_settings_by_user_id[1].folder_url,
-            "https://drive.google.com/drive/folders/folder-123",
-        )
-
-    def test_connect_drive_command_returns_access_error_message(self) -> None:
-        response = self.bot._route_command(
-            "/connect_drive https://drive.google.com/drive/folders/denied-folder",
-            app_user=self.service.users_by_telegram_id[42],
-        )
-        self.assertIn("Нет доступа к папке Google Drive", response)
-
-    def test_drive_status_reports_missing_folder_before_connect(self) -> None:
-        response = self.bot._route_command("/drive_status", app_user=self.service.users_by_telegram_id[42])
-        self.assertIn("Google Drive не подключен", response)
-        self.assertIn("/connect_drive <folder_url>", response)
-
-    def test_drive_off_command_disables_import(self) -> None:
-        self.service.drive_settings_by_user_id[1] = UserGoogleDriveSettings(
-            user_id=1,
-            folder_id="folder-123",
-            folder_url="https://drive.google.com/drive/folders/folder-123",
-            enabled=True,
-            created_at=datetime(2026, 5, 7, 8, 0),
-            updated_at=datetime(2026, 5, 7, 8, 0),
-        )
-        response = self.bot._route_command("/drive_off", app_user=self.service.users_by_telegram_id[42])
-        self.assertIn("Импорт Google Drive выключен", response)
-        self.assertFalse(self.service.drive_settings_by_user_id[1].enabled)
+            "/drive_status",
+            "/drive_on",
+            "/drive_off",
+        ):
+            with self.subTest(command=command):
+                response = self.bot._route_command(command, app_user=self.service.users_by_telegram_id[42])
+                self.assertIn("Неизвестная команда", response)
 
     def test_digest_off_command_disables_both_digests(self) -> None:
         response = self.bot._route_command("/digest_off", app_user=self.service.users_by_telegram_id[42])
@@ -1296,8 +1263,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("Вода: 1.2 л / 2 л", response)
         self.assertIn("Список блюд:", response)
         self.assertIn("Курица с рисом", response)
-        self.assertIn("Шаги за день: 6200 / 10000", response)
-        self.assertIn("Комментарий по шагам:", response)
+        self.assertNotIn("Шаги за день:", response)
+        self.assertNotIn("Комментарий по шагам:", response)
 
     def test_digest_preview_for_regular_user_hides_step_block(self) -> None:
         response = self.bot._route_command("/digest_preview 2026-05-06", app_user=self.service.users_by_telegram_id[77])
@@ -1365,7 +1332,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(business_calls[1][0], "sendMessage")
         self.assertIn("Daily digest preview за 2026-05-06", business_calls[1][1]["text"])
         self.assertIn("Вода: 1.2 л / 2 л", business_calls[1][1]["text"])
-        self.assertIn("Шаги за день: 6200 / 10000", business_calls[1][1]["text"])
+        self.assertNotIn("Шаги за день:", business_calls[1][1]["text"])
+        self.assertNotIn("Комментарий по шагам:", business_calls[1][1]["text"])
         self.assertNotIn("Отладка:", business_calls[1][1]["text"])
         self.assertEqual(business_calls[1][1]["parse_mode"], "Markdown")
 
@@ -1577,7 +1545,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(markup["keyboard"][0][1]["text"], "Добавить воду")
         self.assertEqual(markup["keyboard"][2][1]["text"], "Как это работает")
         self.assertEqual(markup["keyboard"][4][0]["text"], "Финансы за месяц")
-        self.assertEqual(markup["keyboard"][4][1]["text"], "Google Drive")
+        self.assertEqual(markup["keyboard"][4][1]["text"], "Импорт Т-Банк")
+        self.assertEqual(markup["keyboard"][5][0]["text"], "Открытые решения")
 
     def test_stage_photo_response_includes_generation_breakdown(self) -> None:
         calls = []
@@ -1628,7 +1597,6 @@ class TelegramHealthBotTest(unittest.TestCase):
         markup = json.loads(send_message[1]["reply_markup"])
         flat = [button["text"] for row in markup["keyboard"] for button in row]
         self.assertNotIn("Финансы за месяц", flat)
-        self.assertNotIn("Google Drive", flat)
         self.assertIn("Добавить еду", flat)
         self.assertIn("Прогресс", flat)
         self.assertIn("Как это работает", flat)
@@ -1656,7 +1624,6 @@ class TelegramHealthBotTest(unittest.TestCase):
         markup = json.loads(send_message[1]["reply_markup"])
         flat = [button["text"] for row in markup["keyboard"] for button in row]
         self.assertNotIn("Финансы за месяц", flat)
-        self.assertNotIn("Google Drive", flat)
         self.assertNotIn("Импорт Т-Банк", flat)
         self.assertIn("Добавить еду", flat)
         self.assertIn("Профиль", flat)
@@ -1686,7 +1653,6 @@ class TelegramHealthBotTest(unittest.TestCase):
         markup = json.loads(send_message[1]["reply_markup"])
         flat = [button["text"] for row in markup["keyboard"] for button in row]
         self.assertNotIn("Финансы за месяц", flat)
-        self.assertNotIn("Google Drive", flat)
         self.assertNotIn("Импорт Т-Банк", flat)
         self.assertIn("Добавить еду", flat)
         self.assertIn("Как это работает", flat)
@@ -1895,8 +1861,10 @@ class TelegramHealthBotTest(unittest.TestCase):
         command_names = [item["command"] for item in commands]
         self.assertEqual(command_names[0], "start")
         self.assertEqual(command_names[1], "menu")
-        self.assertIn("connect_drive", command_names)
-        self.assertIn("drive_status", command_names)
+        self.assertNotIn("connect_drive", command_names)
+        self.assertNotIn("drive_status", command_names)
+        self.assertNotIn("drive_on", command_names)
+        self.assertNotIn("drive_off", command_names)
         self.assertIn("decisions", command_names)
         self.assertIn("digest_status", command_names)
         self.assertIn("digest_on", command_names)
@@ -2963,9 +2931,9 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("Б 38.0 / Ж 18.0 / У 71.0", response)
         self.assertNotIn("Активность:", response)
         self.assertNotIn("Вес:", response)
-        self.assertIn("Шаги за вчера (2026-05-05): 6200 / 10000", response)
-        self.assertIn("30-дневная средняя: 5400.0", response)
-        self.assertIn("Комментарий по шагам:", response)
+        self.assertNotIn("Шаги за вчера", response)
+        self.assertNotIn("30-дневная средняя", response)
+        self.assertNotIn("Комментарий по шагам:", response)
 
     def test_removed_invite_command_is_unknown(self) -> None:
         response = self.bot._route_command("/create_invite 10 2", app_user=self.service.users_by_telegram_id[42])
@@ -2980,12 +2948,12 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/finance_month", app_user=self.service.users_by_telegram_id[42])
         self.assertIn("только администратору", response)
 
-    def test_connect_drive_command_is_rejected_for_regular_user(self) -> None:
+    def test_removed_connect_drive_command_is_unknown_for_regular_user(self) -> None:
         response = self.bot._route_command(
             "/connect_drive https://drive.google.com/drive/folders/folder-123",
             app_user=self.service.users_by_telegram_id[77],
         )
-        self.assertIn("только администратору", response)
+        self.assertIn("Неизвестная команда", response)
 
     def test_water_slash_command_is_supported_as_fallback(self) -> None:
         response = self.bot._route_command("/water 500", app_user=self.service.users_by_telegram_id[42])

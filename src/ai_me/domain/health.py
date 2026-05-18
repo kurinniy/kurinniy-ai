@@ -93,12 +93,3 @@ class WaterProgressSnapshot:
     water_ml: int
     goal_water_ml: int
 
-
-@dataclass(frozen=True)
-class StepProgressInsight:
-    reference_date: date
-    steps: int
-    target_steps: int
-    average_steps_30d: Optional[float]
-    days_with_data_30d: int
-    comment: str

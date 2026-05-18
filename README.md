@@ -2,12 +2,11 @@
 
 Current stage of a personal assistant system focused on three concrete capabilities:
 
-- `Health`: stores daily health signals such as meals, water, sleep, weight, and activity.
+- `Health`: stores daily health signals such as meals, water, and weight.
 - `DecisionLog`: stores assistant recommendations, alerts, and confirmation requests derived from those signals.
 - `Telegram Interface`: accepts health events over Telegram using long polling.
 - `Food Pipeline`: accepts food photos, creates a meal draft, and logs it after confirmation.
 - `Multi-user Access`: supports open onboarding for multiple Telegram users in private chats.
-- `Google Drive Health Import`: imports daily JSON exports with activity metrics from a user-specific Google Drive folder.
 - `Telegram Mini App`: provides a web dashboard inside Telegram while the bot remains the channel for onboarding, digests, and fallback actions.
 
 The current implementation is intentionally small, but now targets a deployable setup for Railway:
@@ -64,9 +63,6 @@ Optional:
 - `WEBAPP_INIT_DATA_TTL_SECONDS`: defaults to `3600`.
 - `OPENAI_API_KEY`: required for food photo analysis.
 - `OPENAI_MODEL`: required for food photo analysis.
-- `GOOGLE_SERVICE_ACCOUNT_JSON`: service account JSON for Google Drive access.
-- `GOOGLE_SERVICE_ACCOUNT_FILE`: optional path to a service account JSON file.
-- `GOOGLE_DRIVE_LOOKBACK_DAYS`: how many recent days of Google Drive health files to scan; defaults to `2`.
 - `BUCKET`: Railway Bucket name for meal photo storage.
 - `ENDPOINT`: S3-compatible Railway Bucket endpoint.
 - `ACCESS_KEY_ID`: access key for the bucket.
@@ -91,11 +87,9 @@ APP_RUNTIME_MODE=digest_worker PYTHONPATH=src python3 -m ai_me.main
 The digest worker:
 
 - checks active users every `DIGEST_SCHEDULER_POLL_INTERVAL_SECONDS`;
-- checks connected Google Drive folders for recent health export files from the last `GOOGLE_DRIVE_LOOKBACK_DAYS`;
 - sends `daily digest` after `08:00` in the user's timezone for yesterday;
 - sends `weekly digest` on Monday after `08:00` for the previous Monday-Sunday window;
-- uses `digest_runs` to avoid duplicate sends once a digest is marked `sent` or `skipped`;
-- stores the timestamp of the last successful Google Drive import run and alerts admins if the gap exceeds 24 hours.
+- uses `digest_runs` to avoid duplicate sends once a digest is marked `sent` or `skipped`.
 
 ## Run The Mini App Backend
 
@@ -144,7 +138,7 @@ Meal photos are stored in the configured Railway Bucket. MySQL keeps only media 
 
 Current Mini App scope:
 
-- read-only dashboard for summary, yesterday steps, and open decisions;
+- read-only dashboard for summary and open decisions;
 - Telegram WebApp authentication with signed `initData` validation on the backend;
 - menu button sync from the bot when `MINI_APP_URL` is configured.
 
@@ -154,39 +148,6 @@ The bot remains responsible for:
 - daily and weekly digest delivery;
 - food photo intake and confirmation;
 - fallback command handling.
-
-## Google Drive Health Import
-
-The app can import daily activity exports from Google Drive.
-
-Current MVP support:
-
-- one Google Drive folder per user;
-- one JSON file per day;
-- imports activity metrics from `HealthAutoExport-YYYY-MM-DD.json`;
-- currently maps:
-  - `step_count`
-  - `walking_running_distance`
-  - `active_energy`
-  - `flights_climbed`
-- sleep metrics are not imported yet.
-
-Telegram flow:
-
-1. Share the Google Drive folder with the configured service account.
-2. In Telegram, connect the folder with:
-   - `/connect_drive <folder_url>`
-3. Check status with:
-   - `/drive_status`
-4. Enable or disable import with:
-   - `/drive_on`
-   - `/drive_off`
-
-Scheduler behavior:
-
-- the existing `digest_worker` also scans Google Drive folders;
-- new JSON files are imported automatically on the next worker pass;
-- imported files are tracked in `health_import_files` to avoid duplicates.
 
 ## Access Model
 
@@ -223,8 +184,7 @@ Fallback commands:
 - Expose Telegram and internal account data through `/whoami`.
 - Generate idempotent decisions for common cases:
   - low water intake late in the day;
-  - low protein intake after lunch;
-  - poor sleep before planned activity.
+  - low protein intake after lunch.
 - Track decision lifecycle with statuses such as `open`, `accepted`, and `executed`.
 
 ## Railway Notes

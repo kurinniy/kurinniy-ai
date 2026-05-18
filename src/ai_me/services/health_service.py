@@ -55,7 +55,6 @@ from ai_me.domain.health import (
     MealEntry,
     PostSaveCoachingSnapshot,
     SleepEntry,
-    StepProgressInsight,
     WaterProgressSnapshot,
     WaterEntry,
     WeightEntry,
@@ -959,42 +958,6 @@ class HealthService:
     def get_post_save_coaching_snapshot(self, user_id: int, target_date: date) -> PostSaveCoachingSnapshot:
         return self.store.build_post_save_coaching_snapshot(user_id, target_date)
 
-    def build_step_progress_insight(
-        self,
-        user_id: int,
-        reference_date: date,
-        *,
-        target_steps: Optional[int] = None,
-    ) -> StepProgressInsight:
-        window_start = reference_date - timedelta(days=29)
-        daily_steps = self.store.list_daily_step_totals(user_id, date_from=window_start, date_to=reference_date)
-        steps_by_day: Dict[date, int] = dict(daily_steps)
-        current_steps = steps_by_day.get(reference_date, 0)
-
-        days_with_data = len(steps_by_day)
-        average_steps_30d: Optional[float] = None
-        if days_with_data > 0:
-            average_steps_30d = round(sum(steps_by_day.values()) / days_with_data, 1)
-
-        resolved_target_steps = target_steps
-        if resolved_target_steps is None:
-            resolved_target_steps = self.store.get_health_goals(user_id, reference_date).steps
-
-        comment = self._build_step_progress_comment(
-            steps=current_steps,
-            target_steps=resolved_target_steps,
-            average_steps_30d=average_steps_30d,
-            days_with_data_30d=days_with_data,
-        )
-        return StepProgressInsight(
-            reference_date=reference_date,
-            steps=current_steps,
-            target_steps=resolved_target_steps,
-            average_steps_30d=average_steps_30d,
-            days_with_data_30d=days_with_data,
-            comment=comment,
-        )
-
     def _hydrate_primary_media_bytes(
         self,
         user_id: int,
@@ -1220,33 +1183,6 @@ class HealthService:
             payload = {}
         payload["summary"] = summary
         return json.dumps(payload, sort_keys=True)
-
-    @staticmethod
-    def _build_step_progress_comment(
-        *,
-        steps: int,
-        target_steps: int,
-        average_steps_30d: Optional[float],
-        days_with_data_30d: int,
-    ) -> str:
-        target_delta = steps - target_steps
-        if target_delta >= 0:
-            target_text = "Цель по шагам выполнена с запасом %s." % target_delta
-        else:
-            target_text = "До цели не хватило %s шагов." % abs(target_delta)
-
-        if average_steps_30d is None or days_with_data_30d < 3 or average_steps_30d <= 0:
-            return "%s Пока недостаточно данных для сравнения с 30-дневной средней." % target_text
-
-        average_delta = steps - average_steps_30d
-        average_delta_pct = round(abs(average_delta) / average_steps_30d * 100)
-        if average_delta > 0:
-            average_text = "Это на %s%% выше вашей средней за последние 30 дней." % average_delta_pct
-        elif average_delta < 0:
-            average_text = "Это на %s%% ниже вашей средней за последние 30 дней." % average_delta_pct
-        else:
-            average_text = "Это ровно на уровне вашей средней за последние 30 дней."
-        return "%s %s" % (average_text, target_text)
 
     def _require_meal_draft(self, user_id: int, draft_id: str, expected_status: MealDraftStatus) -> MealPhotoDraft:
         draft = self.store.get_meal_draft(user_id, draft_id)
