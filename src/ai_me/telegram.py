@@ -1807,24 +1807,25 @@ class TelegramHealthBot:
         if len(args) != 1:
             raise ValueError("укажите объем воды в мл, например: /water 500")
         amount_ml = self._parse_water_amount(args[0])
-        self.service.log_water(
+        target_date = self._local_today()
+        progress = self.service.log_water_and_get_progress(
             app_user.user_id,
             WaterEntry(
                 entry_id=str(uuid4()),
                 occurred_at=self._local_now(),
                 amount_ml=amount_ml,
             ),
+            target_date,
         )
-        summary = self.service.get_daily_summary(app_user.user_id, self._local_today())
-        remaining_ml = max(0, summary.goals.water_ml - summary.water_ml)
+        remaining_ml = max(0, progress.goal_water_ml - progress.water_ml)
         return (
             "+%s мл воды добавлено.\n"
             "Сегодня: %s / %s л\n"
             "Осталось до цели: %s мл."
         ) % (
             amount_ml,
-            self._format_liters_fixed(summary.water_ml),
-            self._format_liters_fixed(summary.goals.water_ml),
+            self._format_liters_fixed(progress.water_ml),
+            self._format_liters_fixed(progress.goal_water_ml),
             remaining_ml,
         )
 

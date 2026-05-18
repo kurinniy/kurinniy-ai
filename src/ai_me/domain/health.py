@@ -89,6 +89,12 @@ class PostSaveCoachingSnapshot:
 
 
 @dataclass(frozen=True)
+class WaterProgressSnapshot:
+    water_ml: int
+    goal_water_ml: int
+
+
+@dataclass(frozen=True)
 class StepProgressInsight:
     reference_date: date
     steps: int

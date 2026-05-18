@@ -13,6 +13,7 @@ from ai_me.domain.health import (
     MealEntry,
     PostSaveCoachingSnapshot,
     SleepEntry,
+    WaterProgressSnapshot,
     WaterEntry,
     WeightEntry,
 )
@@ -491,6 +492,18 @@ class InMemoryStore:
 
     def add_water(self, user_id: int, entry: WaterEntry) -> None:
         self._water_entries.setdefault(user_id, []).append(entry)
+
+    def add_water_and_get_progress(self, user_id: int, entry: WaterEntry, target_date: date) -> WaterProgressSnapshot:
+        self.add_water(user_id, entry)
+        water_entries = [
+            item for item in self._water_entries.get(user_id, []) if item.occurred_at.date() == target_date
+        ]
+        meals = [item for item in self._meals.get(user_id, []) if item.occurred_at.date() == target_date]
+        goals = self.get_health_goals(user_id, target_date)
+        return WaterProgressSnapshot(
+            water_ml=sum(item.amount_ml for item in water_entries) + sum(item.water_ml for item in meals),
+            goal_water_ml=goals.water_ml,
+        )
 
     def add_sleep(self, user_id: int, entry: SleepEntry) -> None:
         self._sleep_entries.setdefault(user_id, []).append(entry)

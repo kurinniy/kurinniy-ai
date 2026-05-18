@@ -12,6 +12,7 @@ from ai_me.domain.health import (
     MealEntry,
     PostSaveCoachingSnapshot,
     SleepEntry,
+    WaterProgressSnapshot,
     WaterEntry,
     WeightEntry,
 )
@@ -188,6 +189,9 @@ class HealthStore(Protocol):
         ...
 
     def add_water(self, user_id: int, entry: WaterEntry) -> None:
+        ...
+
+    def add_water_and_get_progress(self, user_id: int, entry: WaterEntry, target_date: date) -> WaterProgressSnapshot:
         ...
 
     def add_sleep(self, user_id: int, entry: SleepEntry) -> None:

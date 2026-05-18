@@ -14,6 +14,7 @@ from ai_me.domain.health import (
     MealEntry,
     PostSaveCoachingSnapshot,
     SleepEntry,
+    WaterProgressSnapshot,
     WaterEntry,
     WeightEntry,
 )
@@ -1087,6 +1088,50 @@ class MySQLStore:
             VALUES (%s, %s, %s, %s)
             """,
             (entry.entry_id, user_id, entry.occurred_at, entry.amount_ml),
+        )
+
+    def add_water_and_get_progress(self, user_id: int, entry: WaterEntry, target_date: date) -> WaterProgressSnapshot:
+        day_start = datetime.combine(target_date, time.min)
+        day_end = datetime.combine(target_date, time.max)
+        connection = self._connect()
+        try:
+            cursor = connection.cursor(dictionary=True)
+            self._execute_with_cursor(
+                cursor,
+                """
+                INSERT INTO water_entries (entry_id, user_id, occurred_at, amount_ml)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (entry.entry_id, user_id, entry.occurred_at, entry.amount_ml),
+            )
+            meals = self._fetchone_with_cursor(
+                cursor,
+                """
+                SELECT COALESCE(SUM(water_ml), 0) AS meal_water_ml
+                FROM meals
+                WHERE user_id = %s
+                  AND occurred_at BETWEEN %s AND %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            water = self._fetchone_with_cursor(
+                cursor,
+                """
+                SELECT COALESCE(SUM(amount_ml), 0) AS water_ml
+                FROM water_entries
+                WHERE user_id = %s
+                  AND occurred_at BETWEEN %s AND %s
+                """,
+                (user_id, day_start, day_end),
+            )
+            goals = self._get_health_goals_with_cursor(cursor, user_id, target_date)
+            connection.commit()
+        finally:
+            cursor.close()
+            connection.close()
+        return WaterProgressSnapshot(
+            water_ml=int(water["water_ml"]) + int(meals["meal_water_ml"]),
+            goal_water_ml=goals.water_ml,
         )
 
     def add_sleep(self, user_id: int, entry: SleepEntry) -> None:

@@ -8,7 +8,7 @@ from ai_me.config import TelegramSettings
 from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDigestHighlight, WeeklyFoodDigest
 from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft, PhotoLogKind, PhotoLogResult, PhotoProcessingResult, WATER_PHOTO_SOURCE
-from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, PostSaveCoachingSnapshot, StepProgressInsight
+from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, PostSaveCoachingSnapshot, StepProgressInsight, WaterProgressSnapshot
 from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
 from ai_me.domain.user import AppUser, UserGoal, UserSex, UserStatus
 from ai_me.services.food_analysis import OpenAIFoodPhotoAnalyzer
@@ -470,6 +470,17 @@ class DummyHealthService:
 
     def log_water(self, user_id, entry) -> None:
         self.logged_water_entries.append((user_id, entry))
+
+    def log_water_and_get_progress(self, user_id, entry, target_date) -> WaterProgressSnapshot:
+        self.log_water(user_id, entry)
+        user = self.get_user_by_id(user_id)
+        target = user.target_water_ml if user is not None else 2000
+        total = sum(
+            item.amount_ml
+            for current_user_id, item in self.logged_water_entries
+            if current_user_id == user_id and item.occurred_at.date() == target_date
+        )
+        return WaterProgressSnapshot(water_ml=total, goal_water_ml=target)
 
     def log_meal(self, user_id, entry) -> None:
         return None

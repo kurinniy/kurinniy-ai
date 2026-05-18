@@ -56,6 +56,7 @@ from ai_me.domain.health import (
     PostSaveCoachingSnapshot,
     SleepEntry,
     StepProgressInsight,
+    WaterProgressSnapshot,
     WaterEntry,
     WeightEntry,
 )
@@ -948,6 +949,9 @@ class HealthService:
 
     def log_activity(self, user_id: int, entry: ActivityEntry) -> None:
         self.store.add_activity(user_id, entry)
+
+    def log_water_and_get_progress(self, user_id: int, entry: WaterEntry, target_date: date) -> WaterProgressSnapshot:
+        return self.store.add_water_and_get_progress(user_id, entry, target_date)
 
     def get_daily_summary(self, user_id: int, target_date: date) -> DailyHealthSummary:
         return self.store.build_health_summary(user_id, target_date)
