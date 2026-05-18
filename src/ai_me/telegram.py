@@ -253,7 +253,9 @@ class TelegramHealthBot:
                 )
                 self._record_response_debug_step("маршрутизация команды", route_started_at)
                 reply_user_started_at = time.perf_counter()
-                reply_user = self.service.get_user_by_telegram_user_id(user_id) or app_user
+                reply_user = app_user
+                if self._should_reload_reply_user(normalized_text):
+                    reply_user = self.service.get_user_by_telegram_user_id(user_id) or app_user
                 self._record_response_debug_step("загрузка reply user", reply_user_started_at)
                 if normalized_text == "/start" and reply_user is not None:
                     self._send_onboarding_step(chat_id, step=1)
@@ -2790,6 +2792,10 @@ class TelegramHealthBot:
         }:
             return self._menu_reply_markup(reply_user)
         return None
+
+    @staticmethod
+    def _should_reload_reply_user(text: str) -> bool:
+        return text in {"/start", "/user_mode", "/admin_mode"}
 
     @classmethod
     def _welcome_reply_markup(cls) -> str:

@@ -25,6 +25,7 @@ class DummyHealthService:
     def __init__(self) -> None:
         self.confirmed_draft_ids = []
         self.direct_photo_saves = []
+        self.user_lookup_calls = 0
         self.last_import = None
         self.drive_settings_by_user_id = {}
         self.health_import_files_by_user_id = {}
@@ -170,6 +171,7 @@ class DummyHealthService:
         )
 
     def get_user_by_telegram_user_id(self, telegram_user_id: int):
+        self.user_lookup_calls += 1
         return self.users_by_telegram_id.get(telegram_user_id)
 
     def get_user_by_id(self, user_id: int):
@@ -1135,6 +1137,29 @@ class TelegramHealthBotTest(unittest.TestCase):
     def test_add_water_command_opens_quick_water_flow(self) -> None:
         response = self.bot._route_command("/add_water", app_user=self.service.users_by_telegram_id[77])
         self.assertEqual(response, "Сколько воды добавить?")
+
+    def test_add_water_does_not_reload_reply_user_after_route(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._handle_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "text": "/add_water",
+                    "chat": {"id": 778, "type": "private"},
+                    "from": {"id": 77, "username": "guest", "first_name": "Guest"},
+                },
+            }
+        )
+
+        send_message = next(params for method, params in calls if method == "sendMessage")
+        self.assertTrue(send_message["text"].startswith("Сколько воды добавить?"))
+        self.assertEqual(self.service.user_lookup_calls, 0)
 
     def test_water_presets_save_water_and_return_progress(self) -> None:
         user = self.service.users_by_telegram_id[77]
