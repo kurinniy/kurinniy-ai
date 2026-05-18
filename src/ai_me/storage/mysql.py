@@ -1104,16 +1104,6 @@ class MySQLStore:
                 """,
                 (entry.entry_id, user_id, entry.occurred_at, entry.amount_ml),
             )
-            meals = self._fetchone_with_cursor(
-                cursor,
-                """
-                SELECT COALESCE(SUM(water_ml), 0) AS meal_water_ml
-                FROM meals
-                WHERE user_id = %s
-                  AND occurred_at BETWEEN %s AND %s
-                """,
-                (user_id, day_start, day_end),
-            )
             water = self._fetchone_with_cursor(
                 cursor,
                 """
@@ -1130,7 +1120,7 @@ class MySQLStore:
             cursor.close()
             connection.close()
         return WaterProgressSnapshot(
-            water_ml=int(water["water_ml"]) + int(meals["meal_water_ml"]),
+            water_ml=int(water["water_ml"]),
             goal_water_ml=goals.water_ml,
         )
 
@@ -1260,8 +1250,7 @@ class MySQLStore:
                        COALESCE(SUM(calories), 0) AS calories,
                        COALESCE(SUM(protein_g), 0) AS protein_g,
                        COALESCE(SUM(fat_g), 0) AS fat_g,
-                       COALESCE(SUM(carbs_g), 0) AS carbs_g,
-                       COALESCE(SUM(water_ml), 0) AS meal_water_ml
+                       COALESCE(SUM(carbs_g), 0) AS carbs_g
                 FROM meals
                 WHERE user_id = %s
                   AND occurred_at BETWEEN %s AND %s
@@ -1327,7 +1316,7 @@ class MySQLStore:
             protein_g=round(float(meals["protein_g"]), 2),
             fat_g=round(float(meals["fat_g"]), 2),
             carbs_g=round(float(meals["carbs_g"]), 2),
-            water_ml=int(water["water_ml"]) + int(meals["meal_water_ml"]),
+            water_ml=int(water["water_ml"]),
             sleep_hours=round(sleep_hours, 2),
             steps=int(activity["steps"]),
             activity_minutes=int(activity["activity_minutes"]),
@@ -1348,8 +1337,7 @@ class MySQLStore:
                        COALESCE(SUM(calories), 0) AS calories,
                        COALESCE(SUM(protein_g), 0) AS protein_g,
                        COALESCE(SUM(fat_g), 0) AS fat_g,
-                       COALESCE(SUM(carbs_g), 0) AS carbs_g,
-                       COALESCE(SUM(water_ml), 0) AS meal_water_ml
+                       COALESCE(SUM(carbs_g), 0) AS carbs_g
                 FROM meals
                 WHERE user_id = %s
                   AND occurred_at BETWEEN %s AND %s
@@ -1377,7 +1365,7 @@ class MySQLStore:
             protein_g=round(float(meals["protein_g"]), 2),
             fat_g=round(float(meals["fat_g"]), 2),
             carbs_g=round(float(meals["carbs_g"]), 2),
-            water_ml=int(water["water_ml"]) + int(meals["meal_water_ml"]),
+            water_ml=int(water["water_ml"]),
             sleep_hours=0.0,
             steps=0,
             activity_minutes=0,
@@ -1394,8 +1382,7 @@ class MySQLStore:
             meals = self._fetchone_with_cursor(
                 cursor,
                 """
-                SELECT COUNT(*) AS meals_count,
-                       COALESCE(SUM(water_ml), 0) AS meal_water_ml
+                SELECT COUNT(*) AS meals_count
                 FROM meals
                 WHERE user_id = %s
                   AND occurred_at BETWEEN %s AND %s
@@ -1418,7 +1405,7 @@ class MySQLStore:
             connection.close()
         return PostSaveCoachingSnapshot(
             meals_count=int(meals["meals_count"]),
-            water_ml=int(water["water_ml"]) + int(meals["meal_water_ml"]),
+            water_ml=int(water["water_ml"]),
             goals=goals,
         )
 

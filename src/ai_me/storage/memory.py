@@ -498,10 +498,9 @@ class InMemoryStore:
         water_entries = [
             item for item in self._water_entries.get(user_id, []) if item.occurred_at.date() == target_date
         ]
-        meals = [item for item in self._meals.get(user_id, []) if item.occurred_at.date() == target_date]
         goals = self.get_health_goals(user_id, target_date)
         return WaterProgressSnapshot(
-            water_ml=sum(item.amount_ml for item in water_entries) + sum(item.water_ml for item in meals),
+            water_ml=sum(item.amount_ml for item in water_entries),
             goal_water_ml=goals.water_ml,
         )
 
@@ -569,7 +568,7 @@ class InMemoryStore:
             protein_g=round(sum(entry.protein_g for entry in meals), 2),
             fat_g=round(sum(entry.fat_g for entry in meals), 2),
             carbs_g=round(sum(entry.carbs_g for entry in meals), 2),
-            water_ml=sum(entry.amount_ml for entry in water_entries) + sum(entry.water_ml for entry in meals),
+            water_ml=sum(entry.amount_ml for entry in water_entries),
             sleep_hours=round(sum(entry.duration_hours for entry in sleep_entries), 2),
             steps=sum(entry.steps for entry in activity_entries),
             activity_minutes=sum(entry.duration_minutes for entry in activity_entries),
@@ -589,7 +588,7 @@ class InMemoryStore:
             protein_g=round(sum(entry.protein_g for entry in meals), 2),
             fat_g=round(sum(entry.fat_g for entry in meals), 2),
             carbs_g=round(sum(entry.carbs_g for entry in meals), 2),
-            water_ml=sum(entry.amount_ml for entry in water_entries) + sum(entry.water_ml for entry in meals),
+            water_ml=sum(entry.amount_ml for entry in water_entries),
             sleep_hours=0.0,
             steps=0,
             activity_minutes=0,
@@ -604,7 +603,7 @@ class InMemoryStore:
         ]
         return PostSaveCoachingSnapshot(
             meals_count=len(meals),
-            water_ml=sum(entry.amount_ml for entry in water_entries) + sum(entry.water_ml for entry in meals),
+            water_ml=sum(entry.amount_ml for entry in water_entries),
             goals=self.get_health_goals(user_id, target_date),
         )
 

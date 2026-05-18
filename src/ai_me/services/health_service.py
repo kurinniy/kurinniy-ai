@@ -468,7 +468,7 @@ class HealthService:
             total_protein_g=total_protein_g,
             total_fat_g=total_fat_g,
             total_carbs_g=total_carbs_g,
-            water_ml=manual_water_ml + sum(meal.water_ml for meal in meals),
+            water_ml=manual_water_ml,
             water_goal_ml=goals.water_ml,
             steps_goal=goals.steps,
             trend_windows=trend_windows,

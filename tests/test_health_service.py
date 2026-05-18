@@ -419,10 +419,10 @@ class HealthServiceTest(unittest.TestCase):
         self.assertEqual(summary.protein_g, 38)
         self.assertEqual(summary.fat_g, 18)
         self.assertEqual(summary.carbs_g, 71)
-        self.assertEqual(summary.water_ml, 500)
+        self.assertEqual(summary.water_ml, 0)
         self.assertEqual(drafts, [])
 
-    def test_meal_water_is_added_to_daily_water_counter(self) -> None:
+    def test_meal_water_is_not_added_to_daily_water_counter(self) -> None:
         self.service.log_water(
             self.user.user_id,
             WaterEntry(
@@ -444,7 +444,7 @@ class HealthServiceTest(unittest.TestCase):
         self.service.confirm_meal_draft(self.user.user_id, draft.draft_id)
         summary = self.service.get_daily_summary(self.user.user_id, self.target_date)
 
-        self.assertEqual(summary.water_ml, 800)
+        self.assertEqual(summary.water_ml, 300)
 
     def test_updated_meal_draft_is_saved_into_final_meal(self) -> None:
         draft = self.service.create_meal_draft_from_photo(
@@ -861,7 +861,7 @@ class HealthServiceTest(unittest.TestCase):
         self.assertIsNotNone(digest)
         self.assertEqual(len(digest.meals), 1)
         self.assertEqual(digest.total_calories, 620)
-        self.assertEqual(digest.water_ml, 500)
+        self.assertEqual(digest.water_ml, 0)
         self.assertEqual(digest.water_goal_ml, 2000)
         self.assertEqual([trend.days for trend in digest.trend_windows], [7, 14, 30])
         self.assertEqual(digest.commentary_data.meal_pattern.largest_meal.title, "Chicken rice bowl")
@@ -897,7 +897,7 @@ class HealthServiceTest(unittest.TestCase):
         self.assertIsNotNone(digest)
         self.assertEqual(len(digest.meals), 1)
         self.assertEqual(digest.meals[0].title, "Chicken rice bowl")
-        self.assertEqual(digest.water_ml, 1200)
+        self.assertEqual(digest.water_ml, 700)
 
     def test_build_weekly_food_digest_selects_highlights(self) -> None:
         for offset in range(7):
