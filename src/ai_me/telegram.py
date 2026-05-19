@@ -41,6 +41,25 @@ class TelegramHealthBot:
     HISTORY_DELETE_WINDOW = timedelta(minutes=3)
     ONBOARDING_STEP_COUNT = 3
     ONBOARDING_ASSET_DIR = Path(__file__).resolve().parent / "assets"
+    REGULAR_BOT_COMMANDS = [
+        {"command": "start", "description": "Подключить и открыть бота"},
+        {"command": "menu", "description": "Показать кнопки и список команд"},
+        {"command": "help", "description": "Справка по командам"},
+    ]
+    ADMIN_BOT_COMMANDS = [
+        *REGULAR_BOT_COMMANDS,
+        {"command": "summary", "description": "Сводка за сегодня"},
+        {"command": "decisions", "description": "Открытые решения"},
+        {"command": "digest_status", "description": "Статус ежедневных и недельных digest"},
+        {"command": "digest_on", "description": "Включить ежедневные и недельные digest"},
+        {"command": "digest_off", "description": "Выключить ежедневные и недельные digest"},
+        {"command": "digest_preview", "description": "Предпросмотр daily digest"},
+        {"command": "weekly_digest_preview", "description": "Предпросмотр weekly digest"},
+        {"command": "drafts", "description": "Черновики приема пищи"},
+        {"command": "user_mode", "description": "Режим обычного пользователя (admin)"},
+        {"command": "admin_mode", "description": "Вернуть режим администратора (admin)"},
+        {"command": "whoami", "description": "Мои Telegram ID"},
+    ]
     BUTTON_TO_COMMAND = {
         "Добавить еду": "/add_food",
         "Добавить воду": "/add_water",
@@ -1259,6 +1278,7 @@ class TelegramHealthBot:
         if not app_user.is_admin:
             raise ValueError("Команда доступна только администратору.")
         updated = self.service.set_admin_mode(app_user.user_id, enabled=enabled)
+        self._sync_bot_commands(chat_id=updated.chat_id, app_user=updated)
         if enabled:
             return "Режим администратора включен.\n\n%s" % self._help_text(updated)
         return "Режим обычного пользователя включен.\n\n%s" % self._help_text(updated)
@@ -1389,23 +1409,23 @@ class TelegramHealthBot:
             format_release_date_line(),
             self._mini_app_help_line(app_user),
             "Команды:",
-            "/whoami",
             "Отправь фото еды, чтобы я сразу сохранил запись или предложил её проверить.",
             "/menu",
-            "/digest_status",
-            "/digest_on",
-            "/digest_off",
-            "/digest_preview [YYYY-MM-DD]",
-            "/weekly_digest_preview [YYYY-MM-DD]",
             "/confirm_meal <draft_id>",
             "/reject_meal <draft_id>",
-            "/drafts",
-            "/summary [YYYY-MM-DD]",
-            "/decisions [YYYY-MM-DD]",
         ]
-        if app_user.is_admin:
+        if app_user.has_admin_access:
             commands.extend(
                 [
+                    "/whoami",
+                    "/summary [YYYY-MM-DD]",
+                    "/decisions [YYYY-MM-DD]",
+                    "/digest_status",
+                    "/digest_on",
+                    "/digest_off",
+                    "/digest_preview [YYYY-MM-DD]",
+                    "/weekly_digest_preview [YYYY-MM-DD]",
+                    "/drafts",
                     "/user_mode",
                     "/admin_mode",
                 ]
@@ -2466,31 +2486,29 @@ class TelegramHealthBot:
         except Exception as exc:  # pragma: no cover
             logger.warning("Webhook cleanup failed: %s", exc)
 
-    def _sync_bot_commands(self) -> None:
-        commands = [
-            {"command": "start", "description": "Подключить и открыть бота"},
-            {"command": "menu", "description": "Показать кнопки и список команд"},
-            {"command": "summary", "description": "Сводка за сегодня"},
-            {"command": "decisions", "description": "Открытые решения"},
-            {"command": "digest_status", "description": "Статус ежедневных и недельных digest"},
-            {"command": "digest_on", "description": "Включить ежедневные и недельные digest"},
-            {"command": "digest_off", "description": "Выключить ежедневные и недельные digest"},
-            {"command": "digest_preview", "description": "Предпросмотр daily digest"},
-            {"command": "weekly_digest_preview", "description": "Предпросмотр weekly digest"},
-            {"command": "drafts", "description": "Черновики приема пищи"},
-            {"command": "user_mode", "description": "Режим обычного пользователя (admin)"},
-            {"command": "admin_mode", "description": "Вернуть режим администратора (admin)"},
-            {"command": "whoami", "description": "Мои Telegram ID"},
-            {"command": "help", "description": "Справка по командам"},
-        ]
+    def _sync_bot_commands(self, chat_id: Optional[int] = None, app_user: Optional[AppUser] = None) -> None:
         try:
-            payload = {
-                "commands": json.dumps(commands, ensure_ascii=False),
-            }
-            self._telegram_api("setMyCommands", payload)
-            self._telegram_api("setMyCommands", {**payload, "language_code": "ru"})
+            if chat_id is not None and app_user is not None:
+                self._set_bot_commands(
+                    self.ADMIN_BOT_COMMANDS if app_user.has_admin_access else self.REGULAR_BOT_COMMANDS,
+                    chat_id=chat_id,
+                )
+                return
+
+            self._set_bot_commands(self.REGULAR_BOT_COMMANDS)
+            for admin_chat_id in sorted(self.settings.admin_user_ids):
+                self._set_bot_commands(self.ADMIN_BOT_COMMANDS, chat_id=admin_chat_id)
         except Exception as exc:  # pragma: no cover
             logger.warning("Bot command sync failed: %s", exc)
+
+    def _set_bot_commands(self, commands: List[Dict[str, str]], chat_id: Optional[int] = None) -> None:
+        payload = {
+            "commands": json.dumps(commands, ensure_ascii=False),
+        }
+        if chat_id is not None:
+            payload["scope"] = json.dumps({"type": "chat", "chat_id": chat_id}, ensure_ascii=False)
+        self._telegram_api("setMyCommands", payload)
+        self._telegram_api("setMyCommands", {**payload, "language_code": "ru"})
 
     def _sync_mini_app_menu_button(self, chat_id: Optional[int] = None, app_user: Optional[AppUser] = None) -> None:
         if not self.settings.mini_app_url:

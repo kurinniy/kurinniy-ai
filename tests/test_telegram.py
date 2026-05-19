@@ -795,16 +795,28 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("/connect_drive", response)
         self.assertNotIn("/drive_status", response)
         self.assertNotIn("/import_tbank", response)
-        self.assertIn("/digest_status", response)
-        self.assertIn("/drafts", response)
+        self.assertNotIn("/digest_status", response)
+        self.assertNotIn("/digest_on", response)
+        self.assertNotIn("/digest_off", response)
+        self.assertNotIn("/digest_preview", response)
+        self.assertNotIn("/weekly_digest_preview", response)
+        self.assertNotIn("/drafts", response)
+        self.assertNotIn("/summary", response)
+        self.assertNotIn("/decisions", response)
+        self.assertNotIn("/whoami", response)
 
     def test_help_for_admin_in_user_mode_hides_admin_features_but_keeps_switch_commands(self) -> None:
         self.service.set_admin_mode(1, enabled=False)
         response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[42])
         self.assertNotIn("/finance_month", response)
         self.assertNotIn("/connect_drive", response)
-        self.assertIn("/admin_mode", response)
-        self.assertIn("/user_mode", response)
+        self.assertNotIn("/admin_mode", response)
+        self.assertNotIn("/user_mode", response)
+        self.assertNotIn("/digest_status", response)
+        self.assertNotIn("/drafts", response)
+        self.assertNotIn("/summary", response)
+        self.assertNotIn("/decisions", response)
+        self.assertNotIn("/whoami", response)
 
     def test_start_registers_new_user_without_invite(self) -> None:
         response = self.bot._route_command(
@@ -1824,17 +1836,69 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         self.assertEqual(calls[0][0], "setMyCommands")
         self.assertEqual(calls[1][0], "setMyCommands")
+        self.assertEqual(calls[2][0], "setMyCommands")
+        self.assertEqual(calls[3][0], "setMyCommands")
         self.assertNotIn("language_code", calls[0][1])
         self.assertEqual(calls[1][1]["language_code"], "ru")
+        self.assertIn("scope", calls[2][1])
+        self.assertEqual(calls[3][1]["language_code"], "ru")
         commands = json.loads(calls[0][1]["commands"])
         commands_ru = json.loads(calls[1][1]["commands"])
         command_names = [item["command"] for item in commands]
         self.assertEqual(command_names[0], "start")
         self.assertEqual(command_names[1], "menu")
+        self.assertEqual(command_names[2], "help")
         self.assertNotIn("connect_drive", command_names)
         self.assertNotIn("drive_status", command_names)
         self.assertNotIn("drive_on", command_names)
         self.assertNotIn("drive_off", command_names)
+        self.assertNotIn("summary", command_names)
+        self.assertNotIn("decisions", command_names)
+        self.assertNotIn("digest_status", command_names)
+        self.assertNotIn("digest_on", command_names)
+        self.assertNotIn("digest_off", command_names)
+        self.assertNotIn("digest_preview", command_names)
+        self.assertNotIn("weekly_digest_preview", command_names)
+        self.assertNotIn("drafts", command_names)
+        self.assertNotIn("user_mode", command_names)
+        self.assertNotIn("admin_mode", command_names)
+        self.assertNotIn("whoami", command_names)
+        self.assertFalse(any(item["command"] == "create_invite" for item in commands))
+        self.assertEqual(command_names, [item["command"] for item in commands_ru])
+        admin_scope = json.loads(calls[2][1]["scope"])
+        self.assertEqual(admin_scope["type"], "chat")
+        self.assertEqual(admin_scope["chat_id"], 42)
+        admin_command_names = [item["command"] for item in json.loads(calls[2][1]["commands"])]
+        self.assertIn("summary", admin_command_names)
+        self.assertIn("decisions", admin_command_names)
+        self.assertIn("digest_status", admin_command_names)
+        self.assertIn("digest_on", admin_command_names)
+        self.assertIn("digest_off", admin_command_names)
+        self.assertIn("digest_preview", admin_command_names)
+        self.assertIn("weekly_digest_preview", admin_command_names)
+        self.assertIn("drafts", admin_command_names)
+        self.assertIn("user_mode", admin_command_names)
+        self.assertIn("admin_mode", admin_command_names)
+        self.assertIn("whoami", admin_command_names)
+
+    def test_sync_bot_commands_registers_admin_chat_menu_entries(self) -> None:
+        calls = []
+
+        def fake_telegram_api(method, params):
+            calls.append((method, params))
+            return True
+
+        self.bot._telegram_api = fake_telegram_api
+        self.bot._sync_bot_commands(chat_id=777, app_user=self.service.users_by_telegram_id[42])
+
+        self.assertEqual(calls[0][0], "setMyCommands")
+        self.assertEqual(calls[1][0], "setMyCommands")
+        self.assertIn("scope", calls[0][1])
+        scope = json.loads(calls[0][1]["scope"])
+        self.assertEqual(scope["type"], "chat")
+        self.assertEqual(scope["chat_id"], 777)
+        command_names = [item["command"] for item in json.loads(calls[0][1]["commands"])]
+        self.assertIn("summary", command_names)
         self.assertIn("decisions", command_names)
         self.assertIn("digest_status", command_names)
         self.assertIn("digest_on", command_names)
@@ -1845,9 +1909,6 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn("user_mode", command_names)
         self.assertIn("admin_mode", command_names)
         self.assertIn("whoami", command_names)
-        self.assertIn("help", command_names)
-        self.assertFalse(any(item["command"] == "create_invite" for item in commands))
-        self.assertEqual(command_names, [item["command"] for item in commands_ru])
 
     def test_sync_mini_app_menu_button_registers_default_commands_globally(self) -> None:
         calls = []
