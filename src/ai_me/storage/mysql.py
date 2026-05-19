@@ -2018,6 +2018,11 @@ class MySQLStore:
         cursor.execute(query, params)
         return cursor.fetchall()
 
+    @staticmethod
+    def _execute_with_cursor(cursor, query: str, params: tuple) -> int:
+        cursor.execute(query, params)
+        return cursor.rowcount
+
     def _get_health_goals_with_cursor(self, cursor, user_id: int, target_date: date) -> DailyHealthGoals:
         row = self._fetchone_with_cursor(
             cursor,
