@@ -4,7 +4,6 @@ from typing import Dict, Iterable, List, Optional
 
 from ai_me.domain.digest import DigestRun, DigestStatus, DigestType, UserDigestSettings
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
-from ai_me.domain.finance import FinanceCategoryTotal, FinanceMonthlySummary, FinanceTransaction
 from ai_me.domain.food import MealDraftStatus, MealMedia, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
@@ -39,7 +38,6 @@ class InMemoryStore:
         self._sleep_entries: Dict[int, List[SleepEntry]] = {}
         self._weight_entries: Dict[int, List[WeightEntry]] = {}
         self._activity_entries: Dict[int, List[ActivityEntry]] = {}
-        self._finance_transactions_by_key: Dict[int, Dict[str, FinanceTransaction]] = {}
         self._decisions_by_id: Dict[int, Dict[str, DecisionLogEntry]] = {}
         self._decision_ids_by_key: Dict[int, Dict[str, str]] = {}
 
@@ -645,54 +643,4 @@ class InMemoryStore:
             context_date=current.context_date,
             status=status,
             payload=current.payload,
-        )
-
-    def upsert_finance_transactions(self, user_id: int, transactions: Iterable[FinanceTransaction]) -> int:
-        transactions_by_key = self._finance_transactions_by_key.setdefault(user_id, {})
-        inserted = 0
-        for transaction in transactions:
-            if transaction.transaction_key in transactions_by_key:
-                continue
-            transactions_by_key[transaction.transaction_key] = transaction
-            inserted += 1
-        return inserted
-
-    def build_finance_monthly_summary(self, user_id: int, month_start: date) -> FinanceMonthlySummary:
-        if month_start.month == 12:
-            next_month = date(month_start.year + 1, 1, 1)
-        else:
-            next_month = date(month_start.year, month_start.month + 1, 1)
-        month_transactions = [
-            item
-            for item in self._finance_transactions_by_key.get(user_id, {}).values()
-            if month_start <= item.occurred_at.date() < next_month
-        ]
-        income_total = round(sum(item.amount for item in month_transactions if item.amount > 0), 2)
-        expense_total = round(abs(sum(item.amount for item in month_transactions if item.amount < 0)), 2)
-        category_buckets: Dict[str, List[FinanceTransaction]] = {}
-        for transaction in month_transactions:
-            if transaction.amount >= 0:
-                continue
-            category = transaction.category or "Без категории"
-            category_buckets.setdefault(category, []).append(transaction)
-        top_categories = sorted(
-            [
-                FinanceCategoryTotal(
-                    category=category,
-                    amount=round(abs(sum(item.amount for item in items)), 2),
-                    transaction_count=len(items),
-                )
-                for category, items in category_buckets.items()
-            ],
-            key=lambda item: item.amount,
-            reverse=True,
-        )[:5]
-        return FinanceMonthlySummary(
-            month_start=month_start,
-            month_end=next_month,
-            transaction_count=len(month_transactions),
-            income_total=income_total,
-            expense_total=expense_total,
-            net_total=round(income_total - expense_total, 2),
-            top_expense_categories=top_categories,
         )

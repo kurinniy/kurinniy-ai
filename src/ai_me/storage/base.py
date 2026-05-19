@@ -3,7 +3,6 @@ from typing import Iterable, List, Optional, Protocol
 
 from ai_me.domain.digest import DigestRun, DigestStatus, DigestType, UserDigestSettings
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
-from ai_me.domain.finance import FinanceMonthlySummary, FinanceTransaction
 from ai_me.domain.food import MealDraftStatus, MealMedia, MealPhotoDraft
 from ai_me.domain.health import (
     ActivityEntry,
@@ -236,10 +235,4 @@ class HealthStore(Protocol):
         ...
 
     def update_decision_status(self, user_id: int, decision_id: str, status: DecisionStatus) -> None:
-        ...
-
-    def upsert_finance_transactions(self, user_id: int, transactions: Iterable[FinanceTransaction]) -> int:
-        ...
-
-    def build_finance_monthly_summary(self, user_id: int, month_start: date) -> FinanceMonthlySummary:
         ...

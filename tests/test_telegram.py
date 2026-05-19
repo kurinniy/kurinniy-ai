@@ -6,7 +6,6 @@ from datetime import date, datetime, timedelta
 
 from ai_me.config import TelegramSettings
 from ai_me.domain.digest import DailyFoodDigest, DigestMealSnapshot, WeeklyDigestHighlight, WeeklyFoodDigest
-from ai_me.domain.finance import FinanceCategoryTotal, FinanceImportResult, FinanceMonthlySummary
 from ai_me.domain.food import FoodItemEstimate, MealDraftStatus, MealMedia, MealPhotoDraft, PhotoLogKind, PhotoLogResult, PhotoProcessingResult, WATER_PHOTO_SOURCE
 from ai_me.domain.health import DailyHealthGoals, DailyHealthSummary, MealEntry, PostSaveCoachingSnapshot, WaterProgressSnapshot
 from ai_me.domain.health_import import HealthImportFile, HealthImportProvider, HealthImportStatus, UserGoogleDriveSettings
@@ -26,7 +25,6 @@ class DummyHealthService:
         self.confirmed_draft_ids = []
         self.direct_photo_saves = []
         self.user_lookup_calls = 0
-        self.last_import = None
         self.drive_settings_by_user_id = {}
         self.health_import_files_by_user_id = {}
         self.water_only_photo_mode = False
@@ -720,32 +718,6 @@ class DummyHealthService:
         draft = self.meal_drafts_by_user_id[user_id][draft_id]
         self.meal_drafts_by_user_id[user_id][draft_id] = replace(draft, status=MealDraftStatus.REJECTED)
         return draft
-
-    def import_tbank_csv(self, user_id, file_bytes: bytes, source_file_name: str):
-        self.last_import = (user_id, file_bytes, source_file_name)
-        return FinanceImportResult(
-            provider="tbank",
-            source_file_name=source_file_name,
-            total_rows=2,
-            imported_rows=2,
-            skipped_rows=0,
-            first_operation_at=datetime(2026, 5, 1, 9, 0),
-            last_operation_at=datetime(2026, 5, 2, 18, 30),
-        )
-
-    def get_finance_monthly_summary(self, user_id, month_start: date):
-        return FinanceMonthlySummary(
-            month_start=month_start,
-            month_end=date(2026, 6, 1),
-            transaction_count=4,
-            income_total=25000.0,
-            expense_total=3000.5,
-            net_total=21999.5,
-            top_expense_categories=[
-                FinanceCategoryTotal(category="Продукты", amount=2300.5, transaction_count=2),
-                FinanceCategoryTotal(category="Такси", amount=700.0, transaction_count=1),
-            ],
-        )
 
 
 class TelegramHealthBotTest(unittest.TestCase):
@@ -1544,9 +1516,7 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(markup["keyboard"][0][0]["text"], "Добавить еду")
         self.assertEqual(markup["keyboard"][0][1]["text"], "Добавить воду")
         self.assertEqual(markup["keyboard"][2][1]["text"], "Как это работает")
-        self.assertEqual(markup["keyboard"][4][0]["text"], "Финансы за месяц")
-        self.assertEqual(markup["keyboard"][4][1]["text"], "Импорт Т-Банк")
-        self.assertEqual(markup["keyboard"][5][0]["text"], "Открытые решения")
+        self.assertEqual(markup["keyboard"][4][0]["text"], "Открытые решения")
 
     def test_stage_photo_response_includes_generation_breakdown(self) -> None:
         calls = []
@@ -1927,23 +1897,14 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertEqual(menu_button["type"], "web_app")
         self.assertEqual(menu_button["web_app"]["url"], "https://staging-mini-app.example.com")
 
-    def test_document_imports_tbank_csv_in_user_scope(self) -> None:
+    def test_document_upload_is_not_supported(self) -> None:
         calls = []
 
         def fake_telegram_api(method, params):
             calls.append((method, params))
-            if method == "getFile":
-                return {"file_path": "docs/tbank.csv"}
             return True
 
         self.bot._telegram_api = fake_telegram_api
-        self.bot._download_telegram_file = lambda path: (
-            b"\xef\xbb\xbf\xd0\x94\xd0\xb0\xd1\x82\xd0\xb0 \xd0\xbe\xd0\xbf\xd0\xb5\xd1\x80\xd0\xb0\xd1\x86\xd0\xb8\xd0\xb8;"
-            b"\xd0\xa1\xd1\x83\xd0\xbc\xd0\xbc\xd0\xb0 \xd0\xbf\xd0\xbb\xd0\xb0\xd1\x82\xd0\xb5\xd0\xb6\xd0\xb0;"
-            b"\xd0\x9e\xd0\xbf\xd0\xb8\xd1\x81\xd0\xb0\xd0\xbd\xd0\xb8\xd0\xb5\n"
-            b"01.05.2026;-1500;\xd0\x9f\xd1\x80\xd0\xbe\xd0\xb4\xd1\x83\xd0\xba\xd1\x82\xd1\x8b\n"
-        )
-
         self.bot._handle_update(
             {
                 "update_id": 1,
@@ -1952,37 +1913,7 @@ class TelegramHealthBotTest(unittest.TestCase):
                     "from": {"id": 42, "username": "owner", "first_name": "Owner"},
                     "document": {
                         "file_id": "file-1",
-                        "file_name": "tbank.csv",
-                        "mime_type": "text/csv",
-                    },
-                },
-            }
-        )
-
-        self.assertEqual(self.service.last_import[0], 1)
-        self.assertEqual(self.service.last_import[2], "tbank.csv")
-        business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
-        self.assertEqual(business_calls[0][0], "getFile")
-        self.assertEqual(business_calls[1][0], "sendMessage")
-        self.assertIn("Импорт операций Т-Банка завершен", business_calls[1][1]["text"])
-
-    def test_document_import_is_rejected_for_regular_user(self) -> None:
-        calls = []
-
-        def fake_telegram_api(method, params):
-            calls.append((method, params))
-            return True
-
-        self.bot._telegram_api = fake_telegram_api
-        self.bot._handle_update(
-            {
-                "update_id": 1,
-                "message": {
-                    "chat": {"id": 778, "type": "private"},
-                    "from": {"id": 77, "username": "guest", "first_name": "Guest"},
-                    "document": {
-                        "file_id": "file-1",
-                        "file_name": "tbank.csv",
+                        "file_name": "report.csv",
                         "mime_type": "text/csv",
                     },
                 },
@@ -1991,8 +1922,7 @@ class TelegramHealthBotTest(unittest.TestCase):
 
         business_calls = [call for call in calls if call[0] != "setChatMenuButton"]
         self.assertEqual(business_calls[0][0], "sendMessage")
-        self.assertIn("только администратору", business_calls[0][1]["text"])
-        self.assertIsNone(self.service.last_import)
+        self.assertIn("Загрузка документов сейчас не поддерживается.", business_calls[0][1]["text"])
 
     def test_regular_user_photo_is_rate_limited(self) -> None:
         calls = []
@@ -2939,14 +2869,14 @@ class TelegramHealthBotTest(unittest.TestCase):
         response = self.bot._route_command("/create_invite 10 2", app_user=self.service.users_by_telegram_id[42])
         self.assertIn("Неизвестная команда", response)
 
-    def test_finance_command_is_rejected_for_regular_user(self) -> None:
+    def test_removed_finance_command_is_unknown_for_regular_user(self) -> None:
         response = self.bot._route_command("/finance_month", app_user=self.service.users_by_telegram_id[77])
-        self.assertIn("только администратору", response)
+        self.assertIn("Неизвестная команда", response)
 
-    def test_finance_command_is_rejected_for_admin_in_user_mode(self) -> None:
+    def test_removed_tbank_import_command_is_unknown_for_admin(self) -> None:
         self.service.set_admin_mode(1, enabled=False)
-        response = self.bot._route_command("/finance_month", app_user=self.service.users_by_telegram_id[42])
-        self.assertIn("только администратору", response)
+        response = self.bot._route_command("/import_tbank", app_user=self.service.users_by_telegram_id[42])
+        self.assertIn("Неизвестная команда", response)
 
     def test_removed_connect_drive_command_is_unknown_for_regular_user(self) -> None:
         response = self.bot._route_command(

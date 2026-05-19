@@ -63,9 +63,7 @@ class TelegramHealthBot:
         "+750 мл": "/water 750",
         "Свой объем": "/water_custom",
         "Сводка за сегодня": "/summary",
-        "Финансы за месяц": "/finance_month",
         "Открытые решения": "/decisions",
-        "Импорт Т-Банк": "/import_tbank",
         "Черновики еды": "/drafts",
         "Кто я": "/whoami",
         "Помощь": "/help",
@@ -1150,11 +1148,6 @@ class TelegramHealthBot:
             if command == "/how_it_works":
                 return self._how_it_works_text()
 
-            if command == "/import_tbank":
-                self._ensure_admin(app_user)
-                return self._handle_import_tbank()
-            if command == "/finance_month":
-                return self._handle_finance_month(app_user, args)
             if command == "/digest_status":
                 return self._handle_digest_status(app_user)
             if command == "/user_mode":
@@ -1228,41 +1221,6 @@ class TelegramHealthBot:
             lines.append("роль=%s" % ("admin" if app_user.has_admin_access else "user"))
             if app_user.is_admin:
                 lines.append("режим_админа=%s" % ("включен" if app_user.admin_mode_enabled else "выключен"))
-        return "\n".join(lines)
-
-    @staticmethod
-    def _handle_import_tbank() -> str:
-        return (
-            "Импорт операций Т-Банка\n"
-            "1. В личном кабинете на tbank.ru на компьютере открой вкладку «Операции».\n"
-            "2. Выбери период и нужные продукты.\n"
-            "3. Нажми «Поделиться» и выгрузи операции в CSV.\n"
-            "4. Отправь CSV-файл сюда одним сообщением.\n\n"
-            "После загрузки я импортирую операции и покажу результат."
-        )
-
-    def _handle_finance_month(self, app_user: AppUser, args: List[str]) -> str:
-        self._ensure_admin(app_user)
-        if args:
-            year, month = args[0].split("-", 1)
-            month_start = date(int(year), int(month), 1)
-        else:
-            today = self._local_today()
-            month_start = date(today.year, today.month, 1)
-        summary = self.service.get_finance_monthly_summary(app_user.user_id, month_start)
-        lines = [
-            "Финансовая сводка за %s" % month_start.strftime("%m.%Y"),
-            "Операций: %s" % summary.transaction_count,
-            "Доходы: %.2f ₽" % summary.income_total,
-            "Расходы: %.2f ₽" % summary.expense_total,
-            "Чистый поток: %.2f ₽" % summary.net_total,
-        ]
-        if summary.top_expense_categories:
-            lines.append("Топ категорий расходов:")
-            for item in summary.top_expense_categories:
-                lines.append("- %s: %.2f ₽ (%s)" % (item.category, item.amount, item.transaction_count))
-        else:
-            lines.append("Расходов за этот месяц пока нет.")
         return "\n".join(lines)
 
     def _handle_digest_status(self, app_user: AppUser) -> str:
@@ -1450,13 +1408,6 @@ class TelegramHealthBot:
                 [
                     "/user_mode",
                     "/admin_mode",
-                ]
-            )
-        if app_user.has_admin_access:
-            commands.extend(
-                [
-                    "/import_tbank",
-                    "/finance_month [YYYY-MM]",
                 ]
             )
         return "\n".join(commands)
@@ -2502,45 +2453,7 @@ class TelegramHealthBot:
         self._record_response_debug_step("подготовка ответа по фото", reply_started_at)
 
     def _handle_document_message(self, chat_id: int, app_user: AppUser, document: Dict[str, object]) -> None:
-        if not app_user.has_admin_access:
-            self._send_message(chat_id, "Загрузка CSV Т-Банка доступна только администратору.")
-            return
-        file_id = document.get("file_id")
-        file_name = document.get("file_name")
-        mime_type = document.get("mime_type")
-        if not isinstance(file_id, str):
-            self._send_message(chat_id, "Не удалось получить файл из сообщения.")
-            return
-        if not self._is_supported_tbank_file(file_name=file_name, mime_type=mime_type):
-            self._send_message(
-                chat_id,
-                "Пока поддерживаю только CSV-файлы с операциями Т-Банка. Выгрузи операции в CSV и отправь файл сюда.",
-            )
-            return
-
-        try:
-            file_lookup_started_at = time.perf_counter()
-            file_info = self._telegram_api("getFile", {"file_id": file_id})
-            self._record_response_debug_step("получение файла документа", file_lookup_started_at)
-            file_path = file_info.get("file_path")
-            if not isinstance(file_path, str):
-                raise ValueError("Telegram не вернул путь к файлу")
-            download_started_at = time.perf_counter()
-            file_bytes = self._download_telegram_file(file_path)
-            self._record_response_debug_step("загрузка документа", download_started_at)
-            import_started_at = time.perf_counter()
-            result = self.service.import_tbank_csv(
-                app_user.user_id,
-                file_bytes=file_bytes,
-                source_file_name=file_name if isinstance(file_name, str) else "tbank.csv",
-            )
-            self._record_response_debug_step("импорт CSV", import_started_at)
-        except Exception as exc:
-            logger.exception("T-Bank import failed chat_id=%s file_id=%s error=%s", chat_id, file_id, exc)
-            self._send_message(chat_id, "Не удалось импортировать файл Т-Банка: %s" % exc)
-            return
-
-        self._send_message(chat_id, self._format_tbank_import_result(result))
+        self._send_message(chat_id, "Загрузка документов сейчас не поддерживается.")
 
     def _ensure_polling_mode(self) -> None:
         try:
@@ -2558,14 +2471,12 @@ class TelegramHealthBot:
             {"command": "start", "description": "Подключить и открыть бота"},
             {"command": "menu", "description": "Показать кнопки и список команд"},
             {"command": "summary", "description": "Сводка за сегодня"},
-            {"command": "finance_month", "description": "Финансовая сводка за месяц"},
             {"command": "decisions", "description": "Открытые решения"},
             {"command": "digest_status", "description": "Статус ежедневных и недельных digest"},
             {"command": "digest_on", "description": "Включить ежедневные и недельные digest"},
             {"command": "digest_off", "description": "Выключить ежедневные и недельные digest"},
             {"command": "digest_preview", "description": "Предпросмотр daily digest"},
             {"command": "weekly_digest_preview", "description": "Предпросмотр weekly digest"},
-            {"command": "import_tbank", "description": "Импорт CSV из Т-Банка"},
             {"command": "drafts", "description": "Черновики приема пищи"},
             {"command": "user_mode", "description": "Режим обычного пользователя (admin)"},
             {"command": "admin_mode", "description": "Вернуть режим администратора (admin)"},
@@ -2869,7 +2780,6 @@ class TelegramHealthBot:
                 [{"text": "История"}, {"text": "Прогресс"}],
                 [{"text": "Профиль"}, {"text": "Как это работает"}],
                 [{"text": "Помощь"}],
-                [{"text": "Финансы за месяц"}, {"text": "Импорт Т-Банк"}],
                 [{"text": "Открытые решения"}],
             ]
         return json.dumps(
@@ -2887,34 +2797,6 @@ class TelegramHealthBot:
     @staticmethod
     def _telegram_string(value: object) -> str:
         return str(value).strip() if isinstance(value, str) else ""
-
-    @staticmethod
-    def _is_supported_tbank_file(file_name: object, mime_type: object) -> bool:
-        normalized_name = str(file_name).lower() if isinstance(file_name, str) else ""
-        normalized_type = str(mime_type).lower() if isinstance(mime_type, str) else ""
-        return (
-            normalized_name.endswith(".csv")
-            or normalized_type in {"text/csv", "application/csv", "application/vnd.ms-excel"}
-        )
-
-    @staticmethod
-    def _format_tbank_import_result(result) -> str:
-        lines = [
-            "Импорт операций Т-Банка завершен",
-            "Файл: %s" % result.source_file_name,
-            "Операций в файле: %s" % result.total_rows,
-            "Импортировано новых: %s" % result.imported_rows,
-            "Пропущено дублей: %s" % result.skipped_rows,
-        ]
-        if result.first_operation_at and result.last_operation_at:
-            lines.append(
-                "Период операций: %s — %s"
-                % (
-                    result.first_operation_at.strftime("%d.%m.%Y %H:%M"),
-                    result.last_operation_at.strftime("%d.%m.%Y %H:%M"),
-                )
-            )
-        return "\n".join(lines)
 
     def _registration_required_text(self) -> str:
         return (

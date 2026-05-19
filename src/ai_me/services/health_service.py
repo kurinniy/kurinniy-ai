@@ -37,7 +37,6 @@ from ai_me.domain.digest import (
     WeeklyFoodDigest,
 )
 from ai_me.domain.decision_log import DecisionLogEntry, DecisionStatus
-from ai_me.domain.finance import FinanceImportResult, FinanceMonthlySummary
 from ai_me.domain.food import (
     MEAL_PHOTO_SOURCE,
     WATER_PHOTO_SOURCE,
@@ -69,7 +68,6 @@ from ai_me.services.media_storage import (
     build_meal_media_object_key,
 )
 from ai_me.services.rules import HealthDecisionEngine
-from ai_me.services.tbank_import import TBankCSVImporter
 from ai_me.storage.base import HealthStore
 
 
@@ -82,7 +80,6 @@ class HealthService:
         store: HealthStore,
         decision_engine: Optional[HealthDecisionEngine] = None,
         food_photo_analyzer: Optional[FoodPhotoAnalyzer] = None,
-        tbank_csv_importer: Optional[TBankCSVImporter] = None,
         media_storage: Optional[MediaStorage] = None,
         google_drive_import_service: Optional[GoogleDriveHealthImportService] = None,
         admin_telegram_user_ids: FrozenSet[int] = frozenset(),
@@ -91,7 +88,6 @@ class HealthService:
         self.store = store
         self.decision_engine = decision_engine or HealthDecisionEngine()
         self.food_photo_analyzer = food_photo_analyzer or DisabledFoodPhotoAnalyzer()
-        self.tbank_csv_importer = tbank_csv_importer or TBankCSVImporter()
         self.media_storage = media_storage or DisabledMediaStorage()
         self.google_drive_import_service = google_drive_import_service or GoogleDriveHealthImportService(store=store)
         self.admin_telegram_user_ids = admin_telegram_user_ids
@@ -1155,23 +1151,6 @@ class HealthService:
 
     def update_decision_status(self, user_id: int, decision_id: str, status: DecisionStatus) -> None:
         self.store.update_decision_status(user_id=user_id, decision_id=decision_id, status=status)
-
-    def import_tbank_csv(self, user_id: int, file_bytes: bytes, source_file_name: str) -> FinanceImportResult:
-        transactions = self.tbank_csv_importer.parse(file_bytes=file_bytes, source_file_name=source_file_name)
-        imported_rows = self.store.upsert_finance_transactions(user_id, transactions)
-        occurred_dates = sorted(transaction.occurred_at for transaction in transactions)
-        return FinanceImportResult(
-            provider=TBankCSVImporter.PROVIDER,
-            source_file_name=source_file_name,
-            total_rows=len(transactions),
-            imported_rows=imported_rows,
-            skipped_rows=len(transactions) - imported_rows,
-            first_operation_at=occurred_dates[0] if occurred_dates else None,
-            last_operation_at=occurred_dates[-1] if occurred_dates else None,
-        )
-
-    def get_finance_monthly_summary(self, user_id: int, month_start: date) -> FinanceMonthlySummary:
-        return self.store.build_finance_monthly_summary(user_id, month_start)
 
     @staticmethod
     def _update_meal_notes(raw_notes: str, *, summary: Optional[str] = None) -> str:

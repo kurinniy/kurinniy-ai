@@ -11,7 +11,6 @@ class MigrationAwareMySQLStore(MySQLStore):
         self.present_columns = {
             ("meals", "fat_g"),
             ("health_goals", "target_date"),
-            ("finance_transactions", "transaction_key"),
             ("meal_media", "image_bytes"),
         }
         self.present_indexes = set()
@@ -152,13 +151,8 @@ class MySQLStoreMigrationTest(unittest.TestCase):
         self.assertIn("ALTER TABLE meal_media ADD COLUMN width INT NOT NULL DEFAULT 0 AFTER bucket_name", executed_sql)
         self.assertIn("ALTER TABLE meal_media ADD COLUMN height INT NOT NULL DEFAULT 0 AFTER width", executed_sql)
         self.assertIn("ALTER TABLE meal_media DROP COLUMN image_bytes", executed_sql)
-        self.assertIn("ALTER TABLE finance_transactions ADD COLUMN user_id BIGINT NULL AFTER transaction_key", executed_sql)
         self.assertIn(
             "CREATE UNIQUE INDEX uk_decision_user_key ON decision_log (user_id, decision_key)",
-            executed_sql,
-        )
-        self.assertIn(
-            "CREATE UNIQUE INDEX uk_finance_user_key ON finance_transactions (user_id, transaction_key)",
             executed_sql,
         )
 
@@ -174,7 +168,6 @@ class MySQLStoreMigrationTest(unittest.TestCase):
                 ("weight_entries", "user_id"),
                 ("activity_entries", "user_id"),
                 ("decision_log", "user_id"),
-                ("finance_transactions", "user_id"),
             }
         )
 
@@ -183,7 +176,6 @@ class MySQLStoreMigrationTest(unittest.TestCase):
         self.assertIn(96445950, store.users)
         executed_sql = [query for query, _ in store.executed]
         self.assertIn("UPDATE meals SET user_id = %s WHERE user_id IS NULL", executed_sql)
-        self.assertIn("UPDATE finance_transactions SET user_id = %s WHERE user_id IS NULL", executed_sql)
 
 if __name__ == "__main__":
     unittest.main()
