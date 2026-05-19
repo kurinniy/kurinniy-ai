@@ -769,14 +769,19 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertIn(format_version_line(), response)
         self.assertIn(format_release_date_line(), response)
         self.assertIn("Доступ: открыт для всех", response)
-        self.assertIn("/start", response)
+        self.assertIn("Чтобы начать работу, отправьте /start.", response)
         self.assertNotIn("/start <invite_code>", response)
+        self.assertNotIn("Окружение:", response)
+        self.assertNotIn("Доступные команды", response)
 
     def test_help_for_registered_user_does_not_list_removed_manual_health_commands(self) -> None:
         response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[42])
         self.assertIn(format_version_line(), response)
         self.assertIn(format_release_date_line(), response)
         self.assertIn("Mini App: откройте через кнопку меню", response)
+        self.assertIn("Основные действия доступны на кнопках под полем ввода.", response)
+        self.assertNotIn("Окружение:", response)
+        self.assertNotIn("Команды:", response)
         self.assertNotIn("/connect_drive", response)
         self.assertNotIn("/drive_status", response)
         self.assertNotIn("/drive_on", response)
@@ -791,6 +796,7 @@ class TelegramHealthBotTest(unittest.TestCase):
     def test_help_for_regular_user_hides_admin_only_features(self) -> None:
         response = self.bot._route_command("/help", app_user=self.service.users_by_telegram_id[77])
         self.assertIn("Mini App: откройте через кнопку меню", response)
+        self.assertIn("Основные действия доступны на кнопках под полем ввода.", response)
         self.assertNotIn("/finance_month", response)
         self.assertNotIn("/connect_drive", response)
         self.assertNotIn("/drive_status", response)
@@ -804,6 +810,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("/summary", response)
         self.assertNotIn("/decisions", response)
         self.assertNotIn("/whoami", response)
+        self.assertNotIn("Команды:", response)
+        self.assertNotIn("Окружение:", response)
 
     def test_help_for_admin_in_user_mode_hides_admin_features_but_keeps_switch_commands(self) -> None:
         self.service.set_admin_mode(1, enabled=False)
@@ -817,6 +825,8 @@ class TelegramHealthBotTest(unittest.TestCase):
         self.assertNotIn("/summary", response)
         self.assertNotIn("/decisions", response)
         self.assertNotIn("/whoami", response)
+        self.assertNotIn("Команды:", response)
+        self.assertNotIn("Окружение:", response)
 
     def test_start_registers_new_user_without_invite(self) -> None:
         response = self.bot._route_command(

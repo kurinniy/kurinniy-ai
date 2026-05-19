@@ -1390,47 +1390,23 @@ class TelegramHealthBot:
     def _help_text(self, app_user: Optional[AppUser]) -> str:
         if app_user is None:
             return (
-                "Окружение: %s\n" % self.settings.environment_name
-                + "%s\n" % format_version_line()
+                "%s\n" % format_version_line()
                 + "%s\n" % format_release_date_line()
                 + "Доступ: открыт для всех, только в личных сообщениях.\n"
-                + "Чтобы начать работу, отправьте команду:\n"
-                + "/start\n\n"
-                + "Доступные команды без подключения:\n"
-                + "/start\n"
-                + "/whoami\n"
-                + "/help"
+                + "Чтобы начать работу, отправьте /start."
             )
 
-        commands = [
+        lines = [
             "Справка",
-            "Окружение: %s" % self.settings.environment_name,
             format_version_line(),
             format_release_date_line(),
             self._mini_app_help_line(app_user),
-            "Команды:",
-            "Отправь фото еды, чтобы я сразу сохранил запись или предложил её проверить.",
-            "/menu",
-            "/confirm_meal <draft_id>",
-            "/reject_meal <draft_id>",
+            "Отправьте фото еды одним сообщением — я распознаю блюдо и сохраню запись или предложу её проверить.",
+            "Основные действия доступны на кнопках под полем ввода.",
         ]
         if app_user.has_admin_access:
-            commands.extend(
-                [
-                    "/whoami",
-                    "/summary [YYYY-MM-DD]",
-                    "/decisions [YYYY-MM-DD]",
-                    "/digest_status",
-                    "/digest_on",
-                    "/digest_off",
-                    "/digest_preview [YYYY-MM-DD]",
-                    "/weekly_digest_preview [YYYY-MM-DD]",
-                    "/drafts",
-                    "/user_mode",
-                    "/admin_mode",
-                ]
-            )
-        return "\n".join(commands)
+            lines.append("Администраторские сценарии доступны через slash-команды в Telegram.")
+        return "\n".join(lines)
 
     def _welcome_text(self, app_user: AppUser) -> str:
         first_name = app_user.first_name or "Привет"
